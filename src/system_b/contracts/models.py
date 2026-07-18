@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
 
@@ -24,7 +24,7 @@ def _require_probability(value: float, name: str) -> None:
 class CanonicalMarketSnapshot:
     schema_version: str = SCHEMA_VERSION
     snapshot_id: str = ""
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     underlying_symbol: str = ""
 
     def __post_init__(self) -> None:
@@ -229,7 +229,7 @@ class OutcomeRecord:
 class JournalEvent:
     schema_version: str = SCHEMA_VERSION
     event_id: str = ""
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     event_type: str = ""
     payload_json: str = "{}"
 
