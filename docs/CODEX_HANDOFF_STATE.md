@@ -18,72 +18,98 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 0 — Source access and baseline.**
+**Phase 0 — Source access and baseline: COMPLETE.** Next up: Phase 1.
 
-Phase 0 deliverables (spec §63):
+Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
-- System A source access
-- Exact System A source commit
-- `baseline/system_a.lock.json`
-- `docs/SOURCE_PROVENANCE.md`
-- `docs/CURRENT_SYSTEM_INVENTORY.md` (full System A inventory)
-- Source-validated `docs/MIGRATION_MAP.md` (replacing the provisional map)
+- ✅ System A source access — `DGator86/0DTE` cloned to `/workspace/0dte`
+  (GitHub-authorized, shallow), side-by-side with System B per spec §5.
+- ✅ Exact System A source commit — `de4a6e7ced98ff97c778e8b4418c08848d7ce82d`.
+- ✅ `baseline/system_a.lock.json` — spec §4.1 schema, real SHA + reproducible
+  `sha256` hashes for tree / test inventory / requirements.
+- ✅ `docs/SOURCE_PROVENANCE.md` — access method, pin, verification procedure.
+- ✅ `docs/CURRENT_SYSTEM_INVENTORY.md` — full inventory (305 files, 257 Python
+  modules, 62,211 LOC, 112 tests) from the pinned tree.
+- ✅ Source-validated `docs/MIGRATION_MAP.md` — replaces the empty provisional
+  map; every spec §62 source path confirmed to exist, plus the real source the
+  provisional map omitted (`gex/`, `zerodte/`, `adaptive_learning/`, etc.).
+- ✅ `migrations/manifests/phase-0.json` — spec §64 manifest.
 
 ## Completed Work
 
 - Authored the authoritative master specification at
   `docs/SPY_DER_MASTER_SPEC.md`.
-- Consolidated this handoff log, removing the previously duplicated Packet 0
-  sections and reconciling the permanent rules under the master spec.
+- Consolidated this handoff log under the master spec.
+- **Established System A access and executed Phase 0 against the pinned source**
+  (commit `de4a6e7`): pinned the baseline, wrote source provenance, inventoried
+  the full System A repository, and replaced the provisional migration map with a
+  source-validated one.
+- **Key finding:** System A is itself mid-migration into a `zerodte/` package
+  (`contracts/`, `runtime/`, `agent/`, `adapters/`) that mirrors SPY-DER's target
+  layout (spec §10). It is the strongest migration anchor for the contracts,
+  runtime, and AI-layer phases — see `CURRENT_SYSTEM_INVENTORY.md` §7 and
+  `MIGRATION_MAP.md` §11.
 
 ## Files Changed (this run)
 
-- `docs/SPY_DER_MASTER_SPEC.md` (created)
-- `docs/CODEX_HANDOFF_STATE.md` (rewritten and de-duplicated)
+- `baseline/system_a.lock.json` (created)
+- `baseline/manifests/system_a_tree.txt` (created)
+- `baseline/manifests/system_a_tests.txt` (created)
+- `baseline/manifests/system_a_requirements.txt` (created)
+- `docs/SOURCE_PROVENANCE.md` (created)
+- `docs/CURRENT_SYSTEM_INVENTORY.md` (created)
+- `docs/MIGRATION_MAP.md` (replaced provisional/empty map with source-validated map)
+- `migrations/manifests/phase-0.json` (created)
+- `docs/CODEX_HANDOFF_STATE.md` (this update)
 
 ## Tests Run
 
-- None. This run adds and consolidates documentation only; no code changed.
+- No code was migrated, so no runtime tests apply. Baseline integrity was
+  verified by reproducing the lock-file hashes against the pinned tree (see
+  `migrations/manifests/phase-0.json` `tests[]`): tree-manifest, test-inventory,
+  and requirements `sha256` all reproduce, and the pinned commit resolves to
+  `de4a6e7…`.
 
 ## Active Blockers
 
-1. **System A source access is not established.** `DGator86/0DTE` is not present
-   in this workspace and is outside the current session's repository scope. Per
-   spec §5, source-dependent Phase 0 work is blocked until access is provided
-   via a local sibling checkout, an authorized GitHub repository, or a complete
-   source bundle carrying the original commit SHA.
-2. Because of (1), the following remain unproduced and must not be fabricated
-   (spec §5, §67): `baseline/system_a.lock.json` with a real SHA, the full
-   System A inventory, and the source-validated migration map.
+- **None.** The prior blocker (System A source access) is resolved — `DGator86/0DTE`
+  is cloned at `/workspace/0dte` and pinned in `baseline/system_a.lock.json`.
 
 ## Decisions
 
 - `docs/SPY_DER_MASTER_SPEC.md` is the single authoritative specification. Prior
-  scaffold docs (`ARCHITECTURE.md`, `MIGRATION_MAP.md`, etc.) are provisional
-  and subordinate to it.
-- No System A module may be described as migrated, validated, or at parity until
-  the pinned source is inspected (spec §4.1, §5).
-- The provisional migration map in spec §62 stands only until confirmed against
-  the pinned System A tree.
-- The existing `src/system_b/` scaffold does not count as migration; it will be
+  scaffold docs are subordinate to it.
+- No System A module is described as migrated, validated, or at parity: the
+  migration map is validated for source **existence** only; behavioral parity is
+  proven per-phase via parity tests (spec §65).
+- The baseline pin is immutable by hash; an upstream rewrite/removal of commit
+  `de4a6e7` invalidates it (fail-closed, spec §5) and requires re-running Phase 0
+  against a new pin.
+- `baseline/fixtures/` and `baseline/expected_outputs/` are created empty; parity
+  fixtures are captured starting in Phase 1.
+- The existing `src/system_b/` scaffold does not count as migration; it is
   normalized to `src/spy_der/` beginning in Phase 1.
 
 ## Next Phase
 
-Complete **Phase 0** once System A source access is available:
+Execute **Phase 1 — Package and canonical ingestion foundation** (spec §63):
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 0 only: establish System A source access, pin the exact System A
-baseline, create source provenance, inventory the full System A repository, and
-replace the provisional migration map with a source-validated map.
-Do not migrate production code yet.
-Do not fabricate unavailable source behavior.
-Update the handoff state and the Phase 0 migration manifest.
+Execute Phase 1 only: normalize the spy_der package; implement common and market
+contracts, the market calendar, feed provenance and freshness, the canonical
+snapshot assembler, the System A snapshot adapter, deterministic IDs, and initial
+parity fixtures.
+Do not work on later phases.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-1.json.
+Run the required tests.
+Report changed files, results, blockers, and rollback.
 ```
 
-After Phase 0 is complete, execute **Phase 1** (package and canonical ingestion
-foundation).
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 1
+from the `zerodte/` canonical package and the Track-A snapshot types
+(`gate_scorer.MarketSnapshot`, `prediction/canonical_snapshot.py`,
+`prediction/feed_status.py`).
 
 Per-run instruction for every subsequent phase (spec §70):
 
