@@ -29,6 +29,17 @@ def _candidate(candidate_id: str, max_loss: str) -> Candidate:
     )
 
 
+def _forecast() -> MarketForecastBundle:
+    return MarketForecastBundle(
+        snapshot_id="snap-safety",
+        ts="2026-01-05T10:30:00-05:00",
+        session_date="2026-01-05",
+        symbol="SPY",
+        model_version="v2",
+        p_up_30m=0.5,
+    )
+
+
 def test_hard_vetoes_cannot_be_overridden() -> None:
     decision = synthesize_decision(
         legacy=LegacyDecisionView(
@@ -36,7 +47,7 @@ def test_hard_vetoes_cannot_be_overridden() -> None:
             permissions=StrategyPermissions(options_allowed=True, new_positions_allowed=True),
             hard_vetoes=(HardVeto(code="HALT", reason="halt"),),
         ),
-        forecast=MarketForecastBundle(model_version="v2", prob_up=0.5, prob_down=0.5),
+        forecast=_forecast(),
         universe=CandidateUniverse(universe_id="u1", candidates=(_candidate("c1", "10"),)),
         v3_view=V3DecisionView(ranking=CandidateRanking(ordered_candidate_ids=("c1",))),
         envelope=RiskEnvelope(max_defined_risk_per_trade=Decimal("25")),
@@ -51,7 +62,7 @@ def test_missing_required_inputs_produce_abstention() -> None:
             structural_state=StructuralState(state_id="s1", regime="neutral"),
             permissions=StrategyPermissions(options_allowed=True, new_positions_allowed=True),
         ),
-        forecast=MarketForecastBundle(model_version="v2", prob_up=0.5, prob_down=0.5),
+        forecast=_forecast(),
         universe=CandidateUniverse(universe_id="u1", candidates=(_candidate("c1", "10"),)),
         v3_view=V3DecisionView(ranking=CandidateRanking(ordered_candidate_ids=("c1",))),
         envelope=RiskEnvelope(max_defined_risk_per_trade=Decimal("25")),
@@ -68,7 +79,7 @@ def test_risk_limits_cannot_be_increased_by_decision_system() -> None:
             structural_state=StructuralState(state_id="s1", regime="neutral"),
             permissions=StrategyPermissions(options_allowed=True, new_positions_allowed=True),
         ),
-        forecast=MarketForecastBundle(model_version="v2", prob_up=0.5, prob_down=0.5),
+        forecast=_forecast(),
         universe=universe,
         v3_view=V3DecisionView(ranking=CandidateRanking(ordered_candidate_ids=("c1",))),
         envelope=RiskEnvelope(max_defined_risk_per_trade=Decimal("50")),

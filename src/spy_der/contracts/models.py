@@ -58,16 +58,7 @@ class LegacyDecisionView:
     hard_vetoes: tuple[HardVeto, ...] = ()
 
 
-@dataclass(frozen=True, slots=True)
-class MarketForecastBundle:
-    schema_version: str = SCHEMA_VERSION
-    model_version: str = ""
-    prob_up: float = 0.0
-    prob_down: float = 0.0
-
-    def __post_init__(self) -> None:
-        _require_probability(self.prob_up, "prob_up")
-        _require_probability(self.prob_down, "prob_down")
+# MarketForecastBundle lives in spy_der.contracts.forecasts (Phase 5).
 
 
 @dataclass(frozen=True, slots=True)

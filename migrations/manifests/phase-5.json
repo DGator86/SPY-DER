@@ -1,0 +1,79 @@
+{
+  "phase": 5,
+  "phase_name": "Data, labels, and V2",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 5), §24, §25, §30, §54",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "15730bd9d20b2c53db6eaf6db0de10f411de3371",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:prediction/asof.py, dataset.py, labels.py, crossfit.py, calibration.py",
+    "0DTE:prediction/registry.py, contracts.py, inference.py",
+    "0DTE:prediction/models/{base,direction,return_quantiles,volatility,range_survival,barrier_touch}.py"
+  ],
+  "files_migrated": [
+    "0DTE:prediction/contracts.py PredictionBundle -> src/spy_der/contracts/forecasts.py MarketForecastBundle",
+    "0DTE:prediction/asof.py -> src/spy_der/training/asof.py",
+    "0DTE:prediction/dataset.py observation construction -> src/spy_der/training/datasets.py",
+    "0DTE:prediction/labels.py SessionLabeler -> src/spy_der/evaluation/labels.py",
+    "0DTE:prediction/crossfit.py fold substrate -> src/spy_der/training/folds.py",
+    "0DTE:prediction/calibration.py -> src/spy_der/training/calibration.py",
+    "0DTE:prediction/registry.py -> src/spy_der/training/registry.py",
+    "0DTE:prediction/models/* -> src/spy_der/forecasting/models/*",
+    "0DTE:prediction/inference.py fail-closed serving -> src/spy_der/forecasting/runtime.py"
+  ],
+  "files_merged": [],
+  "files_replaced": [
+    "src/spy_der/contracts/models.py MarketForecastBundle stub replaced by contracts/forecasts.py"
+  ],
+  "files_deferred": [
+    "Full nested crossfit hyperparameter search (crossfit_classifier/regressor grids) -> later training pass; expanding session folds + train-only calibration established.",
+    "Isotonic calibrator selection gates and nested holdout comparison -> available but not the default path.",
+    "HistGradientBoosting direction challenger -> elastic-net logistic first.",
+    "Full offline build_dataset_from_recording against chain_store -> deferred until recording parity with System A store.",
+    "Candidate outcome labels (spec §54.2) -> Phase 7/8 candidate economics.",
+    "V3 OOD/conformal/path/ensemble/regime MoE -> Phase 6."
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "As-of rule: future-stamped sources raise AsOfViolation; missing values are explicit.",
+    "Labels use log returns; horizons past close are None; same-bar target+stop is adverse-first.",
+    "Folds are session-grouped with whole-session embargo; calibration uses train-only scores.",
+    "Registry schema v2 requires calibration/fold/OOF audit fields; artifact hash mismatch fails closed.",
+    "Serving modes are gated by model/group status; missing required inputs fail closed."
+  ],
+  "intentional_changes": [
+    "PredictionBundle renamed to MarketForecastBundle with SPY-DER identity fields (forecast_id, content_hash, deployment_id).",
+    "Session metadata uses spy_der.market_data.calendar.MarketCalendar instead of System A market_calendar helpers.",
+    "bars_asof operates on canonical Bar tuples (and array index helper) rather than resample.RawBars.",
+    "Direction model uses a session-holdout calibrator rather than full nested OOF crossfit for Phase 5 scope.",
+    "Added scikit-learn and joblib runtime dependencies."
+  ],
+  "deliverables": [
+    "src/spy_der/contracts/forecasts.py",
+    "src/spy_der/training/{asof,datasets,folds,calibration,registry}.py",
+    "src/spy_der/evaluation/labels.py",
+    "src/spy_der/forecasting/models/{base,direction,return_quantiles,volatility,range_survival,barrier_touch}.py",
+    "src/spy_der/forecasting/runtime.py",
+    "tests/unit/test_phase5_forecasting.py",
+    "tests/parity/test_forecast_parity.py",
+    "baseline/expected_outputs/phase5/forecast_bundle.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (88 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "Nested HP search and full OOF crossfit for all V2 heads are deferred.",
+    "Return-quantile/volatility/range/barrier models are implemented but not yet wired into the default parity group (direction-only golden).",
+    "Heuristic bundle is research/shadow only; no live vendor feature-row adapter yet.",
+    "Candidate labels and full recording->dataset rebuild remain deferred."
+  ],
+  "rollback": [
+    "Revert the Phase 5 commit. Phases 0-4 are unaffected.",
+    "Remove scikit-learn and joblib from pyproject if rolling back the dependency addition."
+  ],
+  "next_phase": "Phase 6 — V3 forecasting (spec §63): uncertainty, OOD, regime probabilities, mixture-of-experts, conformal, competing risks, path model, forecast ensemble."
+}

@@ -17,7 +17,35 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 4 — MTF and Legacy: COMPLETE.** Next up: Phase 5.
+**Phase 5 — Data, labels, and V2: COMPLETE.** Next up: Phase 6.
+
+Phase 5 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ Forecast contract — `contracts/forecasts.py` `MarketForecastBundle`
+  (spec §24, §30), replacing the Phase-0 stub.
+- ✅ As-of datasets — `training/asof.py`, `training/datasets.py`:
+  `AsOfFeatureBuilder`, `ObservationRow`, deterministic snapshot IDs.
+- ✅ Labels — `evaluation/labels.py` `SessionLabeler` (spec §54.1): multi-horizon
+  log returns, direction, MFE/MAE, wall/flip touches, range survival, adverse-first
+  first-passage.
+- ✅ Folds — `training/folds.py`: expanding session folds with embargo and
+  trailing calibration carve-out.
+- ✅ Calibration — `training/calibration.py`: sigmoid/isotonic/identity +
+  `CalibrationArtifact` (train-only OOF scores).
+- ✅ V2 models — `forecasting/models/`: vectorizer, direction, return quantiles,
+  volatility, range survival, barrier touch.
+- ✅ V2 registry — `training/registry.py`: schema-v2 hashed joblib artifacts,
+  status-gated load modes, model groups.
+- ✅ Fail-closed serving — `forecasting/runtime.py` `ForecastServer`.
+- ✅ Parity — `baseline/expected_outputs/phase5/forecast_bundle.json` golden + test.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (88 tests) all pass.
+See `migrations/manifests/phase-5.json`. Nested HP search, full recording→dataset
+rebuild, candidate labels, and V3 heads are deferred.
+
+---
+
+### Phase 4 — MTF and Legacy: COMPLETE
 
 Phase 4 deliverables (spec §63) — implemented against pinned System A source:
 
@@ -195,30 +223,27 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-Execute **Phase 5 — Data, labels, and V2** (spec §63):
+Execute **Phase 6 — V3 forecasting** (spec §63):
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 5 only: as-of datasets, labels, folds, calibration, V2 models,
-V2 registry, the canonical forecast bundle, and fail-closed serving.
+Execute Phase 6 only: uncertainty, OOD, regime probabilities, mixture-of-experts,
+conformal, competing risks, path model, and forecast ensemble.
 Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-5.json.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-6.json.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
 
-System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 5
-from `prediction/asof.py` / `prediction/dataset.py` (as-of datasets, spec §25),
-`prediction/labels.py` (spec §54), `prediction/crossfit.py` / `walk_forward.py`
-(folds), `prediction/calibration.py`, `prediction/models/direction.py` and
-siblings (V2 models), `prediction/registry.py`, and `prediction/contracts.py`
--> the canonical `MarketForecastBundle` (spec §24, §30).
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 6
+from `prediction/uncertainty.py`, `prediction/ood.py`, `prediction/conformal.py`,
+`prediction/models/regime_moe.py` / `mixture_experts.py` / `competing_risk.py`,
+`prediction/path_model.py`, and `prediction/ensemble.py`.
 
-Phases 1-4 provide ingestion, record/replay, structural features, and the Legacy
-layer: `spy_der.market_data`, `spy_der.features` (`compute_oi_gex`,
-`GexRankWindow`, `compute_volatility`, `compute_rnd`, `StructuralStateService`,
-`compute_mtf`, `RobustStandardizer`), and `spy_der.legacy` (`LegacyAnalyzer`,
-`evaluate_operational_vetoes`).
+Phases 1-5 provide ingestion, record/replay, structural features, Legacy, and V2
+forecasting: `spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
+`spy_der.training` (as-of/datasets/folds/calibration/registry),
+`spy_der.evaluation.labels`, and `spy_der.forecasting` (models + `ForecastServer`).
 
 Per-run instruction for every subsequent phase (spec §70):
 
