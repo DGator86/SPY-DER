@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from spy_der.forecasting.models.barrier_touch import BarrierTouchModel
+from typing import Any
+
 from spy_der.forecasting.models.base import RANDOM_STATE, FeatureVectorizer
 from spy_der.forecasting.models.competing_risk import CompetingRiskForecast, CompetingRiskModel
 from spy_der.forecasting.models.direction import DirectionModel
@@ -27,3 +28,12 @@ __all__ = [
     "ReturnQuantileModel",
     "VolatilityModel",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    # Lazy import breaks calibration <-> barrier_touch circular dependency.
+    if name == "BarrierTouchModel":
+        from spy_der.forecasting.models.barrier_touch import BarrierTouchModel
+
+        return BarrierTouchModel
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

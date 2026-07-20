@@ -17,7 +17,26 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 12 — Execution and positions: COMPLETE.** Next up: Phase 13.
+**Phase 13 — Journal and settlement: COMPLETE.** Next up: Phase 14.
+
+Phase 13 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ Journal contracts — `contracts/events.py` spec §53 `JournalEvent` +
+  event types; `contracts/outcomes.py` settlement/counterfactual records.
+- ✅ Append-only store — `journal/store.py` in-memory + SQLite WAL.
+- ✅ Hash chain — `journal/hash_chain.py` per-event digests + verify.
+- ✅ Projections — `journal/projections.py` orders/positions/outcomes/sessions.
+- ✅ Settlement — `evaluation/settlement.py` traded + counterfactual no-trades.
+- ✅ Reconstruction — `journal/reconstruction.py` deterministic rebuild.
+- ✅ Parity — `baseline/expected_outputs/phase13/journal_settlement.json`.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (160 tests) all pass.
+See `migrations/manifests/phase-13.json`. Full dashboard projection UI and
+promotion/deployment event workflows remain deferred.
+
+---
+
+### Phase 12 — Execution and positions: COMPLETE
 
 Phase 12 deliverables (spec §63) — implemented against pinned System A source:
 
@@ -378,27 +397,27 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-Execute **Phase 13 — Journal and settlement** (spec §63):
+Execute **Phase 14 — Evaluation and comparison** (spec §63):
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 13 only: append-only events, hash chain, projections,
-settlement, counterfactual outcomes, and deterministic reconstruction.
+Execute Phase 14 only: System A/B native comparison, controlled comparison,
+policy comparison, agent comparison, ablations, and session-safe reports.
 Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-13.json.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-14.json.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
 
-System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 13
-from journal/settlement modules mapped in `docs/MIGRATION_MAP.md`.
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 14
+from evaluation/comparison modules mapped in `docs/MIGRATION_MAP.md`.
 
-Phases 1-12 provide ingestion through execution/positions:
+Phases 1-13 provide ingestion through journal/settlement:
 `spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
-`spy_der.training`, `spy_der.evaluation.labels`, `spy_der.forecasting`,
+`spy_der.training`, `spy_der.evaluation`, `spy_der.forecasting`,
 `spy_der.candidates`, `spy_der.economics`, `spy_der.candidate_value`,
 `spy_der.policies`, `spy_der.synthesis`, `spy_der.agents`, `spy_der.risk`,
-`spy_der.execution`, and `spy_der.positions`.
+`spy_der.execution`, `spy_der.positions`, and `spy_der.journal`.
 
 Per-run instruction for every subsequent phase (spec §70):
 

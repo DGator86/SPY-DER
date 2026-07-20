@@ -1,0 +1,1 @@
+{"chain_valid":true,"counterfactual_pnl":"2.0000","event_types":["outcome_settled","counterfactual_settled"],"outcome_pnl":"2.0000","session":{"counterfactuals":1,"outcomes":1,"realized_pnl_total":"2.0000"},"tip_hash":"sha256:0c1f71a3d5a16a597567a4c35d4f47ae8bbb79851e25cfba87659626fc490a0d"}

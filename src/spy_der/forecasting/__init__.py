@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from spy_der.forecasting.conformal import ConformalInterval, SplitConformalCalibrator
 from spy_der.forecasting.ensemble import EnsembleForecast, ForecastEnsemble
 from spy_der.forecasting.models import (
-    BarrierTouchModel,
     CompetingRiskForecast,
     CompetingRiskModel,
     DirectionModel,
@@ -53,3 +54,11 @@ __all__ = [
     "heuristic_bundle",
     "simulate_paths_v3",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "BarrierTouchModel":
+        from spy_der.forecasting.models.barrier_touch import BarrierTouchModel
+
+        return BarrierTouchModel
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
