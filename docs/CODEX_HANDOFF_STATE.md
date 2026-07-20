@@ -38,8 +38,12 @@ Owner approval received. Deliverables (spec §63):
 Checks: `ruff check .`, `mypy src` (strict), and `pytest` (193 tests) all pass.
 See `migrations/manifests/phase-17.json`.
 
-Optional follow-on (not a numbered phase): VPS continuous runner + 0DTE Vercel
-dashboard parallel track consuming `PrimaryResearchRuntime.live_state()`.
+### VPS + 0DTE parallel panel (post-Phase-17)
+
+- ✅ `spy_der.integrations.zerodte` — AI decision provider for 0DTE ticks.
+- ✅ `spy_der` CLI / `vps-runner` + `deploy/spy-der-shadow.service`.
+- ✅ 0DTE fourth paper track `spy_der` + `forecast.parallel_tracks` panel
+  (Legacy · V2 · V3 · SPY-DER). See `0DTE` PR / `deploy/SPY_DER_PARALLEL.md`.
 
 ---
 

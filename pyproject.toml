@@ -24,6 +24,10 @@ dev = [
   "ruff>=0.5",
 ]
 
+[project.scripts]
+spy-der = "spy_der.cli:main"
+spy-der-vps-runner = "spy_der.runtime.runner:main"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
