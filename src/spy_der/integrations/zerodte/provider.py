@@ -16,6 +16,7 @@ from spy_der.agents.authority import AiDecisionAuthority
 from spy_der.agents.deterministic import DeterministicDecisionAgent
 from spy_der.agents.grok import GrokDecisionAgent
 from spy_der.agents.protocols import DecisionAgent
+from spy_der.agents.security import assert_no_secrets
 from spy_der.contracts.agents import (
     AgentCandidateView,
     AgentDecisionPacket,
@@ -109,26 +110,46 @@ def decide_shadow_tick(
     data_quality: float = 1.0,
     forecast_uncertainty: float = 0.0,
 ) -> SpyDerShadowDecision:
-    """Run AI entry decision over 0DTE shadow candidates (fail-closed)."""
+    """Run AI entry decision over 0DTE shadow candidates.
+
+    Fail-closed: any error building the packet (e.g. out-of-range inputs) or
+    running the agent returns an ``ABSTAIN`` decision rather than raising, so a
+    single malformed tick never takes down the caller's shadow loop.
+    """
     now = now or datetime.now(tz=UTC)
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
 
     agent = agent or _default_agent()
-    authority = AiDecisionAuthority(agent, account_id="system_b_grok")
-    packet = _build_packet(
-        snapshot_id=snapshot_id,
-        symbol=symbol,
-        session_date=session_date,
-        underlying_price=Decimal(str(underlying_price)),
-        candidates=tuple(candidates),
-        now=now,
-        risk_max_size_scalar=risk_max_size_scalar,
-        hard_vetoes=hard_vetoes,
-        data_quality=data_quality,
-        forecast_uncertainty=forecast_uncertainty,
-    )
-    result = authority.decide_entry(packet, now=now)
+    try:
+        authority = AiDecisionAuthority(agent, account_id="system_b_grok")
+        packet = _build_packet(
+            snapshot_id=snapshot_id,
+            symbol=symbol,
+            session_date=session_date,
+            underlying_price=Decimal(str(underlying_price)),
+            candidates=tuple(candidates),
+            now=now,
+            risk_max_size_scalar=risk_max_size_scalar,
+            hard_vetoes=hard_vetoes,
+            data_quality=data_quality,
+            forecast_uncertainty=forecast_uncertainty,
+        )
+        result = authority.decide_entry(packet, now=now)
+    except Exception as exc:  # fail-closed by contract
+        return SpyDerShadowDecision(
+            action="ABSTAIN",
+            candidate_id=None,
+            size_scalar=0.0,
+            structure=None,
+            direction=None,
+            confidence=0.0,
+            uncertainty=1.0,
+            rationale=f"bridge_error:{type(exc).__name__}:{exc}",
+            reason_codes=("spy_der_bridge_error",),
+            provider=agent.identity.provider,
+            model_id=agent.identity.model_id,
+        )
     resp = result.response
 
     if resp.action is AgentEntryAction.SELECT_CANDIDATE and resp.candidate_id:
@@ -198,6 +219,8 @@ def _build_packet(
             legs_summary=(),
             maximum_loss=Decimal(str(c.maximum_loss)),
             capital_required=Decimal(str(c.capital_required)),
+            # Placeholder when 0DTE supplies no real geometry hash (shadow-only
+            # display value; not a cryptographic hash of the structure).
             geometry_hash=c.geometry_hash or f"sha256:{c.candidate_id}",
             mid_price=c.mid_price,
             fill_probability=float(c.fill_probability),
@@ -208,14 +231,22 @@ def _build_packet(
         )
         for c in candidates
     )
+    deployment_id = "spy-der-zerodte-bridge"
+    # Body mirrors the canonical builder (spy_der.agents.packet) so the
+    # packet_id/hash bind candidate geometry, not just IDs.
     body = {
         "snapshot_id": snapshot_id,
         "symbol": symbol,
         "session_date": session_date.isoformat(),
         "candidate_ids": [v.candidate_id for v in views],
+        "geometry_hashes": [v.geometry_hash for v in views],
         "risk_max_size_scalar": risk_max_size_scalar,
         "hard_vetoes": list(hard_vetoes),
+        "deployment_id": deployment_id,
     }
+    # Security: processed-output body must never carry secrets, same guard the
+    # canonical builder applies before hashing.
+    assert_no_secrets(body)
     ph = packet_hash(body)
     return AgentDecisionPacket(
         packet_id=make_packet_id(snapshot_id, ph),
@@ -236,10 +267,10 @@ def _build_packet(
             ExitPolicySummary(ApprovedExitPolicyId.EOD_EXIT.value, "eod"),
         ),
         deployment_context=DeploymentContext(
-            deployment_id="spy-der-zerodte-bridge",
+            deployment_id=deployment_id,
             mode="shadow",
         ),
         data_quality=data_quality,
         forecast_uncertainty=forecast_uncertainty,
-        evidence_ids=tuple(eid for v in views for eid in v.evidence_ids),
+        evidence_ids=tuple(sorted({eid for v in views for eid in v.evidence_ids})),
     )

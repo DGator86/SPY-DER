@@ -9,8 +9,12 @@ User=zerodte
 Group=zerodte
 WorkingDirectory=/opt/spy-der
 EnvironmentFile=-/etc/zerodte/zerodte.env
+# systemd creates /var/lib/zerodte owned by the service user before start, so
+# the runner can write the state file without root-owned /var/lib blocking the
+# first-run mkdir.
+StateDirectory=zerodte
 ExecStart=/opt/zerodte/venv/bin/spy-der vps-runner \
-    --live-state /var/lib/zerodte/spy_der_state.json \
+    --live-state %S/zerodte/spy_der_state.json \
     --interval 60
 Restart=always
 RestartSec=5

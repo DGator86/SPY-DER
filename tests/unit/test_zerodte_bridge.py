@@ -81,6 +81,34 @@ def test_deterministic_fallback_no_edge_on_empty() -> None:
     assert decision.action in {"NO_EDGE", "ABSTAIN"}
 
 
+def test_decide_shadow_tick_fails_closed_on_bad_input() -> None:
+    # fill_probability out of [0, 1] would raise during packet build; the
+    # bridge must fail closed to ABSTAIN instead of propagating.
+    bad = (
+        ShadowCandidateView(
+            candidate_id="c1",
+            family="put_credit",
+            direction="bearish",
+            maximum_loss=Decimal("4"),
+            capital_required=Decimal("4"),
+            geometry_hash="sha256:c1",
+            expiration=date(2026, 7, 20),
+            fill_probability=1.5,
+        ),
+    )
+    decision = decide_shadow_tick(
+        snapshot_id="snap-bad",
+        symbol="SPY",
+        session_date=date(2026, 7, 20),
+        underlying_price=600,
+        candidates=bad,
+        now=datetime(2026, 7, 20, 15, 0, tzinfo=UTC),
+        agent=DeterministicDecisionAgent(),
+    )
+    assert decision.action == "ABSTAIN"
+    assert decision.reason_codes == ("spy_der_bridge_error",)
+
+
 def test_state_writer_atomic(tmp_path: Path) -> None:
     path = tmp_path / "spy_der_state.json"
     write_live_state_file(path, {"track": "spy_der", "ok": True})
