@@ -1,0 +1,1 @@
+{"authoritative":{"action":"SELECT_CANDIDATE","candidate_id":"c1","reason_codes":["ensemble_select"],"size_scalar":0.5},"candidate_ids":["c1","c2"],"packet_hash":"sha256:b678709b53bd6096f916bcb7398a36c52b823de570e5f530561adadd322e70aa","packet_id":"apkt-163197f7e7de","shadow":{"action_disagreement":true,"candidate_disagreement":false}}
