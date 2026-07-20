@@ -1,0 +1,60 @@
+{
+  "phase": 2,
+  "phase_name": "Providers and replay",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 2), §13.1, §15",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "8dcaf996624292655c710a8830de620ca188d74d",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:composite_feed.py (CompositeFeed failover, build_default_feed order)",
+    "0DTE:chain_store.py (ChainRecorder, RecordedFeed, seq + JSONL format)",
+    "0DTE:tradier_feed.py / tastytrade_feed.py / massive_feed.py / yahoo_feed.py (provider roles)"
+  ],
+  "files_migrated": [
+    "0DTE:composite_feed.CompositeFeed -> src/spy_der/market_data/composite.py (ordered failover, provider selection provenance)",
+    "0DTE:chain_store.ChainRecorder/RecordedFeed -> src/spy_der/market_data/recording.py + replay.py (deterministic JSONL + integrity)"
+  ],
+  "files_merged": [],
+  "files_replaced": [],
+  "files_deferred": [
+    "Live vendor adapters (Tradier/Tastytrade/Massive/Yahoo) that perform network I/O -> they implement the MarketDataProvider protocol added here; the deterministic StaticProvider is the offline substrate. Network adapters land when credentials/integration tests are available.",
+    "gzip on-disk recording format (System A uses .jsonl.gz) -> plain JSONL for now; deterministic and reviewable. gzip is an additive wrapper later."
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Ordered failover: first provider to produce a tick wins; the winner and fallback state are recorded (composite_feed.CompositeFeed).",
+    "Settlement has a dedicated backstop provider, separate from the chain feed failover (Yahoo settlement role).",
+    "Per-session integer sequence on every recorded tick (chain_store seq); replay is deterministic and requires no network."
+  ],
+  "intentional_changes": [
+    "Providers emit a typed RawTick and the composite assembles canonical snapshots via the Phase 1 assembler, rather than passing provider TickSnapshot objects downstream (spec §13.1).",
+    "Recording is self-describing with a per-record content hash; replay fails closed on hash mismatch, sequence gap, schema mismatch, and malformed records (spec §15).",
+    "Recording serialized as deterministic canonical JSONL (identical snapshots -> identical bytes)."
+  ],
+  "deliverables": [
+    "src/spy_der/market_data/providers/base.py (MarketDataProvider protocol, RawTick)",
+    "src/spy_der/market_data/providers/static.py (StaticProvider, offline)",
+    "src/spy_der/market_data/composite.py (CompositeFeed failover)",
+    "src/spy_der/market_data/recording.py (SnapshotRecorder, deterministic JSONL)",
+    "src/spy_der/market_data/replay.py (ReplayFeed, CorruptRecordingError, corruption detection)",
+    "tests/unit/test_providers_replay.py, tests/parity/test_replay_parity.py",
+    "baseline/fixtures/phase2/recording.jsonl (frozen 3-tick deterministic replay fixture)"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (43 tests: unit + parity + scaffold)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "Live vendor network adapters are deferred (see files_deferred); the protocol and offline substrate are in place.",
+    "Recorded-tick parity against a RUNNING System A recording remains future work; the fixture here locks System B's own deterministic record/replay contract.",
+    "Replay yields canonical snapshot dicts; rehydration into frozen CanonicalMarketSnapshot instances is added when a downstream consumer needs typed replay (later phase)."
+  ],
+  "rollback": [
+    "Revert the Phase 2 commit. The Phase 1 ingestion foundation is unaffected; no runtime services or persisted state are introduced.",
+    "No new third-party dependencies were added in Phase 2."
+  ],
+  "next_phase": "Phase 3 — RND and structural features (spec §63): migrate rnd_extractor.py, GEX variants (gex/ package), flip/walls, volatility, structural state, persistent adaptive state, and parity tests."
+}
