@@ -1,0 +1,65 @@
+{
+  "phase": 9,
+  "phase_name": "Policies and deterministic synthesis",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 9), §36",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "ceed605",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:policy/contracts.py, prediction_policy.py, router.py, legacy_matrix.py",
+    "0DTE:decision_engine.py"
+  ],
+  "files_migrated": [
+    "0DTE:policy/contracts.py -> src/spy_der/contracts/policies.py",
+    "0DTE:policy/legacy_matrix.py / gate path -> src/spy_der/policies/legacy.py",
+    "0DTE:policy/prediction_policy.py -> src/spy_der/policies/v2.py",
+    "NEW V3 value/ranking adapter -> src/spy_der/policies/v3.py",
+    "0DTE:policy/router.py -> src/spy_der/policies/ensemble.py + disagreement.py",
+    "0DTE:decision_engine.py synthesis path -> src/spy_der/synthesis/deterministic.py"
+  ],
+  "files_merged": [
+    "src/spy_der/synthesis/engine.py now delegates to Phase 9 ensemble synthesis"
+  ],
+  "files_replaced": [],
+  "files_deferred": [
+    "Full legacy matrix STRUCTURE_TO_FAMILIES routing table",
+    "Ablation policy variants",
+    "AI DecisionAgent packet assembly (Phase 10)",
+    "Promotion workflow UI / journal disagreement dashboards"
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Policies never mutate candidates or call execution.",
+    "Hard vetoes force ABSTAIN.",
+    "Shadow mode keeps Legacy authoritative while recording disagreement.",
+    "Champion mode prefers V3 with explicit legacy fallback on missing inputs."
+  ],
+  "intentional_changes": [
+    "PolicyAction uses SELECT_CANDIDATE/NO_EDGE/ABSTAIN (spec §36/§44 alignment).",
+    "NO_EDGE maps to SystemAction.ABSTAIN at the Phase-0 SystemDecision boundary.",
+    "V3 policy consumes ranking/meta rather than System A PredictionBundle-only path."
+  ],
+  "deliverables": [
+    "src/spy_der/contracts/policies.py",
+    "src/spy_der/policies/**",
+    "src/spy_der/synthesis/deterministic.py",
+    "tests/unit/test_phase9_policies.py",
+    "tests/parity/test_phase9_policy_parity.py",
+    "baseline/expected_outputs/phase9/policy_synthesis.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (126 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "Legacy matrix structure-code routing is not fully ported.",
+    "AgentDecisionPacket assembly remains Phase 10."
+  ],
+  "rollback": [
+    "Revert the Phase 9 commit(s). Phases 0-8 are unaffected."
+  ],
+  "next_phase": "Phase 10 — Agent framework and Grok (spec §63)."
+}

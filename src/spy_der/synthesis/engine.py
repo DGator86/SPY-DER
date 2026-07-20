@@ -5,10 +5,11 @@ from spy_der.contracts import (
     LegacyDecisionView,
     MarketForecastBundle,
     RiskEnvelope,
-    SystemAction,
     SystemDecision,
     V3DecisionView,
 )
+from spy_der.contracts.policies import PolicyMode
+from spy_der.synthesis.deterministic import synthesize_from_policies
 
 
 def synthesize_decision(
@@ -20,55 +21,13 @@ def synthesize_decision(
     envelope: RiskEnvelope,
     required_inputs_present: bool,
 ) -> SystemDecision:
-    if not required_inputs_present:
-        return SystemDecision(
-            action=SystemAction.ABSTAIN,
-            reason="required input missing",
-            forecast_model_version=forecast.model_version,
-            candidate_universe_id=universe.universe_id,
-            veto_codes=tuple(v.code for v in legacy.hard_vetoes),
-        )
-
-    if legacy.hard_vetoes:
-        return SystemDecision(
-            action=SystemAction.ABSTAIN,
-            reason="hard veto present",
-            forecast_model_version=forecast.model_version,
-            candidate_universe_id=universe.universe_id,
-            veto_codes=tuple(v.code for v in legacy.hard_vetoes),
-        )
-
-    if not (legacy.permissions.options_allowed and legacy.permissions.new_positions_allowed):
-        return SystemDecision(
-            action=SystemAction.ABSTAIN,
-            reason="strategy permissions deny action",
-            forecast_model_version=forecast.model_version,
-            candidate_universe_id=universe.universe_id,
-        )
-
-    by_id = {c.candidate_id: c for c in universe.candidates}
-    chosen_id = next((cid for cid in v3_view.ranking.ordered_candidate_ids if cid in by_id), None)
-    if chosen_id is None:
-        return SystemDecision(
-            action=SystemAction.ABSTAIN,
-            reason="no approved candidates",
-            forecast_model_version=forecast.model_version,
-            candidate_universe_id=universe.universe_id,
-        )
-
-    chosen = by_id[chosen_id]
-    if chosen.max_loss is None or chosen.max_loss > envelope.max_defined_risk_per_trade:
-        return SystemDecision(
-            action=SystemAction.ABSTAIN,
-            reason="candidate exceeds deterministic risk envelope",
-            forecast_model_version=forecast.model_version,
-            candidate_universe_id=universe.universe_id,
-        )
-
-    return SystemDecision(
-        action=SystemAction.SELECT_CANDIDATE,
-        selected_candidate_id=chosen_id,
-        reason="selected top-ranked approved candidate",
-        forecast_model_version=forecast.model_version,
-        candidate_universe_id=universe.universe_id,
+    """Synthesize via Phase 9 policy ensemble (Legacy-authoritative shadow mode)."""
+    return synthesize_from_policies(
+        legacy=legacy,
+        forecast=forecast,
+        universe=universe,
+        v3_view=v3_view,
+        envelope=envelope,
+        required_inputs_present=required_inputs_present,
+        mode=PolicyMode.SHADOW,
     )
