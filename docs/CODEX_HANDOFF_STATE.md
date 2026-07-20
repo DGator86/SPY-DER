@@ -17,7 +17,28 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 10 — Agent framework and Grok: COMPLETE.** Next up: Phase 11.
+**Phase 11 — Risk: COMPLETE.** Next up: Phase 12.
+
+Phase 11 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ Risk contracts — `contracts/risk.py`: `RiskEnvelope`, `RiskDecision`,
+  `RiskVeto`, `RiskCheck`, `RiskLimits`, `OperationalState`, `PortfolioState`,
+  `LockoutState` (compat aliases `allowed`/`max_defined_risk_per_trade`).
+- ✅ Envelope — `risk/envelope.py` `build_risk_envelope` (budgets, slots, vetoes).
+- ✅ Firewall — `risk/firewall.py` §50 checks + sizing; `RiskFirewallService`.
+- ✅ Sizing — `risk/sizing.py` half-Kelly `scale_risk` + `contracts_for_risk`.
+- ✅ Portfolio limits — `risk/portfolio.py` session-scoped `PortfolioTracker`.
+- ✅ Lockouts — `risk/lockout.py` warmup / entry cutoff / emergency / catalyst.
+- ✅ Stale + duplicates — `risk/duplicates.py` TTL freshness + signature guard.
+- ✅ Parity — `baseline/expected_outputs/phase11/risk_decision.json`.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (145 tests) all pass.
+See `migrations/manifests/phase-11.json`. Live broker account sync and RAS
+position monitor remain deferred.
+
+---
+
+### Phase 10 — Agent framework and Grok: COMPLETE
 
 Phase 10 deliverables (spec §63) — implemented against pinned System A source:
 
@@ -334,27 +355,26 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-Execute **Phase 10 — Agent framework and Grok** (spec §63):
+Execute **Phase 12 — Execution and positions** (spec §63):
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 10 only: provider-neutral protocol, registry, packet,
-deterministic/recorded/mock agents, Grok adapter, prompt builder, response
-parser, validation, security, and shadow comparison.
+Execute Phase 12 only: order state machine, fill simulator, isolated
+accounts, position state machine, exits, restart, and reconciliation.
 Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-10.json.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-12.json.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
 
-System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 10
-from agent framework modules mapped in `docs/MIGRATION_MAP.md`.
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 12
+from execution/position modules mapped in `docs/MIGRATION_MAP.md`.
 
-Phases 1-9 provide ingestion through deterministic policy synthesis:
+Phases 1-11 provide ingestion through risk firewall:
 `spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
 `spy_der.training`, `spy_der.evaluation.labels`, `spy_der.forecasting`,
 `spy_der.candidates`, `spy_der.economics`, `spy_der.candidate_value`,
-`spy_der.policies`, and `spy_der.synthesis`.
+`spy_der.policies`, `spy_der.synthesis`, `spy_der.agents`, and `spy_der.risk`.
 
 Per-run instruction for every subsequent phase (spec §70):
 
