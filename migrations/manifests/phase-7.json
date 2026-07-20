@@ -56,7 +56,7 @@
   "tests": [
     {"name": "ruff check .", "result": "pass"},
     {"name": "mypy src (strict)", "result": "pass"},
-    {"name": "pytest (110 tests)", "result": "pass"}
+    {"name": "pytest (111 tests)", "result": "pass"}
   ],
   "known_gaps": [
     "Factory does not yet apply Legacy hard-veto family filters automatically.",
