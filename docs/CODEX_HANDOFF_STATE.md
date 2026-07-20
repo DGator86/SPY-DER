@@ -17,13 +17,35 @@ be overridden here.
 
 ## Current Phase
 
-**AI Decision Authority — COMPLETE.** Phase 17 (controlled cutover) still requires
-explicit owner approval. Next engineering work: VPS runner + 0DTE Vercel
-dashboard parallel track for `system_b_grok`.
+**Phase 17 — Controlled cutover: COMPLETE** (owner approved: "Phase 17 activate.").
+
+System B is the primary research/shadow runtime. System A is retained rollback.
+Agent authority is independently controlled. Live execution remains disabled.
+
+### Phase 17 — Controlled cutover: COMPLETE
+
+Owner approval received. Deliverables (spec §63):
+
+- ✅ System B primary research/shadow — `activate_controlled_cutover` +
+  `PrimaryResearchRuntime`.
+- ✅ System A retained rollback — `rollback_manifest` + `rollback_to_system_a`.
+- ✅ Agent authority independently controlled — `AgentAuthorityControl` /
+  `AgentDeploymentManifest` (spec §58); toggle without changing primary.
+- ✅ Live execution still disabled — `LiveExecutionGate` fail-closed; enable forbidden.
+- ✅ Cutover runbook + journal/notification events.
+- ✅ Parity — `baseline/expected_outputs/phase17/cutover_snapshot.json`.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (193 tests) all pass.
+See `migrations/manifests/phase-17.json`.
+
+Optional follow-on (not a numbered phase): VPS continuous runner + 0DTE Vercel
+dashboard parallel track consuming `PrimaryResearchRuntime.live_state()`.
+
+---
 
 ### AI Decision Authority (post-Phase-16 gap close)
 
-Owner intent: the AI is the decision maker — entry, exit, tracker, analyzer;
+Owner intent: the AI is the decision maker - entry, exit, tracker, analyzer;
 every major lever is watched by the AI.
 
 Deliverables:
@@ -31,17 +53,14 @@ Deliverables:
 - ✅ Position decision contracts — `PositionDecisionPacket`,
   `AgentPositionAction` (HOLD/REDUCE/CLOSE), `AgentPositionResponse`.
 - ✅ `DecisionAgent.decide_position` on Grok / Deterministic / Mock / Recorded.
-- ✅ `HttpGrokTransport` — stdlib xAI HTTP; auto-attached when `XAI_API_KEY` set.
-- ✅ `AiDecisionAuthority` — entry + exit + tracker + analyzer + journal events.
-- ✅ `ShadowAiLoop` — paper shadow loop wiring AI into open/manage/close.
+- ✅ `HttpGrokTransport` - stdlib xAI HTTP; auto-attached when `XAI_API_KEY` set.
+- ✅ `AiDecisionAuthority` - entry + exit + tracker + analyzer + journal events.
+- ✅ `ShadowAiLoop` - paper shadow loop wiring AI into open/manage/close.
 - ✅ Hard exit floors still override AI HOLD (stop/eod/emergency/ras/expiration).
 - ✅ Parity — `baseline/expected_outputs/ai_authority/live_state.json`.
 
 Checks: `ruff check .`, `mypy src` (strict), and `pytest` (184 tests) all pass.
 See `migrations/manifests/ai-decision-authority.json`.
-
-Still deferred (not Phase 17): continuous VPS process and 0DTE Vercel dashboard
-panel that consumes `ShadowAiLoop.live_state()`.
 
 ---
 
@@ -478,31 +497,21 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-**STOP — Phase 17 requires explicit repository-owner approval** (spec §63).
+**Migration phases 0–17 are COMPLETE** per spec §63.
 
-Do **not** execute Phase 17 (Controlled cutover) until the repository owner
-explicitly approves. Phase 17 would make System B the primary research/shadow
-runtime while retaining System A as rollback; live execution remains disabled.
+System B is the primary research/shadow runtime under controlled cutover.
+Live trading authority remains excluded. Optional engineering follow-ons:
 
-When approved, the Phase 17 instruction is:
+1. Continuous VPS runner publishing `PrimaryResearchRuntime.live_state()`.
+2. 0DTE Vercel dashboard parallel panel for `system_b_grok`.
 
-```
-Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 17 only after explicit repository-owner approval:
-System B primary research/shadow runtime, System A retained rollback,
-agent authority independently controlled, live execution still disabled.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-17.json.
-Run the required tests.
-Report changed files, results, blockers, and rollback.
-```
-
-Phases 1-16 are complete through dual-runtime parity:
+Phases 1-17 complete:
 `spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
 `spy_der.training`, `spy_der.evaluation`, `spy_der.forecasting`,
 `spy_der.candidates`, `spy_der.economics`, `spy_der.candidate_value`,
 `spy_der.policies`, `spy_der.synthesis`, `spy_der.agents`, `spy_der.risk`,
 `spy_der.execution`, `spy_der.positions`, `spy_der.journal`,
-`spy_der.replay`, `spy_der.deployment`, and `spy_der.runtime`.
+`spy_der.replay`, `spy_der.deployment` (incl. cutover), and `spy_der.runtime`.
 
 Per-run instruction for every subsequent phase (spec §70):
 

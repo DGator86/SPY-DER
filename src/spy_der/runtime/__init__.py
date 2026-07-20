@@ -1,4 +1,4 @@
-"""Runtime orchestration helpers (AI loop, dual-runtime parity, etc.)."""
+"""Runtime orchestration helpers (AI loop, cutover primary, dual-runtime parity)."""
 
 from spy_der.runtime.ai_loop import AiLoopTickResult, ShadowAiLoop, default_approved_exits
 from spy_der.runtime.parity import (
@@ -13,6 +13,7 @@ from spy_der.runtime.parity import (
     rehearse_rollback,
     run_dual_runtime_parity,
 )
+from spy_der.runtime.primary import PrimaryResearchRuntime, PrimaryTickResult
 
 __all__ = [
     "AiLoopTickResult",
@@ -21,6 +22,8 @@ __all__ = [
     "ParityBucket",
     "ParityInputs",
     "PerformanceSample",
+    "PrimaryResearchRuntime",
+    "PrimaryTickResult",
     "ShadowAiLoop",
     "assert_identical_inputs",
     "compare_parity_buckets",

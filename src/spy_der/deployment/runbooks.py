@@ -46,6 +46,19 @@ RUNBOOKS: dict[str, Runbook] = {
             "Publish CRITICAL notification topic=deployment.rollback.",
         ),
     ),
+    "cutover": Runbook(
+        runbook_id="cutover",
+        title="Phase 17 controlled cutover",
+        steps=(
+            "Confirm explicit repository-owner approval (phase-17).",
+            "Call activate_controlled_cutover(approval=...).",
+            "Verify System B is primary research/shadow runtime.",
+            "Verify System A is retained as rollback target.",
+            "Confirm agent authority is independently controllable.",
+            "Confirm live execution gate remains disabled.",
+            "On incident: ControlledCutover.rollback_to_system_a(reason=...).",
+        ),
+    ),
 }
 
 
