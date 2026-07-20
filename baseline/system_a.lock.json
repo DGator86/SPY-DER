@@ -1,0 +1,33 @@
+{
+  "repository": "DGator86/0DTE",
+  "commit_sha": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "captured_at": "2026-07-20T04:46:18Z",
+  "python_version": "3.11",
+  "requirements_hash": "sha256:ed4c336e5df9f2065040657a2063ef961a70cfd8cb7facd890216ba899a5ed9d",
+  "tree_manifest_hash": "sha256:6d532176e7f391acb8a079b48772be8e581bc8a69002ca4599006fd09afd8e31",
+  "test_inventory_hash": "sha256:b3e834dd93dc998f24e6187d8f8ed0b3ba808d52e3bc8a5de00b5b7e3619fc10",
+  "source_access_method": "github",
+  "notes": "Immutable System A behavioral baseline. Pinned during SPY-DER Phase 0 (source access and baseline). No production code has been migrated against this pin.",
+  "provenance": {
+    "source_ref": "refs/heads/main",
+    "source_head_subject": "Merge pull request #128 from DGator86/agent/canonical-snapshot-shadow-runtime",
+    "clone_method": "shallow (git clone --depth 1)",
+    "clone_path": "/workspace/0dte",
+    "captured_by": "SPY-DER Phase 0 execution",
+    "tracked_files": 305,
+    "python_modules": 257,
+    "python_loc": 62211,
+    "test_files": 112
+  },
+  "artifacts": {
+    "tree_manifest": "baseline/manifests/system_a_tree.txt",
+    "test_inventory": "baseline/manifests/system_a_tests.txt",
+    "requirements_snapshot": "baseline/manifests/system_a_requirements.txt"
+  },
+  "hash_algorithm": "sha256",
+  "hash_definitions": {
+    "requirements_hash": "sha256 of baseline/manifests/system_a_requirements.txt (verbatim copy of 0DTE requirements.txt at the pinned commit)",
+    "tree_manifest_hash": "sha256 of baseline/manifests/system_a_tree.txt (output of `git ls-tree -r <commit_sha>`)",
+    "test_inventory_hash": "sha256 of baseline/manifests/system_a_tests.txt (sorted list of pinned test files)"
+  }
+}

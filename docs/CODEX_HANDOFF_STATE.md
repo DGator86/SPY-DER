@@ -1,200 +1,123 @@
-# CODEX HANDOFF STATE
-
-## Permanent Project Rules
-
-The following Packet 0 rules are permanent and apply to every subsequent packet.
-
-1. Treat **System A** as the behavioral baseline and source of truth until an explicitly approved replacement has demonstrated parity or an intentional, documented change.
-2. Preserve System A behavior through adapters and comparison; do not silently rewrite, replace, or discard validated behavior.
-3. Keep System B modular, typed, deterministic, and testable.
-4. Keep structural evidence, permissions, and hard vetoes separate from forecasts and policy decisions.
-5. Keep prediction outputs separate from policy outputs.
-6. Hard vetoes are non-bypassable; no downstream component may override them.
-7. The deterministic risk firewall is the final risk authority.
-8. Synthesis may not increase or bypass the deterministic risk envelope.
-9. Generate only immutable, bounded-risk options candidates with a defined maximum loss.
-10. Reject undefined-risk and stock-dependent candidates.
-11. Treat missing required inputs as explicit abstention or failure, never as a silent default.
-12. Use canonical, schema-versioned contracts at subsystem boundaries.
-13. Require timezone-aware market and journal timestamps.
-14. Retain decision provenance in the canonical system decision.
-15. Make order and position transitions explicit, validated state-machine transitions.
-16. Persist journal events using deterministic serialization and support deterministic replay.
-17. Compare systems only with exactly matching replay manifests and inputs; otherwise fail closed.
-18. Test every behavioral change for System A parity or document and test it as an intentional change.
-19. Do not add live brokerage integrations, order-routing code, order submission capability, or autonomous trading authority.
-20. Do not fabricate predictive models, migration claims, performance claims, or validated-module mappings without supporting evidence.
-
-## Work Completed
-
-- Created this durable handoff record.
-- Recorded the Packet 0 permanent rules as the governing constraints for future work.
-
-## Files Inspected
-
-- `.github/copilot-instructions.md`
-- `README.md`
-- `docs/ARCHITECTURE.md`
-- `docs/COMPARISON_PROTOCOL.md`
-- `docs/CONTRACT_CATALOG.md`
-- `docs/DECISION_LIFECYCLE.md`
-- `docs/IMPLEMENTATION_ROADMAP.md`
-- `docs/MIGRATION_MAP.md`
-- `docs/SAFETY_INVARIANTS.md`
-- `docs/SYSTEM_A_VS_SYSTEM_B.md`
-
-## Files Changed
-
-- `docs/CODEX_HANDOFF_STATE.md` (created)
-
-## Tests Run
-
-- Not run: this packet adds documentation only.
-
-## Decisions Made
-
-- This document is the persistent handoff location for completed work, decisions, unresolved issues, and the expected next packet.
-- Packet 0 constraints are recorded as permanent project rules rather than task-local guidance.
-
-## Unresolved Issues
-
-- The legacy System A adapter and validated module mapping remain intentionally unimplemented.
-- No System A replay corpus or parity baseline has yet been recorded in the repository.
-
-## Next Expected Packet
-
-- Begin the next approved implementation packet while preserving the permanent rules above; update this handoff record with the packet scope, changed files, checks, decisions, and remaining issues.
 # SPY-DER Codex Handoff State
 
-## Repository State
+This file is an **operational progress log**. It records completed work, active
+blockers, decisions, and the next phase. It is subordinate to
+`docs/SPY_DER_MASTER_SPEC.md`, which is the governing specification and may not
+be overridden here.
 
-- System B workspace: `/workspace/SPY-DER`
-- System B branch: `work`
-- Initial detected commit: `e4106b1315836d302f4c82079fb13acd3b9e4002`
-- System B remote: not yet established
-- System A repository: `DGator86/0DTE`
-- System A workspace access: not yet established
-- Current phase: handoff initialized; repository access pending
+## Repository Context
 
-## Permanent Project Rules
+- Target system (System B): `DGator86/SPY-DER`
+- Source system (System A): `DGator86/0DTE`
+- Governing spec: `docs/SPY_DER_MASTER_SPEC.md`
+- Target Python runtime: 3.12
+- Canonical package (per spec §4.2): `src/spy_der/`
+- Current scaffold package present in repo: `src/system_b/` (predates the spec;
+  scheduled for normalization to `spy_der` in Phase 1)
+- Live trading authority: excluded
 
-1. System A is the existing implementation, behavioral baseline, and migration source.
-2. System B is the rebuilt unified architecture.
-3. Do not create another empty scaffold.
-4. Migrate actual working Legacy, V2, and V3 implementations.
-5. Preserve System A behavior through parity tests or document and test intentional changes.
-6. Legacy supplies structural interpretation, evidence, permissions, and hard vetoes.
-7. V2 forecasts future underlying behavior.
-8. V3 supplies advanced forecasting, candidate economics, ranking, uncertainty, and abstention.
-9. Forecast outputs must remain separate from policy outputs.
-10. Structural evidence and permissions must remain separate from forecasts.
-11. One deterministic candidate factory constructs every legal option candidate.
-12. Candidates must be immutable and have deterministically bounded maximum loss.
-13. Undefined-risk and stock-dependent candidates are prohibited.
-14. Missing required inputs produce explicit failure or abstention, never silent defaults.
-15. Grok is the initial default AI decision agent.
-16. The AI-agent interface must remain provider-neutral and replaceable.
-17. The AI may select only an existing candidate ID.
-18. The AI may reduce size but may never increase or bypass deterministic risk.
-19. Hard vetoes are non-bypassable.
-20. The deterministic risk firewall is final risk authority.
-21. Canonical subsystem contracts must be typed, immutable, and schema-versioned.
-22. Market and journal timestamps must be timezone-aware.
-23. Order and position changes must use validated state-machine transitions.
-24. Journal events must use deterministic serialization and support deterministic replay.
-25. System comparisons require exactly matching replay manifests and inputs.
-26. Live brokerage integration, order submission, and autonomous live-trading authority are prohibited.
-27. Every migration must be reversible.
-28. Do not claim migration, validation, performance, or parity without supporting code and tests.
-29. Missing System A access must be recorded as a blocker rather than guessed around.
-30. Every completed packet must update this file.
+## Current Phase
+
+**Phase 0 — Source access and baseline: COMPLETE.** Next up: Phase 1.
+
+Phase 0 deliverables (spec §63) — all produced against real, pinned source:
+
+- ✅ System A source access — `DGator86/0DTE` cloned to `/workspace/0dte`
+  (GitHub-authorized, shallow), side-by-side with System B per spec §5.
+- ✅ Exact System A source commit — `de4a6e7ced98ff97c778e8b4418c08848d7ce82d`.
+- ✅ `baseline/system_a.lock.json` — spec §4.1 schema, real SHA + reproducible
+  `sha256` hashes for tree / test inventory / requirements.
+- ✅ `docs/SOURCE_PROVENANCE.md` — access method, pin, verification procedure.
+- ✅ `docs/CURRENT_SYSTEM_INVENTORY.md` — full inventory (305 files, 257 Python
+  modules, 62,211 LOC, 112 tests) from the pinned tree.
+- ✅ Source-validated `docs/MIGRATION_MAP.md` — replaces the empty provisional
+  map; every spec §62 source path confirmed to exist, plus the real source the
+  provisional map omitted (`gex/`, `zerodte/`, `adaptive_learning/`, etc.).
+- ✅ `migrations/manifests/phase-0.json` — spec §64 manifest.
 
 ## Completed Work
 
-- Created the durable Codex handoff record.
-- Consolidated the duplicated Packet 0 state.
-- Recorded the permanent project rules.
+- Authored the authoritative master specification at
+  `docs/SPY_DER_MASTER_SPEC.md`.
+- Consolidated this handoff log under the master spec.
+- **Established System A access and executed Phase 0 against the pinned source**
+  (commit `de4a6e7`): pinned the baseline, wrote source provenance, inventoried
+  the full System A repository, and replaced the provisional migration map with a
+  source-validated one.
+- **Key finding:** System A is itself mid-migration into a `zerodte/` package
+  (`contracts/`, `runtime/`, `agent/`, `adapters/`) that mirrors SPY-DER's target
+  layout (spec §10). It is the strongest migration anchor for the contracts,
+  runtime, and AI-layer phases — see `CURRENT_SYSTEM_INVENTORY.md` §7 and
+  `MIGRATION_MAP.md` §11.
 
-## Files Inspected
+## Files Changed (this run)
 
-- `.github/copilot-instructions.md`
-- `README.md`
-- `docs/ARCHITECTURE.md`
-- `docs/COMPARISON_PROTOCOL.md`
-- `docs/CONTRACT_CATALOG.md`
-- `docs/DECISION_LIFECYCLE.md`
-- `docs/IMPLEMENTATION_ROADMAP.md`
-- `docs/MIGRATION_MAP.md`
-- `docs/SAFETY_INVARIANTS.md`
-- `docs/SYSTEM_A_VS_SYSTEM_B.md`
-- `docs/CODEX_HANDOFF_STATE.md`
-- System A repository: `DGator86/0DTE`
-- System A workspace access: not yet established
-- Current phase: handoff initialization
-
-## Permanent Project Rules
-
-1. System A is the existing implementation and migration baseline.
-2. System B is the rebuilt production architecture.
-3. Do not create another empty scaffold.
-4. Migrate real Legacy, V2, and V3 implementations.
-5. Legacy supplies structural interpretation, permissions, evidence, and vetoes.
-6. V2 forecasts future underlying behavior.
-7. V3 supplies advanced forecasts, candidate economics, ranking, uncertainty, and abstention.
-8. One deterministic candidate factory constructs every legal option candidate.
-9. Every candidate must have deterministically bounded maximum loss.
-10. No strategy may require stock ownership.
-11. Grok is the initial default AI decision agent.
-12. The AI-agent interface must remain provider-neutral and replaceable.
-13. AI may select only an existing candidate ID.
-14. AI may reduce size but may never increase deterministic risk.
-15. Deterministic risk remains final authority.
-16. Live broker execution is not authorized.
-17. Every migration requires parity tests or documented intentional-change tests.
-18. Every migration must be reversible.
-19. Do not claim a component is migrated without working code and tests.
-20. Missing System A access must be recorded as a blocker, not guessed around.
-
-## Completed Work
-
-- Persistent handoff file initialized.
-
-## Files Inspected
-
-- Repository metadata only.
-
-## Files Changed
-
-- `docs/CODEX_HANDOFF_STATE.md`
+- `baseline/system_a.lock.json` (created)
+- `baseline/manifests/system_a_tree.txt` (created)
+- `baseline/manifests/system_a_tests.txt` (created)
+- `baseline/manifests/system_a_requirements.txt` (created)
+- `docs/SOURCE_PROVENANCE.md` (created)
+- `docs/CURRENT_SYSTEM_INVENTORY.md` (created)
+- `docs/MIGRATION_MAP.md` (replaced provisional/empty map with source-validated map)
+- `migrations/manifests/phase-0.json` (created)
+- `docs/CODEX_HANDOFF_STATE.md` (this update)
 
 ## Tests Run
 
-- File existence check.
-- Markdown content inspection.
-- Duplicate-heading check.
+- No code was migrated, so no runtime tests apply. Baseline integrity was
+  verified by reproducing the lock-file hashes against the pinned tree (see
+  `migrations/manifests/phase-0.json` `tests[]`): tree-manifest, test-inventory,
+  and requirements `sha256` all reproduce, and the pinned commit resolves to
+  `de4a6e7…`.
 
 ## Active Blockers
 
-- System A is not currently available in the workspace.
-- The System B checkout does not yet have a confirmed Git remote.
-- No pinned System A replay corpus or parity baseline exists yet.
+- **None.** The prior blocker (System A source access) is resolved — `DGator86/0DTE`
+  is cloned at `/workspace/0dte` and pinned in `baseline/system_a.lock.json`.
 
 ## Decisions
 
-- System A inspection and baseline pinning will wait until repository access is established.
-- No System A implementation mapping may be described as validated until the source repository is inspected.
-- System B-local work may proceed only when a packet does not require unavailable System A source code.
+- `docs/SPY_DER_MASTER_SPEC.md` is the single authoritative specification. Prior
+  scaffold docs are subordinate to it.
+- No System A module is described as migrated, validated, or at parity: the
+  migration map is validated for source **existence** only; behavioral parity is
+  proven per-phase via parity tests (spec §65).
+- The baseline pin is immutable by hash; an upstream rewrite/removal of commit
+  `de4a6e7` invalidates it (fail-closed, spec §5) and requires re-running Phase 0
+  against a new pin.
+- `baseline/fixtures/` and `baseline/expected_outputs/` are created empty; parity
+  fixtures are captured starting in Phase 1.
+- The existing `src/system_b/` scaffold does not count as migration; it is
+  normalized to `src/spy_der/` beginning in Phase 1.
 
-## Next Expected Packet
+## Next Phase
 
-Establish and verify access to `DGator86/SPY-DER` and `DGator86/0DTE`.
-- The System B checkout currently has no configured Git remote.
+Execute **Phase 1 — Package and canonical ingestion foundation** (spec §63):
 
-## Decisions
+```
+Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
+Execute Phase 1 only: normalize the spy_der package; implement common and market
+contracts, the market calendar, feed provenance and freshness, the canonical
+snapshot assembler, the System A snapshot adapter, deterministic IDs, and initial
+parity fixtures.
+Do not work on later phases.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-1.json.
+Run the required tests.
+Report changed files, results, blockers, and rollback.
+```
 
-- System A inspection and baseline pinning will not be attempted until repository access exists.
-- System B-local work may proceed only when the current packet does not require System A source inspection.
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 1
+from the `zerodte/` canonical package and the Track-A snapshot types
+(`gate_scorer.MarketSnapshot`, `prediction/canonical_snapshot.py`,
+`prediction/feed_status.py`).
 
-## Next Expected Packet
+Per-run instruction for every subsequent phase (spec §70):
 
-Establish or verify access to `DGator86/0DTE` and record source provenance.
+```
+Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
+Execute Phase <NUMBER> only.
+Do not work on later phases.
+Update docs/CODEX_HANDOFF_STATE.md and the phase migration manifest.
+Run the required tests.
+Report changed files, results, blockers, and rollback.
+```

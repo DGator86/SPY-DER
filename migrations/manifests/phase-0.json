@@ -1,0 +1,84 @@
+{
+  "phase": 0,
+  "phase_name": "Source access and baseline",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63, §71",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "5707d5e18c5d74968e1380f42e479d2af98606b3",
+  "generated_at": "2026-07-20T04:46:18Z",
+  "files_inspected": [
+    "0DTE:HANDOFF.md",
+    "0DTE:AGENTS.md",
+    "0DTE:requirements.txt",
+    "0DTE:.github/workflows/ci.yml",
+    "0DTE:pyproject.toml",
+    "0DTE (full tree manifest, 305 tracked files) via git ls-tree -r",
+    "0DTE (112 test files) via git ls-files",
+    "SPY-DER:docs/SPY_DER_MASTER_SPEC.md",
+    "SPY-DER:docs/CODEX_HANDOFF_STATE.md",
+    "SPY-DER:docs/MIGRATION_MAP.md (prior provisional)"
+  ],
+  "files_migrated": [],
+  "files_merged": [],
+  "files_replaced": [],
+  "files_deferred": [
+    "All System A production code. Phase 0 pins and inventories source only; migration begins in Phase 1 (spec §63)."
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [],
+  "intentional_changes": [],
+  "phase_0_deliverables": [
+    "baseline/system_a.lock.json",
+    "baseline/manifests/system_a_tree.txt",
+    "baseline/manifests/system_a_tests.txt",
+    "baseline/manifests/system_a_requirements.txt",
+    "docs/SOURCE_PROVENANCE.md",
+    "docs/CURRENT_SYSTEM_INVENTORY.md",
+    "docs/MIGRATION_MAP.md (source-validated, replaces empty provisional)",
+    "migrations/manifests/phase-0.json"
+  ],
+  "tests": [
+    {
+      "name": "baseline hash reproduction",
+      "command": "git -C /workspace/0dte ls-tree -r HEAD | sha256sum",
+      "expected": "6d532176e7f391acb8a079b48772be8e581bc8a69002ca4599006fd09afd8e31",
+      "result": "pass"
+    },
+    {
+      "name": "test inventory hash",
+      "command": "git -C /workspace/0dte ls-files 'tests/' 'test_*.py' '**/test_*.py' | sort | sha256sum",
+      "expected": "b3e834dd93dc998f24e6187d8f8ed0b3ba808d52e3bc8a5de00b5b7e3619fc10",
+      "result": "pass"
+    },
+    {
+      "name": "requirements hash",
+      "command": "sha256sum baseline/manifests/system_a_requirements.txt",
+      "expected": "ed4c336e5df9f2065040657a2063ef961a70cfd8cb7facd890216ba899a5ed9d",
+      "result": "pass"
+    },
+    {
+      "name": "pinned commit check",
+      "command": "git -C /workspace/0dte rev-parse HEAD",
+      "expected": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+      "result": "pass"
+    },
+    {
+      "name": "migration map source-existence validation",
+      "detail": "Every source path referenced in spec §62 provisional map confirmed present in the pinned tree; 0 missing, 0 fabricated.",
+      "result": "pass"
+    }
+  ],
+  "known_gaps": [
+    "No parity fixtures or expected-output captures exist yet; baseline/fixtures/ and baseline/expected_outputs/ are created empty and populated starting Phase 1 (spec §63 Phase 1 'initial parity fixtures').",
+    "Migration map is validated for source EXISTENCE only; behavioral correctness of each mapping is proven per-phase via parity tests (spec §65).",
+    "System A carries its own honest gaps (HANDOFF.md §5): stale intraday OI-GEX, CVD proxy zero on mid-bar closes, fixed non-adaptive scales, observation-only signal tranche with no gate power. Carried forward so later phases do not misread them as migration defects.",
+    "Clone is shallow (--depth 1); full history requires `git fetch --unshallow` before blame/log/bisect-dependent parity work."
+  ],
+  "rollback": [
+    "Phase 0 introduces no runtime code and changes no System A source; it is documentation, a baseline pin, and manifests only.",
+    "To revert: `git revert` (or drop) the Phase 0 commit on branch claude/spy-der-phase-0-handoff-0ctzxv. Removing baseline/system_a.lock.json unpins the baseline with no runtime effect.",
+    "The System A pin is immutable by hash; if upstream rewrites/removes commit de4a6e7, the stored hashes stop reproducing and Phase 0 must be re-run against a new pin (fail-closed, spec §5)."
+  ],
+  "next_phase": "Phase 1 — Package and canonical ingestion foundation (spec §63): spy_der package normalization, common + market contracts, market calendar, feed provenance/freshness, canonical snapshot assembler, System A snapshot adapter, deterministic IDs, initial parity fixtures."
+}
