@@ -1,0 +1,72 @@
+{
+  "phase": 8,
+  "phase_name": "Economics and candidate value",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 8), §33, §34, §35",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "921899f",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:execution/fill_records.py, execution_cost.py, execution/estimate_v3.py",
+    "0DTE:prediction/models/fill.py, fill_probability.py, fill_concession.py",
+    "0DTE:prediction/fill_training.py",
+    "0DTE:prediction/models/candidate_value.py, candidate_rank.py, trade_meta.py",
+    "0DTE:prediction/candidate_ranker.py"
+  ],
+  "files_migrated": [
+    "0DTE:execution/fill_records.py -> src/spy_der/execution/fill_records.py + contracts/economics.py FillRecord",
+    "0DTE:execution_cost.py + estimate_v3.py -> src/spy_der/economics/{pricing,service,fill_prior}.py",
+    "0DTE:prediction/models/fill*.py + fill_training.py -> src/spy_der/economics/models/* + fill_training.py",
+    "0DTE:prediction/models/candidate_value.py -> src/spy_der/candidate_value/models/value.py",
+    "0DTE:prediction/models/candidate_rank.py + candidate_ranker utility -> ranking.py + utility.py",
+    "0DTE:prediction/models/trade_meta.py -> src/spy_der/candidate_value/models/meta.py"
+  ],
+  "files_merged": [],
+  "files_replaced": [],
+  "files_deferred": [
+    "Full nested HP search / HGB challengers for candidate-value heads",
+    "Pairwise ranker training path (absolute utility ranking shipped first)",
+    "Trained TradeMetaModel (threshold meta-action shipped)",
+    "Broad-family fill fallback taxonomy",
+    "Venue/account-specific fee schedules and live broker adapters"
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Fill provenance: no simulated broker_actual; advisory/hypothetical unfilled; midpoint diagnostics never filled.",
+    "Fill fraction 0=mid, 1=natural; penalties only worsen concession.",
+    "expected/conservative fill prices never better than mid/expected (credit convention).",
+    "Hard vetoes override statistical meta-action.",
+    "Ranking does not mutate candidate universes."
+  ],
+  "intentional_changes": [
+    "Economics contracts use Decimal at the boundary.",
+    "CandidateValueForecast is the Phase-8 value contract; Phase-0 CandidateForecast stub retained for V3DecisionView.",
+    "Fill probability / concession models are baseline logistic/Huber ports.",
+    "Ranking uses absolute utility + deterministic tie-break; pairwise model deferred."
+  ],
+  "deliverables": [
+    "src/spy_der/contracts/{economics,value}.py",
+    "src/spy_der/execution/fill_records.py",
+    "src/spy_der/economics/**",
+    "src/spy_der/candidate_value/**",
+    "tests/unit/test_phase8_economics.py",
+    "tests/parity/test_phase8_economics_parity.py",
+    "baseline/expected_outputs/phase8/candidate_economics.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (119 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "Pairwise ranker fit path not yet exposed.",
+    "Candidate-value quantiles are training-distribution shifted, not per-row HGB heads.",
+    "Policy adapters remain Phase 9."
+  ],
+  "rollback": [
+    "Revert the Phase 8 commit(s). Phases 0-7 are unaffected.",
+    "No new third-party dependencies were added in Phase 8."
+  ],
+  "next_phase": "Phase 9 — Policies and deterministic synthesis (spec §63)."
+}

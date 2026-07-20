@@ -17,7 +17,28 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 7 — Candidate factory: COMPLETE.** Next up: Phase 8.
+**Phase 8 — Economics and candidate value: COMPLETE.** Next up: Phase 9.
+
+Phase 8 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ Fill records — `execution/fill_records.py` + `contracts/economics.py`
+  `FillRecord` with provenance validation and fill-fraction enrichment.
+- ✅ Fill models — deterministic prior, Stage-1 `FillProbabilityModel`,
+  Stage-2 `FillConcessionModel`, support/fallback helpers.
+- ✅ Fees / slippage / executable economics — `economics/pricing.py` +
+  `economics/service.py` producing spec §33 `CandidateEconomics`.
+- ✅ Candidate-value model — `candidate_value/models/value.py` with utility.
+- ✅ Ranking + regret — `candidate_value/models/ranking.py`.
+- ✅ Meta-action — threshold TRADE/NO_EDGE/ABSTAIN + hard-veto overlay.
+- ✅ Parity — `baseline/expected_outputs/phase8/candidate_economics.json`.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (119 tests) all pass.
+See `migrations/manifests/phase-8.json`. Pairwise ranker training and nested
+HP search are deferred.
+
+---
+
+### Phase 7 — Candidate factory: COMPLETE
 
 Phase 7 deliverables (spec §63) — implemented against pinned System A source:
 
@@ -273,27 +294,26 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-Execute **Phase 8 — Economics and candidate value** (spec §63):
+Execute **Phase 9 — Policies and deterministic synthesis** (spec §63):
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 8 only: fill records, fill models, fees, slippage, executable
-economics, candidate-value models, ranking, regret, and meta-action.
+Execute Phase 9 only: Legacy policy, V2 policy, V3 policy, ensemble policy,
+deterministic decision agent, and disagreement model.
 Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-8.json.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-9.json.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
 
-System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 8
-from execution/economics and candidate-value modules mapped in
-`docs/MIGRATION_MAP.md`.
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 9
+from policy/synthesis modules mapped in `docs/MIGRATION_MAP.md`.
 
-Phases 1-7 provide ingestion, record/replay, structural features, Legacy, V2/V3
-forecasting, and the deterministic candidate factory:
+Phases 1-8 provide ingestion, record/replay, structural features, Legacy, V2/V3
+forecasting, candidate factory, and executable economics/value:
 `spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
-`spy_der.training`, `spy_der.evaluation.labels`, `spy_der.forecasting`, and
-`spy_der.candidates`.
+`spy_der.training`, `spy_der.evaluation.labels`, `spy_der.forecasting`,
+`spy_der.candidates`, `spy_der.economics`, and `spy_der.candidate_value`.
 
 Per-run instruction for every subsequent phase (spec §70):
 

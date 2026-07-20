@@ -20,6 +20,7 @@ from .common import (
     content_hash,
     deterministic_id,
 )
+from .economics import ECONOMICS_VERSION, FILL_RECORD_VERSION, CandidateEconomics, FillRecord
 from .forecasts import FEATURE_VERSION, LABEL_VERSION, MarketForecastBundle
 from .market import (
     Bar,
@@ -62,21 +63,35 @@ from .models import (
     V3DecisionView,
 )
 from .serialization import to_canonical_json
+from .value import (
+    CANDIDATE_VALUE_VERSION,
+    META_MODEL_VERSION,
+    CandidateValueForecast,
+    MetaAction,
+    MetaDecision,
+    SnapshotRanking,
+)
 
 __all__ = [
     "CANDIDATE_SCHEMA",
+    "CANDIDATE_VALUE_VERSION",
+    "ECONOMICS_VERSION",
     "FACTORY_VERSION",
     "FEATURE_VERSION",
+    "FILL_RECORD_VERSION",
     "LABEL_VERSION",
+    "META_MODEL_VERSION",
     "SCHEMA_VERSION",
     "Bar",
     "Candidate",
     "CandidateDirection",
+    "CandidateEconomics",
     "CandidateFamily",
     "CandidateForecast",
     "CandidateLeg",
     "CandidateRanking",
     "CandidateUniverse",
+    "CandidateValueForecast",
     "CanonicalMarketSnapshot",
     "CatalystState",
     "ChainCoverage",
@@ -90,10 +105,13 @@ __all__ = [
     "FeedComponent",
     "FeedObservation",
     "FeedStatus",
+    "FillRecord",
     "HardVeto",
     "JournalEvent",
     "LegacyDecisionView",
     "MarketForecastBundle",
+    "MetaAction",
+    "MetaDecision",
     "MissingInputError",
     "OptionContract",
     "OptionLeg",
@@ -110,6 +128,7 @@ __all__ = [
     "RiskDecision",
     "RiskEnvelope",
     "SessionStatus",
+    "SnapshotRanking",
     "StrategyPermissions",
     "StructuralState",
     "SystemAction",
