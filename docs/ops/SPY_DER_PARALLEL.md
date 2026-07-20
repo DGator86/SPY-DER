@@ -3,31 +3,27 @@
 SPY-DER appears beside Legacy / V2 / V3 in the dashboard **Parallel decisions**
 panel and as a fourth independent paper ledger (`spy_der`).
 
-## Install on the VPS
+## Auto-deploy (preferred)
 
-```bash
-# Same venv the shadow runner uses
-sudo -u zerodte /opt/zerodte/venv/bin/pip install -e /opt/spy-der
+The VPS `zerodte-update.timer` already pulls `0DTE` `main` every ~2 minutes
+and runs `remote-deploy.sh`. That script now also:
 
-# Optional: standalone heartbeat publisher
-sudo cp /opt/spy-der/deploy/spy-der-shadow.service /etc/systemd/system/
-sudo systemctl enable --now spy-der-shadow.service
-```
+1. Fast-forwards `/opt/spy-der` to `SPY-DER` `main`
+2. `pip install -e /opt/spy-der` into `/opt/zerodte/venv`
+3. Restarts shadow + dashboard
 
-Clone / sync SPY-DER to `/opt/spy-der` (or your preferred path) and keep it
-updated with `main`.
+So once this branch is **merged to 0DTE `main`**, the scanner picks up the
+parallel panel with no manual VPS SSH.
 
-## Environment
-
-Add to `/etc/zerodte/zerodte.env` when you want live Grok decisions:
+Optional Grok key in `/etc/zerodte/zerodte.env`:
 
 ```bash
 XAI_API_KEY=...
-# optional model override is owned by SPY-DER GrokConfig / deployment manifest
 ```
 
-Without `XAI_API_KEY`, SPY-DER falls back to the deterministic ensemble agent
-so the parallel panel still updates every tick.
+Without it, SPY-DER uses the deterministic agent so the panel still updates.
+
+Disable with `SPY_DER_ENABLED=0` in the deploy environment if needed.
 
 ## What you should see
 
@@ -40,8 +36,7 @@ Live broker routing remains disabled. This is paper/shadow comparison only.
 ## Rollback
 
 ```bash
-# Disable SPY-DER package import (track shows UNAVAILABLE)
-sudo -u zerodte /opt/zerodte/venv/bin/pip uninstall -y spy-der
-
-# Or roll the 0DTE checkout back before the parallel-track PR
+# Roll 0DTE main back before the parallel-track commit (self-update will follow),
+# or temporarily:
+sudo SPY_DER_ENABLED=0 bash /opt/zerodte/deploy/remote-deploy.sh
 ```
