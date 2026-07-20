@@ -117,51 +117,6 @@ class SystemDecision:
 
 
 @dataclass(frozen=True, slots=True)
-class OrderIntent:
-    schema_version: str = SCHEMA_VERSION
-    intent_id: str = ""
-    candidate_id: str = ""
-    limit_price: Decimal = Decimal("0")
-
-
-class OrderStatus(StrEnum):
-    CREATED = "CREATED"
-    ROUTED = "ROUTED"
-    PARTIALLY_FILLED = "PARTIALLY_FILLED"
-    FILLED = "FILLED"
-    CANCELED = "CANCELED"
-    REJECTED = "REJECTED"
-
-
-@dataclass(frozen=True, slots=True)
-class OrderState:
-    schema_version: str = SCHEMA_VERSION
-    order_id: str = ""
-    status: OrderStatus = OrderStatus.CREATED
-
-
-class PositionStatus(StrEnum):
-    OPEN = "OPEN"
-    CLOSING = "CLOSING"
-    CLOSED = "CLOSED"
-
-
-@dataclass(frozen=True, slots=True)
-class PositionState:
-    schema_version: str = SCHEMA_VERSION
-    position_id: str = ""
-    status: PositionStatus = PositionStatus.OPEN
-
-
-@dataclass(frozen=True, slots=True)
-class ExitPolicy:
-    schema_version: str = SCHEMA_VERSION
-    take_profit_ratio: float = 0.0
-    stop_loss_ratio: float = 0.0
-    max_holding_minutes: int = 0
-
-
-@dataclass(frozen=True, slots=True)
 class OutcomeRecord:
     schema_version: str = SCHEMA_VERSION
     record_id: str = ""

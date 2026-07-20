@@ -17,7 +17,30 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 11 — Risk: COMPLETE.** Next up: Phase 12.
+**Phase 12 — Execution and positions: COMPLETE.** Next up: Phase 13.
+
+Phase 12 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ Execution contracts — `contracts/execution.py`: full §51 `OrderStatus`,
+  `OrderIntent`, `OrderState`, `OrderFill`, isolated `PaperAccount` IDs.
+- ✅ Position contracts — `contracts/positions.py`: full §52 `PositionStatus`,
+  approved exit-policy registry, `ReconciliationResult`.
+- ✅ Order state machine — `execution/state_machine.py`.
+- ✅ Fill simulator — `execution/simulator.py` `PaperExecutionSimulator`
+  (limit fills, partials, cancel, expire, fees, deterministic RNG).
+- ✅ Isolated accounts — `execution/accounts.py` `IsolatedAccountBook`.
+- ✅ Position manager + exits — `positions/manager.py`, `positions/exits.py`.
+- ✅ Restart + reconciliation — `positions/restart.py`,
+  `execution/reconciliation.py` (block entries on mismatch).
+- ✅ Parity — `baseline/expected_outputs/phase12/execution_position.json`.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (153 tests) all pass.
+See `migrations/manifests/phase-12.json`. Live broker routing and persistent
+sqlite paper store remain deferred.
+
+---
+
+### Phase 11 — Risk: COMPLETE
 
 Phase 11 deliverables (spec §63) — implemented against pinned System A source:
 
@@ -355,26 +378,27 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-Execute **Phase 12 — Execution and positions** (spec §63):
+Execute **Phase 13 — Journal and settlement** (spec §63):
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 12 only: order state machine, fill simulator, isolated
-accounts, position state machine, exits, restart, and reconciliation.
+Execute Phase 13 only: append-only events, hash chain, projections,
+settlement, counterfactual outcomes, and deterministic reconstruction.
 Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-12.json.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-13.json.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
 
-System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 12
-from execution/position modules mapped in `docs/MIGRATION_MAP.md`.
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 13
+from journal/settlement modules mapped in `docs/MIGRATION_MAP.md`.
 
-Phases 1-11 provide ingestion through risk firewall:
+Phases 1-12 provide ingestion through execution/positions:
 `spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
 `spy_der.training`, `spy_der.evaluation.labels`, `spy_der.forecasting`,
 `spy_der.candidates`, `spy_der.economics`, `spy_der.candidate_value`,
-`spy_der.policies`, `spy_der.synthesis`, `spy_der.agents`, and `spy_der.risk`.
+`spy_der.policies`, `spy_der.synthesis`, `spy_der.agents`, `spy_der.risk`,
+`spy_der.execution`, and `spy_der.positions`.
 
 Per-run instruction for every subsequent phase (spec §70):
 
