@@ -59,41 +59,17 @@ class LegacyDecisionView:
 
 
 # MarketForecastBundle lives in spy_der.contracts.forecasts (Phase 5).
+# Candidate / CandidateUniverse live in spy_der.contracts.candidates (Phase 7).
 
 
 @dataclass(frozen=True, slots=True)
 class OptionLeg:
+    """Legacy lightweight leg reference retained for journal/execution stubs."""
+
     contract: str
     quantity: int
     side: str
     schema_version: str = SCHEMA_VERSION
-
-
-@dataclass(frozen=True, slots=True)
-class Candidate:
-    schema_version: str = SCHEMA_VERSION
-    candidate_id: str = ""
-    legs: tuple[OptionLeg, ...] = ()
-    max_loss: Decimal | None = None
-    requires_stock_ownership: bool = False
-
-    def __post_init__(self) -> None:
-        if self.max_loss is None:
-            msg = "candidate max_loss must be defined"
-            raise ValueError(msg)
-        if self.max_loss < Decimal("0"):
-            msg = "candidate max_loss must be non-negative"
-            raise ValueError(msg)
-        if self.requires_stock_ownership:
-            msg = "stock-dependent candidates are not allowed"
-            raise ValueError(msg)
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateUniverse:
-    schema_version: str = SCHEMA_VERSION
-    universe_id: str = ""
-    candidates: tuple[Candidate, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

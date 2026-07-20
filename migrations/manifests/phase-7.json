@@ -1,0 +1,71 @@
+{
+  "phase": 7,
+  "phase_name": "Candidate factory",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 7), §7.1, §31, §32",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "e05376f7b4a3de1db7901c851aef4ea700b903e4",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:spread_selector.py",
+    "0DTE:zerodte/contracts/candidates.py",
+    "0DTE:prediction/storage.py make_candidate_id",
+    "0DTE:journal.py / prediction/labels.py payoff convention"
+  ],
+  "files_migrated": [
+    "0DTE:zerodte/contracts/candidates.py -> src/spy_der/contracts/candidates.py (expanded to spec §31)",
+    "0DTE:spread_selector.py family registry -> src/spy_der/candidates/registry.py (bounded families only)",
+    "0DTE:spread_selector.py _gen_* -> src/spy_der/candidates/geometry.py",
+    "0DTE:spread_selector.py/_intrinsic/_payoff_curve + journal payoff -> src/spy_der/candidates/payoff.py",
+    "0DTE:spread_selector.py select_spreads (generation only) -> src/spy_der/candidates/factory.py",
+    "NEW deterministic dominance (spec §32) -> src/spy_der/candidates/dominance.py"
+  ],
+  "files_merged": [],
+  "files_replaced": [
+    "src/spy_der/contracts/models.py Candidate/CandidateUniverse stubs replaced by contracts/candidates.py"
+  ],
+  "files_deferred": [
+    "Executable economics / fill models / fees / slippage -> Phase 8 economics/service.py",
+    "EV, touch probability, wall/gamma safety scoring from spread_selector._evaluate -> Phase 8 ranking",
+    "System A naked/cash-secured optional families -> permanently rejected by System B registry",
+    "Candidate value models / pairwise ranker / shadow ranking -> Phase 8+",
+    "Legacy permission filtering inside factory -> caller supplies allowed families; Legacy layer remains separate"
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Terminal payoff = entry_credit + sum(qty * intrinsic).",
+    "Credit vertical / debit vertical / condor / fly / broken-wing / long / strangle / backspread geometries from System A enumerators.",
+    "Stable IDs are content-addressed and independent of policy/model/EV.",
+    "Undefined or unbounded maximum loss is rejected (fail-closed)."
+  ],
+  "intentional_changes": [
+    "Family names normalized to master-spec identifiers (aliases retained for System A names).",
+    "Maximum-loss proof uses piecewise-linear breakpoints + tail slope (not sampled grids).",
+    "Naked/CSP families are never generated.",
+    "Deterministic dominance prune added (no System A equivalent module).",
+    "Candidate.max_loss property aliases maximum_loss for synthesis/risk compatibility."
+  ],
+  "deliverables": [
+    "src/spy_der/contracts/candidates.py",
+    "src/spy_der/candidates/{registry,geometry,payoff,dominance,factory}.py",
+    "tests/unit/test_phase7_candidates.py",
+    "tests/parity/test_candidate_factory_parity.py",
+    "baseline/expected_outputs/phase7/candidate_universe.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (110 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "Factory does not yet apply Legacy hard-veto family filters automatically.",
+    "Quote refs are contract IDs only; fill-quality economics remain Phase 8.",
+    "Broken-wing / backspread generation is bounded but not exhaustively strike-optimized."
+  ],
+  "rollback": [
+    "Revert the Phase 7 commit(s). Phases 0-6 are unaffected.",
+    "No new third-party dependencies were added in Phase 7."
+  ],
+  "next_phase": "Phase 8 — Economics and candidate value (spec §63): fill models, fees, slippage, executable economics, candidate-value models, ranking, regret, meta-action."
+}

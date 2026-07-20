@@ -17,7 +17,33 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 6 — V3 forecasting: COMPLETE.** Next up: Phase 7.
+**Phase 7 — Candidate factory: COMPLETE.** Next up: Phase 8.
+
+Phase 7 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ Family registry — `candidates/registry.py`: approved bounded families;
+  naked/CSP/covered permanently rejected.
+- ✅ Geometry — `candidates/geometry.py`: credit/debit verticals, condors,
+  flies, broken-wing, longs, straddle/strangle, bounded backspreads.
+- ✅ Payoff + max-loss proof — `candidates/payoff.py`: terminal intrinsic
+  payoff, piecewise-linear breakpoints, short-call tail rejection.
+- ✅ Stable IDs — `contracts/candidates.py`: `geometry_hash`,
+  `terminal_payoff_hash`, content-addressed `candidate_id`.
+- ✅ Deterministic dominance — `candidates/dominance.py`: duplicate geometry,
+  identical-payoff higher cost, strict payoff dominance.
+- ✅ Factory — `candidates/factory.py` `generate_candidate_universe` +
+  `CandidateFactoryService`.
+- ✅ Contract — `contracts/candidates.py` replaces Phase-0 Candidate stubs
+  (`max_loss` property kept for synthesis/risk).
+- ✅ Parity — `baseline/expected_outputs/phase7/candidate_universe.json`.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (111 tests) all pass.
+See `migrations/manifests/phase-7.json`. Executable economics and ranking are
+deferred to Phase 8.
+
+---
+
+### Phase 6 — V3 forecasting: COMPLETE
 
 Phase 6 deliverables (spec §63) — implemented against pinned System A source:
 
@@ -247,26 +273,27 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-Execute **Phase 7 — Candidate factory** (spec §63):
+Execute **Phase 8 — Economics and candidate value** (spec §63):
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 7 only: family registry, candidate geometry, payoff engine,
-stable IDs, maximum-loss proof, and deterministic dominance.
+Execute Phase 8 only: fill records, fill models, fees, slippage, executable
+economics, candidate-value models, ranking, regret, and meta-action.
 Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-7.json.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-8.json.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
 
-System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 7
-from candidate/factory modules mapped in `docs/MIGRATION_MAP.md` (family registry,
-geometry, payoff, stable IDs).
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 8
+from execution/economics and candidate-value modules mapped in
+`docs/MIGRATION_MAP.md`.
 
-Phases 1-6 provide ingestion, record/replay, structural features, Legacy, V2, and
-V3 forecasting: `spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
-`spy_der.training`, `spy_der.evaluation.labels`, and `spy_der.forecasting`
-(V2 models + V3 uncertainty/OOD/regime/MoE/conformal/competing-risk/path/ensemble).
+Phases 1-7 provide ingestion, record/replay, structural features, Legacy, V2/V3
+forecasting, and the deterministic candidate factory:
+`spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
+`spy_der.training`, `spy_der.evaluation.labels`, `spy_der.forecasting`, and
+`spy_der.candidates`.
 
 Per-run instruction for every subsequent phase (spec §70):
 

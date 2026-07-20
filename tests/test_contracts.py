@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from datetime import date
 from decimal import Decimal
 
 import pytest
 
 from spy_der.contracts import (
     Candidate,
+    CandidateLeg,
+    DebitCredit,
     MarketForecastBundle,
-    OptionLeg,
+    OptionType,
     ValidationError,
     to_canonical_json,
 )
@@ -27,6 +30,34 @@ def _bundle(**kwargs: object) -> MarketForecastBundle:
     return MarketForecastBundle(**base)  # type: ignore[arg-type]
 
 
+def _candidate(*, max_loss: Decimal | None = Decimal("5"), stock: bool = False) -> Candidate:
+    exp = date(2026, 1, 1)
+    return Candidate(
+        candidate_id="c1",
+        snapshot_id="snap-1",
+        family="long_call",
+        direction="bullish",
+        expiration=exp,
+        legs=(
+            CandidateLeg(
+                option_type=OptionType.CALL,
+                strike=Decimal("500"),
+                quantity=1,
+                expiration=exp,
+                contract_id="SPY240101C00500000",
+            ),
+        ),
+        entry_type=DebitCredit.DEBIT,
+        maximum_profit=None,
+        maximum_loss=max_loss if max_loss is not None else Decimal("0"),  # overwritten below
+        breakevens=(),
+        capital_required=Decimal("5"),
+        terminal_payoff_hash="sha256:pay",
+        geometry_hash="sha256:geom",
+        requires_stock_ownership=stock,
+    )
+
+
 def test_contract_serialization_is_deterministic() -> None:
     bundle = _bundle()
     assert to_canonical_json(bundle) == to_canonical_json(bundle)
@@ -38,21 +69,66 @@ def test_invalid_probabilities_rejected() -> None:
 
 
 def test_undefined_risk_candidate_rejected() -> None:
-    with pytest.raises(ValueError):
-        Candidate(candidate_id="c1", legs=(), max_loss=None)
+    exp = date(2026, 1, 1)
+    with pytest.raises(ValueError, match="max_loss must be defined"):
+        Candidate(
+            candidate_id="c1",
+            snapshot_id="s",
+            family="long_call",
+            direction="bullish",
+            expiration=exp,
+            legs=(
+                CandidateLeg(
+                    option_type=OptionType.CALL,
+                    strike=Decimal("100"),
+                    quantity=1,
+                    expiration=exp,
+                ),
+            ),
+            entry_type=DebitCredit.DEBIT,
+            maximum_profit=None,
+            maximum_loss=None,  # type: ignore[arg-type]
+            breakevens=(),
+            capital_required=Decimal("0"),
+            terminal_payoff_hash="sha256:x",
+            geometry_hash="sha256:y",
+        )
+
+
+def test_negative_max_loss_rejected() -> None:
+    exp = date(2026, 1, 1)
+    with pytest.raises(ValueError, match="non-negative"):
+        Candidate(
+            candidate_id="c1",
+            snapshot_id="s",
+            family="long_call",
+            direction="bullish",
+            expiration=exp,
+            legs=(
+                CandidateLeg(
+                    option_type=OptionType.CALL,
+                    strike=Decimal("100"),
+                    quantity=1,
+                    expiration=exp,
+                ),
+            ),
+            entry_type=DebitCredit.DEBIT,
+            maximum_profit=None,
+            maximum_loss=Decimal("-1"),
+            breakevens=(),
+            capital_required=Decimal("0"),
+            terminal_payoff_hash="sha256:x",
+            geometry_hash="sha256:y",
+        )
 
 
 def test_stock_dependent_candidate_rejected() -> None:
-    with pytest.raises(ValueError):
-        Candidate(candidate_id="c1", legs=(), max_loss=Decimal("10"), requires_stock_ownership=True)
+    with pytest.raises(ValueError, match="stock-dependent"):
+        _candidate(stock=True)
 
 
 def test_option_legs_immutable_after_creation() -> None:
-    candidate = Candidate(
-        candidate_id="c1",
-        legs=(OptionLeg(contract="SPY240101C00500000", quantity=1, side="BUY"),),
-        max_loss=Decimal("5"),
-    )
+    candidate = _candidate()
     with pytest.raises(FrozenInstanceError):
         candidate.legs = ()  # type: ignore[misc]
 
