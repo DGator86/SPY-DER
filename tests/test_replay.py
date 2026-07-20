@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from system_b.replay.deterministic import (
+from spy_der.replay.deterministic import (
     ManifestMismatchError,
     ReplayInputManifest,
     deterministic_events,

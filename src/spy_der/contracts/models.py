@@ -21,17 +21,6 @@ def _require_probability(value: float, name: str) -> None:
 
 
 @dataclass(frozen=True, slots=True)
-class CanonicalMarketSnapshot:
-    schema_version: str = SCHEMA_VERSION
-    snapshot_id: str = ""
-    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
-    underlying_symbol: str = ""
-
-    def __post_init__(self) -> None:
-        _require_tz_aware(self.timestamp)
-
-
-@dataclass(frozen=True, slots=True)
 class FeatureBundle:
     schema_version: str = SCHEMA_VERSION
     bundle_id: str = ""

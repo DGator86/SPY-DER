@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Any, cast
@@ -15,7 +15,8 @@ def _normalize(value: Any) -> Any:
         return {str(k): _normalize(v) for k, v in sorted(value.items(), key=lambda x: str(x[0]))}
     if isinstance(value, (list, tuple)):
         return [_normalize(v) for v in value]
-    if isinstance(value, datetime):
+    # datetime is a subclass of date, so it must be checked first.
+    if isinstance(value, (datetime, date)):
         return value.isoformat()
     if isinstance(value, Decimal):
         return str(value)

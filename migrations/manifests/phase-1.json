@@ -1,0 +1,66 @@
+{
+  "phase": 1,
+  "phase_name": "Package and canonical ingestion foundation",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 1), §11-§15",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "f18cc3e666eb49c52f086f8be566d39e8bb57603",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:market_calendar.py",
+    "0DTE:gate_scorer.py (MarketSnapshot)",
+    "0DTE:prediction/canonical_snapshot.py",
+    "0DTE:prediction/feed_status.py",
+    "0DTE:AGENTS.md (zerodte/ canonical package guidance)"
+  ],
+  "files_migrated": [
+    "0DTE:market_calendar.py -> src/spy_der/market_data/calendar.py (session/open/close/half-day/lockout/settlement behavior)"
+  ],
+  "files_merged": [],
+  "files_replaced": [
+    "src/system_b/ -> src/spy_der/ (package normalization, spec §4.2)",
+    "placeholder contracts.CanonicalMarketSnapshot -> spec §13.5 contracts.market.CanonicalMarketSnapshot"
+  ],
+  "files_deferred": [
+    "Real provider adapters (Tradier/Tastytrade/Massive/Yahoo) and composite feed -> Phase 2.",
+    "bars_1m and option_chain population from live/recorded providers -> Phase 2."
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Exchange session date computed in America/New_York, never UTC (market_calendar._session_date).",
+    "Session open/close via exchange_calendars XNYS; half-day = close before 16:00 ET.",
+    "Entry lockout window before close; settlement availability after close."
+  ],
+  "intentional_changes": [
+    "market_calendar module-level functions reorganized into a typed MarketCalendar class returning timezone-aware datetimes and a SessionStatus enum.",
+    "Introduced canonical, immutable, content-addressed contracts (contracts/common.py, contracts/market.py) with deterministic snapshot_id/content_hash.",
+    "System A snapshot consumed via SystemASnapshotAdapter from its serialized to_dict() output; System B never imports System A code (spec §4.1)."
+  ],
+  "deliverables": [
+    "src/spy_der/ (package normalized from src/system_b/)",
+    "src/spy_der/contracts/common.py (validation, canonical JSON, content hash, deterministic IDs, typed error codes, provenance)",
+    "src/spy_der/contracts/market.py (FeedObservation, OptionContract, OptionQuote, CanonicalMarketSnapshot, enums)",
+    "src/spy_der/market_data/calendar.py (MarketCalendar)",
+    "src/spy_der/market_data/freshness.py (feed provenance + freshness classification)",
+    "src/spy_der/market_data/assembler.py (CanonicalSnapshotAssembler, deterministic IDs)",
+    "src/spy_der/market_data/legacy_adapter.py (SystemASnapshotAdapter)",
+    "tests/unit/test_market_data.py, tests/parity/test_snapshot_parity.py",
+    "baseline/fixtures/phase1/system_a_snapshot.json, baseline/expected_outputs/phase1/canonical_snapshot.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (30 tests, unit + parity + existing scaffold)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "Golden parity fixture locks deterministic ingestion output; full field-level parity against a RUNNING System A is deferred until recorded ticks exist (Phase 2).",
+    "System A records feed status per source; component-level granularity for BREADTH/FLOW/INTERNALS is carried only when supplied. Provider-vs-component reconciliation completes in Phase 2.",
+    "Local dev interpreter is 3.11; project and CI target 3.12. Code avoids 3.12-only syntax; CI verifies on 3.12."
+  ],
+  "rollback": [
+    "Revert the Phase 1 commit. Package import path returns to the prior state; no runtime services or persisted state are introduced.",
+    "The new dependencies (exchange-calendars, pandas) are additive; removing them reverts to a dependency-free install."
+  ],
+  "next_phase": "Phase 2 — Providers and replay (spec §63): provider adapters, composite feed, recording, replay, corruption detection, deterministic replay fixtures. Populate bars_1m and option_chain in the canonical snapshot and capture the first recorded-tick parity corpus against System A."
+}

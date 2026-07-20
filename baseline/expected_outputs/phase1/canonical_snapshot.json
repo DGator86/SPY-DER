@@ -1,0 +1,90 @@
+{
+  "bars_1m": [],
+  "catalyst_state": {
+    "lockout_active": false,
+    "reason": null
+  },
+  "chain_coverage": {
+    "contracts_total": 0,
+    "has_calls": false,
+    "has_puts": false,
+    "max_strike": null,
+    "min_strike": null,
+    "strikes_total": 0
+  },
+  "content_hash": "sha256:4645b126fd6f2f718bab98197f1766aa4302b7f8f04b1375d3196e54c69d8c43",
+  "data_quality": {
+    "flags": [],
+    "is_healthy": true,
+    "penalty": 0.0
+  },
+  "feed_observations": [
+    {
+      "age_seconds": 1.0,
+      "attempt_order": 0,
+      "component": "spot",
+      "error_code": null,
+      "error_message_hash": null,
+      "fallback_used": false,
+      "freshness_limit_seconds": 60.0,
+      "observed_at": "2026-01-05T14:29:59-05:00",
+      "provider": "system_a",
+      "received_at": "2026-01-05T14:30:00-05:00",
+      "status": "LIVE"
+    },
+    {
+      "age_seconds": 2.0,
+      "attempt_order": 0,
+      "component": "bars",
+      "error_code": null,
+      "error_message_hash": null,
+      "fallback_used": false,
+      "freshness_limit_seconds": 60.0,
+      "observed_at": "2026-01-05T14:29:58-05:00",
+      "provider": "system_a",
+      "received_at": "2026-01-05T14:30:00-05:00",
+      "status": "LIVE"
+    },
+    {
+      "age_seconds": 3.0,
+      "attempt_order": 0,
+      "component": "option_chain",
+      "error_code": null,
+      "error_message_hash": null,
+      "fallback_used": false,
+      "freshness_limit_seconds": 60.0,
+      "observed_at": "2026-01-05T14:29:57-05:00",
+      "provider": "system_a",
+      "received_at": "2026-01-05T14:30:00-05:00",
+      "status": "LIVE"
+    },
+    {
+      "age_seconds": 0.0,
+      "attempt_order": 0,
+      "component": "settlement",
+      "error_code": null,
+      "error_message_hash": null,
+      "fallback_used": false,
+      "freshness_limit_seconds": 60.0,
+      "observed_at": "2026-01-05T14:30:00-05:00",
+      "provider": "system_a",
+      "received_at": "2026-01-05T14:30:00-05:00",
+      "status": "LIVE"
+    }
+  ],
+  "minutes_from_open": 300,
+  "minutes_to_close": 90,
+  "missing_components": [],
+  "normalization_version": "1.0.0",
+  "option_chain": [],
+  "schema_version": "1.0.0",
+  "selected_providers": [],
+  "session_date": "2026-01-05",
+  "session_status": "OPEN",
+  "snapshot_id": "snap-d6063a90d084",
+  "timestamp": "2026-01-05T14:30:00-05:00",
+  "underlying_ask": "500.14",
+  "underlying_bid": "500.1",
+  "underlying_price": "500.12",
+  "underlying_symbol": "SPY"
+}

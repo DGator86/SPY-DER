@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from system_b.contracts import OrderStatus
-from system_b.execution.state_machine import validate_order_transition
+from spy_der.contracts import OrderStatus
+from spy_der.execution.state_machine import validate_order_transition
 
 
 def test_invalid_order_state_transition_fails_closed() -> None:

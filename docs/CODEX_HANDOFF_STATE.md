@@ -11,14 +11,43 @@ be overridden here.
 - Source system (System A): `DGator86/0DTE`
 - Governing spec: `docs/SPY_DER_MASTER_SPEC.md`
 - Target Python runtime: 3.12
-- Canonical package (per spec §4.2): `src/spy_der/`
-- Current scaffold package present in repo: `src/system_b/` (predates the spec;
-  scheduled for normalization to `spy_der` in Phase 1)
+- Canonical package (per spec §4.2): `src/spy_der/` (normalized from `src/system_b/`
+  in Phase 1)
 - Live trading authority: excluded
 
 ## Current Phase
 
-**Phase 0 — Source access and baseline: COMPLETE.** Next up: Phase 1.
+**Phase 1 — Package and canonical ingestion foundation: COMPLETE.** Next up: Phase 2.
+
+Phase 1 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ `spy_der` package normalization — `src/system_b/` → `src/spy_der/` (imports,
+  pyproject, tests updated).
+- ✅ Common contracts — `contracts/common.py`: tz-aware/finite/probability
+  validation, canonical JSON, SHA-256 content hashing, deterministic
+  content-addressed IDs, typed `ErrorCode`, and `Provenance`.
+- ✅ Market contracts — `contracts/market.py` (spec §13): `FeedComponent`,
+  `FeedStatus`, `SessionStatus`, `OptionType`, `Bar`, `OptionContract`,
+  `OptionQuote`, `FeedObservation`, `CanonicalMarketSnapshot`, coverage/quality.
+- ✅ Market calendar — `market_data/calendar.py`, migrated from System A
+  `market_calendar.py`: sessions, holidays, half-days, DST, open/close, ET
+  session date, minutes from/to open, entry lockout, settlement availability.
+- ✅ Feed provenance + freshness — `market_data/freshness.py` (fail-closed
+  LIVE/DELAYED/STALE/MISSING/INVALID/FALLBACK classification).
+- ✅ Canonical snapshot assembler — `market_data/assembler.py` with deterministic
+  `snapshot_id`/`content_hash` (identity independent of clock/host/order).
+- ✅ System A snapshot adapter — `market_data/legacy_adapter.py`, consuming System
+  A's serialized `CanonicalSnapshot.to_dict()`; fails closed on missing inputs.
+- ✅ Deterministic IDs — `contracts/common.deterministic_id` / `content_hash`.
+- ✅ Initial parity fixtures — `baseline/fixtures/phase1/` +
+  `baseline/expected_outputs/phase1/` with a frozen golden-output parity test.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (30 tests) all pass.
+See `migrations/manifests/phase-1.json`.
+
+---
+
+### Phase 0 — Source access and baseline: COMPLETE
 
 Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
@@ -92,24 +121,28 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-Execute **Phase 1 — Package and canonical ingestion foundation** (spec §63):
+Execute **Phase 2 — Providers and replay** (spec §63):
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 1 only: normalize the spy_der package; implement common and market
-contracts, the market calendar, feed provenance and freshness, the canonical
-snapshot assembler, the System A snapshot adapter, deterministic IDs, and initial
-parity fixtures.
+Execute Phase 2 only: provider adapters (Tradier/Tastytrade/Massive/Yahoo),
+composite feed with failover, recording, replay, corruption detection, and
+deterministic replay fixtures.
 Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-1.json.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-2.json.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
 
-System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 1
-from the `zerodte/` canonical package and the Track-A snapshot types
-(`gate_scorer.MarketSnapshot`, `prediction/canonical_snapshot.py`,
-`prediction/feed_status.py`).
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 2
+from `composite_feed.py` (failover assembler), the provider modules
+(`tradier_feed.py`, `tastytrade_feed.py`, `massive_feed.py`, `yahoo_feed.py`),
+and `chain_store.py` (recording/replay). Populate `bars_1m` and `option_chain`
+in the canonical snapshot and capture the first recorded-tick parity corpus.
+
+Phase 1 ingestion foundation is in place: `spy_der.market_data` provides the
+`MarketCalendar`, `CanonicalSnapshotAssembler`, and `SystemASnapshotAdapter` that
+Phase 2 providers feed into.
 
 Per-run instruction for every subsequent phase (spec §70):
 

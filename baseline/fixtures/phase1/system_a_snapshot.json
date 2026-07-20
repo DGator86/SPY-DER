@@ -1,0 +1,11 @@
+{
+  "snapshot_id": "sa-20260105-143000-SPY",
+  "schema_version": "sa-1.0",
+  "symbol": "SPY",
+  "ts": "2026-01-05T14:30:00-05:00",
+  "session_date": "2026-01-05",
+  "market": {"spot": 500.12, "bid": 500.1, "ask": 500.14},
+  "feed_statuses": {"spot": "LIVE", "bars": "LIVE", "chain": "LIVE", "settlement": "LIVE"},
+  "source_ages_seconds": {"spot": 1.0, "bars": 2.0, "chain": 3.0, "settlement": 0.0},
+  "configuration_hash": "sa-cfg-abc123"
+}
