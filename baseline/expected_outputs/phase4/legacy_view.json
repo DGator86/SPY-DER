@@ -1,0 +1,33 @@
+{
+  "contradictory_evidence": [],
+  "hard_vetoes": [],
+  "legacy_version": "1.0.0",
+  "permitted_families": [
+    "bull_put_credit_spread",
+    "bear_call_credit_spread",
+    "iron_condor",
+    "iron_butterfly"
+  ],
+  "preferred_direction": "NEUTRAL",
+  "prohibited_families": [],
+  "reason_codes": [
+    "regime:long_gamma_pin"
+  ],
+  "regime_label": "long_gamma_pin",
+  "schema_version": "1.0.0",
+  "size_cap": 0.5,
+  "snapshot_id": "snap-3bf14e9c9941",
+  "structural_confidence": 0.5,
+  "structural_state_id": "struct-fixture-0001",
+  "supporting_evidence": [
+    {
+      "detail": "0.7500",
+      "name": "net_gex_bn"
+    },
+    {
+      "detail": "500",
+      "name": "gamma_flip"
+    }
+  ],
+  "view_id": "legacy-3597040c8310"
+}
