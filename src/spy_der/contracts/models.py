@@ -109,14 +109,6 @@ class SystemDecision:
 
 
 @dataclass(frozen=True, slots=True)
-class DeploymentManifest:
-    schema_version: str = SCHEMA_VERSION
-    manifest_id: str = ""
-    config_version: str = ""
-    model_versions: tuple[tuple[str, str], ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
 class SystemAdapter:
     schema_version: str = SCHEMA_VERSION
     adapter_name: str = ""
