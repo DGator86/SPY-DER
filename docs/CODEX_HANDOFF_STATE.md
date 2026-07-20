@@ -35,7 +35,7 @@ Phase 6 deliverables (spec §63) — implemented against pinned System A source:
 - ✅ Bundle attachment — `forecasting/v3.py` `attach_v3_fields`.
 - ✅ Parity — `baseline/expected_outputs/phase6/v3_forecast_bundle.json`.
 
-Checks: `ruff check .`, `mypy src` (strict), and `pytest` all pass.
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (101 tests) all pass.
 See `migrations/manifests/phase-6.json`. Full path backoff hierarchy and live
 ForecastServer V3 group wiring are deferred.
 

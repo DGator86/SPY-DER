@@ -60,7 +60,7 @@
   "tests": [
     {"name": "ruff check .", "result": "pass"},
     {"name": "mypy src (strict)", "result": "pass"},
-    {"name": "pytest", "result": "pass"}
+    {"name": "pytest (101 tests)", "result": "pass"}
   ],
   "known_gaps": [
     "Path conditioning backoff levels 0-4 are not fully ported; Level-5 unconditioned + Level-6 gaussian are.",
