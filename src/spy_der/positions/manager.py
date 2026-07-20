@@ -162,6 +162,60 @@ class PositionManager:
             expired=expired,
         )
 
+    def reduce(
+        self,
+        position_id: str,
+        *,
+        fraction: float,
+        mark_price: Decimal,
+        reason: str,
+        now: datetime | None = None,
+    ) -> PositionState:
+        """Reduce open contracts by fraction in (0, 1]. Fraction >= 1 closes."""
+        now = now or datetime.now(tz=UTC)
+        if fraction <= 0.0:
+            raise ValueError("reduce fraction must be positive")
+        if fraction >= 1.0 - 1e-12:
+            return self.close(
+                position_id, exit_price=mark_price, reason=reason or "ai_reduce_full", now=now
+            )
+        pos = self.mark(position_id, mark_price, now=now)
+        cut = max(1, round(pos.open_contracts * fraction))
+        cut = min(cut, pos.open_contracts)
+        if cut >= pos.open_contracts:
+            return self.close(
+                position_id, exit_price=mark_price, reason=reason or "ai_reduce_full", now=now
+            )
+        entry = pos.entry_price or Decimal("0")
+        pnl = (Decimal(str(mark_price)) - entry) * Decimal(cut)
+        remaining = pos.open_contracts - cut
+        validate_position_transition(pos.status, PositionStatus.PARTIALLY_REDUCED)
+        updated = PositionState(
+            position_id=pos.position_id,
+            account_id=pos.account_id,
+            candidate_id=pos.candidate_id,
+            status=PositionStatus.PARTIALLY_REDUCED,
+            opened_contracts=pos.opened_contracts,
+            open_contracts=remaining,
+            entry_price=pos.entry_price,
+            mark_price=Decimal(str(mark_price)),
+            max_loss=pos.max_loss,
+            realized_pnl=pos.realized_pnl + pnl,
+            unrealized_pnl=(Decimal(str(mark_price)) - entry) * Decimal(remaining)
+            if entry
+            else Decimal("0"),
+            peak_pnl=pos.peak_pnl,
+            exit_policy_id=pos.exit_policy_id,
+            opened_at=pos.opened_at,
+            closed_at=pos.closed_at,
+            exit_reason=reason or "ai_reduce",
+            order_ids=pos.order_ids,
+            geometry_hash=pos.geometry_hash,
+        )
+        self._positions[position_id] = updated
+        self.accounts.realize_pnl(pos.account_id, pnl, note=f"reduce:{cut}")
+        return updated
+
     def close(
         self,
         position_id: str,

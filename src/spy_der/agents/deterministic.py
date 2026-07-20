@@ -9,20 +9,24 @@ from spy_der.contracts.agents import (
     AgentEntryAction,
     AgentHealth,
     AgentIdentity,
+    AgentPositionAction,
+    AgentPositionResponse,
+    PositionDecisionPacket,
 )
 from spy_der.contracts.policies import PolicyAction
 
 __all__ = ["DETERMINISTIC_AGENT_VERSION", "DeterministicDecisionAgent"]
 
-DETERMINISTIC_AGENT_VERSION = "deterministic-agent.v1"
-PROMPT_VERSION = "deterministic-passthrough.v1"
+DETERMINISTIC_AGENT_VERSION = "deterministic-agent.v2"
+PROMPT_VERSION = "deterministic-passthrough.v2"
 
 
 class DeterministicDecisionAgent:
     """Selects using authoritative policy view already embedded in the packet.
 
     Prefers ensemble policy view when present; otherwise V3, then V2, then Legacy.
-    Never invents candidate IDs outside the packet.
+    Never invents candidate IDs outside the packet. Position path follows
+    deterministic exit floors, else HOLD.
     """
 
     @property
@@ -38,7 +42,7 @@ class DeterministicDecisionAgent:
     def capabilities(self) -> AgentCapabilities:
         return AgentCapabilities(
             supports_entry_decisions=True,
-            supports_position_decisions=False,
+            supports_position_decisions=True,
             supports_structured_output=True,
             supports_deterministic_seed=True,
         )
@@ -64,7 +68,6 @@ class DeterministicDecisionAgent:
                 preferred = by_name[name]
                 break
         if preferred is None:
-            # Fallback: top-ranked non-vetoed candidate utility.
             ranked = sorted(
                 [c for c in packet.candidates if not c.hard_vetoed],
                 key=lambda c: (
@@ -83,12 +86,18 @@ class DeterministicDecisionAgent:
                     prompt_version=self.identity.prompt_version,
                 )
             top = ranked[0]
+            exit_id = (
+                packet.approved_exit_policies[0].exit_policy_id
+                if packet.approved_exit_policies
+                else None
+            )
             return AgentDecisionResponse(
                 packet_id=packet.packet_id,
                 packet_hash=packet.packet_hash,
                 action=AgentEntryAction.SELECT_CANDIDATE,
                 candidate_id=top.candidate_id,
                 size_scalar=min(1.0, packet.risk_max_size_scalar),
+                exit_policy_id=exit_id,
                 confidence=0.5,
                 uncertainty=top.uncertainty,
                 geometry_hash=top.geometry_hash,
@@ -120,10 +129,13 @@ class DeterministicDecisionAgent:
 
         size = 0.0
         geom = None
+        exit_id = None
         if action is AgentEntryAction.SELECT_CANDIDATE and cid is not None:
             size = min(float(preferred.size_cap or 1.0), packet.risk_max_size_scalar)
             view = packet.candidate(cid)
             geom = view.geometry_hash if view else None
+            if packet.approved_exit_policies:
+                exit_id = packet.approved_exit_policies[0].exit_policy_id
 
         return AgentDecisionResponse(
             packet_id=packet.packet_id,
@@ -131,11 +143,64 @@ class DeterministicDecisionAgent:
             action=action,
             candidate_id=cid,
             size_scalar=size,
+            exit_policy_id=exit_id,
             confidence=float(preferred.confidence),
             uncertainty=float(preferred.uncertainty),
             geometry_hash=geom,
             reason_codes=preferred.reason_codes or (f"policy:{preferred.policy_name}",),
             rationale=f"deterministic from {preferred.policy_name}",
+            model_id=self.identity.model_id,
+            prompt_version=self.identity.prompt_version,
+        )
+
+    def decide_position(self, packet: PositionDecisionPacket) -> AgentPositionResponse:
+        signal = packet.deterministic_exit_signal
+        if signal or packet.hard_vetoes:
+            return AgentPositionResponse(
+                packet_id=packet.packet_id,
+                packet_hash=packet.packet_hash,
+                action=AgentPositionAction.CLOSE,
+                confidence=1.0,
+                uncertainty=0.0,
+                reason_codes=("deterministic_exit_floor", signal or "hard_veto"),
+                rationale=f"close on {signal or 'hard_veto'}",
+                model_id=self.identity.model_id,
+                prompt_version=self.identity.prompt_version,
+            )
+        # Soft heuristic: take profit / cut losers without inventing prices.
+        pnl = packet.position.unrealized_pnl_ratio
+        if pnl >= 0.5:
+            return AgentPositionResponse(
+                packet_id=packet.packet_id,
+                packet_hash=packet.packet_hash,
+                action=AgentPositionAction.CLOSE,
+                confidence=0.7,
+                uncertainty=0.3,
+                reason_codes=("deterministic_target",),
+                rationale="target reached",
+                model_id=self.identity.model_id,
+                prompt_version=self.identity.prompt_version,
+            )
+        if pnl <= -0.35:
+            return AgentPositionResponse(
+                packet_id=packet.packet_id,
+                packet_hash=packet.packet_hash,
+                action=AgentPositionAction.CLOSE,
+                confidence=0.7,
+                uncertainty=0.3,
+                reason_codes=("deterministic_stop",),
+                rationale="stop reached",
+                model_id=self.identity.model_id,
+                prompt_version=self.identity.prompt_version,
+            )
+        return AgentPositionResponse(
+            packet_id=packet.packet_id,
+            packet_hash=packet.packet_hash,
+            action=AgentPositionAction.HOLD,
+            confidence=0.5,
+            uncertainty=0.5,
+            reason_codes=("deterministic_hold",),
+            rationale="no exit floor",
             model_id=self.identity.model_id,
             prompt_version=self.identity.prompt_version,
         )

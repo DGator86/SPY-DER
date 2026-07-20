@@ -1,0 +1,59 @@
+{
+  "phase": "ai-decision-authority",
+  "phase_name": "AI decision authority wiring",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §37-§45, §43",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:zerodte/runtime/pipeline.py",
+    "SPY-DER:agents/grok.py",
+    "SPY-DER:agents/runtime.py"
+  ],
+  "files_migrated": [
+    "NEW src/spy_der/agents/authority.py AiDecisionAuthority",
+    "NEW src/spy_der/agents/transport.py HttpGrokTransport",
+    "NEW src/spy_der/agents/position_packet.py",
+    "NEW src/spy_der/runtime/ai_loop.py ShadowAiLoop",
+    "EXTEND contracts/agents.py PositionDecisionPacket + AgentPositionResponse",
+    "EXTEND Grok/Deterministic/Mock/Recorded with decide_position",
+    "EXTEND positions/manager.py reduce()",
+    "EXTEND execution/accounts.py realize_pnl()"
+  ],
+  "files_deferred": [
+    "VPS continuous runner publishing to 0DTE Vercel live_state",
+    "0DTE dashboard parallel-panel UI for system_b_grok track",
+    "Phase 17 live broker cutover (owner approval required)"
+  ],
+  "behavior_preserved": [
+    "Fail-closed validation still whitelists candidate_id and caps size.",
+    "Hard exit floors (stop/eod/emergency/ras/expiration) override AI HOLD.",
+    "No live trading authority; paper/shadow only."
+  ],
+  "intentional_changes": [
+    "AI is the entry maker, exit maker, tracker, and analyzer in ShadowAiLoop.",
+    "Grok auto-attaches stdlib HTTP transport when XAI_API_KEY is present.",
+    "Soft exit signals (target/trail/time) inform AI but do not strip exit authority."
+  ],
+  "deliverables": [
+    "src/spy_der/agents/authority.py",
+    "src/spy_der/runtime/ai_loop.py",
+    "tests/unit/test_ai_decision_authority.py",
+    "tests/parity/test_ai_authority_live_state.py",
+    "baseline/expected_outputs/ai_authority/live_state.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (184 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "Dashboard integration into 0DTE Vercel app not built yet.",
+    "Continuous VPS process not deployed."
+  ],
+  "rollback": [
+    "Revert the AI decision authority commit(s). Phases 0-16 unaffected."
+  ],
+  "next_phase": "Wire SPY-DER shadow track into 0DTE Vercel dashboard / VPS runner; Phase 17 still owner-gated."
+}
