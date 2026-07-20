@@ -1,7 +1,7 @@
 """Fail-closed V2 forecast serving (master spec §24 / System A prediction/inference.py).
 
 Trained model groups are loaded through the registry with status/mode gates.
-Missing required inputs or registry failures raise — they never become silent
+Missing required inputs or registry failures raise - they never become silent
 neutral forecasts. A research-only heuristic path exists for shadow plumbing
 and must not be used for candidate/champion serving.
 """
