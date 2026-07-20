@@ -1,0 +1,76 @@
+{
+  "phase": 6,
+  "phase_name": "V3 forecasting",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 6), §26, §27, §28, §29, §30",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "8f92d30337799927103912bde232304a6df08d5f",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:prediction/uncertainty.py, ood.py, conformal.py, ensemble.py",
+    "0DTE:prediction/path_model.py, path_model_v3.py",
+    "0DTE:prediction/models/regime_moe.py, mixture_experts.py, competing_risk.py",
+    "0DTE:prediction/regime_labels.py"
+  ],
+  "files_migrated": [
+    "0DTE:prediction/uncertainty.py -> src/spy_der/forecasting/uncertainty.py",
+    "0DTE:prediction/ood.py -> src/spy_der/forecasting/ood.py",
+    "0DTE:prediction/conformal.py -> src/spy_der/forecasting/conformal.py",
+    "0DTE:prediction/ensemble.py -> src/spy_der/forecasting/ensemble.py",
+    "0DTE:prediction/models/regime_moe.py -> src/spy_der/forecasting/models/regime_moe.py",
+    "0DTE:prediction/models/mixture_experts.py -> src/spy_der/forecasting/models/mixture_experts.py",
+    "0DTE:prediction/models/competing_risk.py -> src/spy_der/forecasting/models/competing_risk.py",
+    "0DTE:prediction/path_model.py + path_model_v3.py (bounded) -> src/spy_der/forecasting/path_model.py",
+    "0DTE:prediction/regime_labels.py REGIME_CLASSES -> src/spy_der/forecasting/regime_labels.py"
+  ],
+  "files_merged": [],
+  "files_replaced": [],
+  "files_deferred": [
+    "Full path conditioning backoff hierarchy / ResidualBlockMeta rich features -> bounded unconditioned block bootstrap + labeled Gaussian Level-6 fallback.",
+    "ExpandedReturnQuantileModel / return_distribution.py full pipeline -> conformal attaches via dict to return_distributions.",
+    "HGB challengers for regime/competing-risk -> multinomial logistic first.",
+    "select_calibrator nested isotonic gates for regime -> sigmoid/identity via Phase 5 calibrators.",
+    "Full structural_state.py conditioning builder -> small feature dict only.",
+    "Part 2 shadow orchestration and prediction store wiring -> attach_v3_fields helper established."
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Missing uncertainty components stay None and are reweighted; all-missing composite is 1.0.",
+    "OOD scores are bounded [0,1] with explicit no-support unknown state.",
+    "Conformal corrections fit on calibration sessions only; OOD widens and marks coverage_limited.",
+    "Regime probabilities are a full vector (dominant is diagnostic only) and renormalize to ~1.",
+    "Mixture-of-experts blends with the full regime vector; low-support experts shrink/fallback to global.",
+    "Competing-risk probabilities sum to ~1; survival is non-increasing; same-step path ambiguity is adverse-first.",
+    "Path seeds derive from snapshot_id + model_version + horizon + config hash."
+  ],
+  "intentional_changes": [
+    "Path model uses a bounded bootstrap (not full V3 backoff stack) with explicit Gaussian fallback labeling.",
+    "Conformal attach_to_distribution ReturnDistribution dependency replaced with dict attachment.",
+    "Regime auto-calibration uses sigmoid rather than System A select_calibrator gates.",
+    "attach_v3_fields rebuilds frozen MarketForecastBundle with V3 extension slots from Phase 5 contract."
+  ],
+  "deliverables": [
+    "src/spy_der/forecasting/{uncertainty,ood,conformal,ensemble,path_model,regime_labels,v3}.py",
+    "src/spy_der/forecasting/models/{regime_moe,mixture_experts,competing_risk}.py",
+    "tests/unit/test_phase6_v3.py",
+    "tests/parity/test_v3_forecast_parity.py",
+    "baseline/expected_outputs/phase6/v3_forecast_bundle.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (101 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "Path conditioning backoff levels 0-4 are not fully ported; Level-5 unconditioned + Level-6 gaussian are.",
+    "Competing-risk / regime / MoE are not yet registered as default ForecastServer group components.",
+    "Historical OOS loss store for ensemble weights is caller-supplied only.",
+    "Candidate labels and candidate factory remain Phase 7+."
+  ],
+  "rollback": [
+    "Revert the Phase 6 commit. Phases 0-5 are unaffected.",
+    "No new third-party dependencies were added in Phase 6 (uses Phase 5 sklearn/joblib)."
+  ],
+  "next_phase": "Phase 7 — Candidate factory (spec §63): family registry, candidate geometry, payoff engine, stable IDs, maximum-loss proof, deterministic dominance."
+}

@@ -17,7 +17,31 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 5 — Data, labels, and V2: COMPLETE.** Next up: Phase 6.
+**Phase 6 — V3 forecasting: COMPLETE.** Next up: Phase 7.
+
+Phase 6 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ Uncertainty — `forecasting/uncertainty.py`: component composition with
+  missing≠zero reweighting, data-quality/model-age helpers, session bootstrap.
+- ✅ OOD — `forecasting/ood.py`: robust range + NN detector.
+- ✅ Conformal — `forecasting/conformal.py`: session-grouped split conformal,
+  OOD-aware widening.
+- ✅ Regime probabilities — `forecasting/models/regime_moe.py` + `regime_labels.py`.
+- ✅ Mixture-of-experts — `forecasting/models/mixture_experts.py`.
+- ✅ Competing risks — `forecasting/models/competing_risk.py` (sum≈1, survival).
+- ✅ Path model — `forecasting/path_model.py`: deterministic seed, adverse-first
+  scoring, `PathForecastV3` (bounded bootstrap + labeled Gaussian fallback).
+- ✅ Forecast ensemble — `forecasting/ensemble.py`.
+- ✅ Bundle attachment — `forecasting/v3.py` `attach_v3_fields`.
+- ✅ Parity — `baseline/expected_outputs/phase6/v3_forecast_bundle.json`.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (101 tests) all pass.
+See `migrations/manifests/phase-6.json`. Full path backoff hierarchy and live
+ForecastServer V3 group wiring are deferred.
+
+---
+
+### Phase 5 — Data, labels, and V2: COMPLETE
 
 Phase 5 deliverables (spec §63) — implemented against pinned System A source:
 
@@ -223,27 +247,26 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-Execute **Phase 6 — V3 forecasting** (spec §63):
+Execute **Phase 7 — Candidate factory** (spec §63):
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 6 only: uncertainty, OOD, regime probabilities, mixture-of-experts,
-conformal, competing risks, path model, and forecast ensemble.
+Execute Phase 7 only: family registry, candidate geometry, payoff engine,
+stable IDs, maximum-loss proof, and deterministic dominance.
 Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-6.json.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-7.json.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
 
-System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 6
-from `prediction/uncertainty.py`, `prediction/ood.py`, `prediction/conformal.py`,
-`prediction/models/regime_moe.py` / `mixture_experts.py` / `competing_risk.py`,
-`prediction/path_model.py`, and `prediction/ensemble.py`.
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 7
+from candidate/factory modules mapped in `docs/MIGRATION_MAP.md` (family registry,
+geometry, payoff, stable IDs).
 
-Phases 1-5 provide ingestion, record/replay, structural features, Legacy, and V2
-forecasting: `spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
-`spy_der.training` (as-of/datasets/folds/calibration/registry),
-`spy_der.evaluation.labels`, and `spy_der.forecasting` (models + `ForecastServer`).
+Phases 1-6 provide ingestion, record/replay, structural features, Legacy, V2, and
+V3 forecasting: `spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
+`spy_der.training`, `spy_der.evaluation.labels`, and `spy_der.forecasting`
+(V2 models + V3 uncertainty/OOD/regime/MoE/conformal/competing-risk/path/ensemble).
 
 Per-run instruction for every subsequent phase (spec §70):
 

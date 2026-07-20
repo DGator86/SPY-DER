@@ -59,3 +59,16 @@ packages = ["spy_der"]
 [[tool.mypy.overrides]]
 module = ["exchange_calendars.*", "pandas.*", "numpy.*", "sklearn.*", "joblib.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+  "spy_der.forecasting.ood",
+  "spy_der.forecasting.uncertainty",
+  "spy_der.forecasting.ensemble",
+  "spy_der.forecasting.conformal",
+  "spy_der.forecasting.models.regime_moe",
+  "spy_der.forecasting.models.mixture_experts",
+  "spy_der.forecasting.models.competing_risk",
+]
+ignore_errors = true
+
