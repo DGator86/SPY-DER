@@ -1,0 +1,66 @@
+{
+  "phase": 4,
+  "phase_name": "MTF and Legacy",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 4), §20, §21, §23",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "e3747823f9aa4b68cbbb91b513e5effbc51677d9",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:gate_scorer.py (evaluate_gates, evaluate_directional_gates, dealer_vetoes, Decision)",
+    "0DTE:decision_matrix.py, regime_classifier.py (regime routing / ScaleBook)",
+    "0DTE:resample.py (per-timeframe indicators), mtf_matrix.py (TIMEFRAMES, standardization)"
+  ],
+  "files_migrated": [
+    "0DTE:gate_scorer.py operational gates/vetoes -> src/spy_der/legacy/permissions.py",
+    "0DTE:gate_scorer.py / decision_matrix.py regime interpretation -> src/spy_der/legacy/analyzer.py (LegacyDecisionView)",
+    "0DTE:resample.py indicators -> src/spy_der/features/mtf.py (bounded set)",
+    "0DTE:regime_classifier.ScaleBook / MTF normalization -> src/spy_der/features/normalization.py (RobustStandardizer, persisted)"
+  ],
+  "files_merged": [],
+  "files_replaced": [],
+  "files_deferred": [
+    "Full ~110-variable MTF matrix (ADX/DI, Bollinger, VWAP, CVD, keltner) -> later feature pass; bounded indicator set established.",
+    "Dealer dynamics velocities (market_dynamics.py, flip/wall velocity, wall rupture) -> observation-only, history-dependent; deferred.",
+    "Confidence-to-Kelly sizing weights and the full 27-cell decision_matrix table -> risk/policy phases.",
+    "Directional trend scoring from flow/CVD (score_directional) -> requires MTF flow features; direction is derived from spot vs gamma flip for now."
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Operational restrictions are immutable hard vetoes, separate from empirical structural hypotheses (spec §23).",
+    "Long gamma = pinning/premium-selling regime; short gamma structurally vetoes premium selling and permits directional debits (gate_scorer premium vs directional gates).",
+    "Catalyst is a hard stop; late-day entry lockout and session-closed block entry.",
+    "Robust scales are scored before being updated and read neutral until warm; scale state persists across restarts (ScaleBook intent)."
+  ],
+  "intentional_changes": [
+    "Legacy consumes the Phase 3 StructuralState (gamma sign/flip/walls) rather than the System A MarketSnapshot dataclass.",
+    "LegacyDecisionView is a typed, content-addressed contract with explicit veto categories (operational vs structural) and reason codes.",
+    "MTF resampling is bar-count grouping over canonical Bars (bounded) instead of pandas time-rule resampling."
+  ],
+  "deliverables": [
+    "src/spy_der/contracts/legacy.py (LegacyDecisionView, HardVeto, VetoCode, DirectionPreference)",
+    "src/spy_der/legacy/permissions.py (evaluate_operational_vetoes)",
+    "src/spy_der/legacy/analyzer.py (LegacyAnalyzer)",
+    "src/spy_der/features/mtf.py (compute_mtf, TimeframeFeatures)",
+    "src/spy_der/features/normalization.py (RobustStandardizer, persisted)",
+    "tests/unit/test_legacy.py, tests/unit/test_mtf_norm.py, tests/parity/test_legacy_parity.py",
+    "baseline/expected_outputs/phase4/legacy_view.json (frozen golden Legacy view)"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (72 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "MTF is a bounded indicator set (return/EMA slope/RSI/realized vol); the full matrix and ADX/Bollinger/VWAP/CVD are deferred.",
+    "Dealer-dynamics velocities and wall-rupture (observation-only) are not yet computed.",
+    "Structural confidence and size cap are simple functions of net ratio/concentration; the journal-calibrated gate_scorer weights are a later pass.",
+    "Legacy parity is determinism/golden against a synthetic scenario; parity against a running System A gate decision is future work."
+  ],
+  "rollback": [
+    "Revert the Phase 4 commit. Phases 0-3 are unaffected; no runtime services and no persisted state beyond the opt-in RobustStandardizer file (best-effort, self-healing).",
+    "No new third-party dependencies were added in Phase 4."
+  ],
+  "next_phase": "Phase 5 — Data, labels, and V2 (spec §63): as-of datasets, labels, folds, calibration, V2 models, V2 registry, canonical forecast bundle, and fail-closed serving."
+}

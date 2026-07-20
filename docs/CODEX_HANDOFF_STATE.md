@@ -17,7 +17,31 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 3 — RND and structural features: COMPLETE.** Next up: Phase 4.
+**Phase 4 — MTF and Legacy: COMPLETE.** Next up: Phase 5.
+
+Phase 4 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ Legacy contracts — `contracts/legacy.py`: `LegacyDecisionView`, `HardVeto`,
+  `VetoCode`/`VetoCategory`, `DirectionPreference` (spec §23).
+- ✅ Operational permissions/vetoes — `legacy/permissions.py`: immutable hard
+  vetoes (stale data, missing/invalid chain, catalyst lockout, session closed,
+  entry cutoff, insufficient liquidity), migrated from `gate_scorer.py`.
+- ✅ Legacy analyzer — `legacy/analyzer.py` `LegacyAnalyzer`: gamma-regime
+  interpretation → preferred direction, permitted/prohibited families,
+  structural confidence, size cap, structural veto (short gamma), regime label.
+- ✅ MTF resample + indicators — `features/mtf.py` `compute_mtf`: resample bars
+  to timeframes with return/EMA-slope/RSI/realized-vol, explicit cold start.
+- ✅ Normalization — `features/normalization.py` `RobustStandardizer`: rolling
+  median/MAD z-score, score-before-update, neutral-until-warm, restart-safe.
+- ✅ Parity — `baseline/expected_outputs/phase4/legacy_view.json` golden + test.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (72 tests) all pass.
+See `migrations/manifests/phase-4.json`. The full MTF matrix, dealer-dynamics
+velocities, and journal-calibrated gate weights are deferred.
+
+---
+
+### Phase 3 — RND and structural features: COMPLETE
 
 Phase 3 deliverables (spec §63) — implemented against pinned System A source:
 
@@ -171,30 +195,30 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-Execute **Phase 4 — MTF and Legacy** (spec §63):
+Execute **Phase 5 — Data, labels, and V2** (spec §63):
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 4 only: resampling, multi-timeframe features, normalization,
-dynamics, the Legacy analyzer, permissions, veto classification, and
-LegacyDecisionView.
+Execute Phase 5 only: as-of datasets, labels, folds, calibration, V2 models,
+V2 registry, the canonical forecast bundle, and fail-closed serving.
 Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-4.json.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-5.json.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
 
-System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 4
-from `resample.py` (bars -> per-TF indicators, spec §20), `mtf_matrix.py`
-(standardized matrix + normalization), `market_dynamics.py` (spec §21),
-`gate_scorer.py` / `decision_matrix.py` / `regime_classifier.py` /
-`regime_alignment.py` (Legacy gates/permissions/vetoes, spec §23), producing a
-`LegacyDecisionView` (spec §23).
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 5
+from `prediction/asof.py` / `prediction/dataset.py` (as-of datasets, spec §25),
+`prediction/labels.py` (spec §54), `prediction/crossfit.py` / `walk_forward.py`
+(folds), `prediction/calibration.py`, `prediction/models/direction.py` and
+siblings (V2 models), `prediction/registry.py`, and `prediction/contracts.py`
+-> the canonical `MarketForecastBundle` (spec §24, §30).
 
-Phases 1-3 provide ingestion, record/replay, and structural features:
-`spy_der.market_data` exposes the calendar/assembler/adapter/composite/record/
-replay; `spy_der.features` exposes `compute_oi_gex`, `GexRankWindow`,
-`compute_volatility`, `compute_rnd`, and `StructuralStateService`.
+Phases 1-4 provide ingestion, record/replay, structural features, and the Legacy
+layer: `spy_der.market_data`, `spy_der.features` (`compute_oi_gex`,
+`GexRankWindow`, `compute_volatility`, `compute_rnd`, `StructuralStateService`,
+`compute_mtf`, `RobustStandardizer`), and `spy_der.legacy` (`LegacyAnalyzer`,
+`evaluate_operational_vetoes`).
 
 Per-run instruction for every subsequent phase (spec §70):
 
