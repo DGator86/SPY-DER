@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from spy_der.agents.grok import GROK_ADAPTER_VERSION, GrokConfig
+from spy_der.agents.prompts import ENTRY_PROMPT_VERSION
 from spy_der.contracts.common import content_hash
 from spy_der.contracts.events import AggregateType, JournalEvent, JournalEventType
 from spy_der.deployment.agent_manifest import AgentDeploymentManifest
@@ -391,9 +393,11 @@ def activate_controlled_cutover(
     agent = agent_manifest or AgentDeploymentManifest(
         deployment_id="agent-grok-cutover-17",
         provider="grok",
-        model_id="grok-2",
-        adapter_version="grok-adapter.v2",
-        prompt_version="spy-der-entry-prompt.v1",
+        # Derive from the Grok adapter's source of truth so the manifest never
+        # drifts behind a model/version bump.
+        model_id=GrokConfig().model_id,
+        adapter_version=GROK_ADAPTER_VERSION,
+        prompt_version=ENTRY_PROMPT_VERSION,
         mode="shadow",
         enabled=agent_enabled,
         approved_by=approval.approved_by,

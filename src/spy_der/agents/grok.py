@@ -44,8 +44,11 @@ GrokTransport = Callable[[str, dict[str, str], dict[str, Any]], str]
 @dataclass(frozen=True, slots=True)
 class GrokConfig:
     api_base: str = "https://api.x.ai/v1/chat/completions"
-    model_id: str = "grok-2"
+    model_id: str = "grok-4.5"
     api_key_env: str = "XAI_API_KEY"
+    # Env overrides so ops can bump the model / endpoint without a code change.
+    model_id_env: str = "XAI_MODEL"
+    api_base_env: str = "XAI_API_BASE"
     timeout_seconds: float = 30.0
     # When True, attach HttpGrokTransport if env key is present and no transport given.
     auto_http: bool = True
@@ -64,16 +67,24 @@ class GrokDecisionAgent:
         self.cfg = cfg or GrokConfig()
         self._api_key = api_key
         self._transport = transport
+        # Env overrides win over the config default so operators can bump the
+        # model id / endpoint via /etc/zerodte/zerodte.env with no redeploy.
+        self._model_id = os.environ.get(self.cfg.model_id_env, "").strip() or self.cfg.model_id
+        self._api_base = os.environ.get(self.cfg.api_base_env, "").strip() or self.cfg.api_base
         if self._transport is None and self.cfg.auto_http and self._resolve_api_key():
             self._transport = make_http_grok_transport(
                 timeout_seconds=self.cfg.timeout_seconds
             )
 
     @property
+    def model_id(self) -> str:
+        return self._model_id
+
+    @property
     def identity(self) -> AgentIdentity:
         return AgentIdentity(
             provider="grok",
-            model_id=self.cfg.model_id,
+            model_id=self._model_id,
             adapter_version=GROK_ADAPTER_VERSION,
             prompt_version=ENTRY_PROMPT_VERSION,
         )
@@ -171,14 +182,14 @@ class GrokDecisionAgent:
             "Authorization": f"Bearer {api_key}" if api_key else "",
         }
         body = {
-            "model": self.cfg.model_id,
+            "model": self._model_id,
             "messages": [
                 {"role": "system", "content": prompt["system"]},
                 {"role": "user", "content": prompt["user"]},
             ],
             "temperature": 0.0,
         }
-        raw = self._transport(self.cfg.api_base, headers, body)
+        raw = self._transport(self._api_base, headers, body)
         return _extract_content(raw)
 
 

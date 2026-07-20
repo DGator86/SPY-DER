@@ -19,11 +19,29 @@ Optional Grok key in `/etc/zerodte/zerodte.env`:
 
 ```bash
 XAI_API_KEY=...
+# Optional overrides (no redeploy needed):
+XAI_MODEL=grok-4.5          # decision model id; default grok-4.5
+XAI_API_BASE=https://api.x.ai/v1/chat/completions
 ```
 
-Without it, SPY-DER uses the deterministic agent so the panel still updates.
+Without `XAI_API_KEY`, SPY-DER uses the deterministic agent so the panel still
+updates.
 
 Disable with `SPY_DER_ENABLED=0` in the deploy environment if needed.
+
+### Verify the live AI
+
+After setting the key, confirm the model actually answers end-to-end:
+
+```bash
+/opt/zerodte/venv/bin/spy-der ai-check          # live: exits 0 only if Grok answers
+/opt/zerodte/venv/bin/spy-der ai-check --offline # plumbing check, no key/network
+/opt/zerodte/venv/bin/spy-der ai-check --json    # machine-readable result
+```
+
+`ai-check` sends a sample packet through the exact production bridge and reports
+the provider, model id, health, and the returned decision. It stays paper/shadow
+only — no orders are placed.
 
 ## What you should see
 
