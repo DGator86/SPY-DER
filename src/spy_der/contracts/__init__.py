@@ -1,3 +1,15 @@
+from .candidates import (
+    CANDIDATE_SCHEMA,
+    FACTORY_VERSION,
+    Candidate,
+    CandidateDirection,
+    CandidateFamily,
+    CandidateLeg,
+    CandidateUniverse,
+    DebitCredit,
+    geometry_hash,
+    make_candidate_id,
+)
 from .common import (
     SCHEMA_VERSION,
     ContractError,
@@ -25,10 +37,8 @@ from .market import (
     SessionStatus,
 )
 from .models import (
-    Candidate,
     CandidateForecast,
     CandidateRanking,
-    CandidateUniverse,
     DeploymentManifest,
     ExitPolicy,
     FeatureBundle,
@@ -54,12 +64,17 @@ from .models import (
 from .serialization import to_canonical_json
 
 __all__ = [
+    "CANDIDATE_SCHEMA",
+    "FACTORY_VERSION",
     "FEATURE_VERSION",
     "LABEL_VERSION",
     "SCHEMA_VERSION",
     "Bar",
     "Candidate",
+    "CandidateDirection",
+    "CandidateFamily",
     "CandidateForecast",
+    "CandidateLeg",
     "CandidateRanking",
     "CandidateUniverse",
     "CanonicalMarketSnapshot",
@@ -67,6 +82,7 @@ __all__ = [
     "ChainCoverage",
     "ContractError",
     "DataQuality",
+    "DebitCredit",
     "DeploymentManifest",
     "ErrorCode",
     "ExitPolicy",
@@ -103,5 +119,7 @@ __all__ = [
     "ValidationError",
     "content_hash",
     "deterministic_id",
+    "geometry_hash",
+    "make_candidate_id",
     "to_canonical_json",
 ]
