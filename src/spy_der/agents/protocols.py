@@ -10,6 +10,8 @@ from spy_der.contracts.agents import (
     AgentDecisionResponse,
     AgentHealth,
     AgentIdentity,
+    AgentPositionResponse,
+    PositionDecisionPacket,
 )
 
 __all__ = ["DecisionAgent"]
@@ -23,5 +25,9 @@ class DecisionAgent(Protocol):
     def capabilities(self) -> AgentCapabilities: ...
 
     def decide_entry(self, packet: AgentDecisionPacket) -> AgentDecisionResponse: ...
+
+    def decide_position(
+        self, packet: PositionDecisionPacket
+    ) -> AgentPositionResponse: ...
 
     def health(self) -> AgentHealth: ...

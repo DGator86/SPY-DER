@@ -17,7 +17,35 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 16 — Dual-runtime parity: COMPLETE.** Next up: Phase 17 (owner approval required).
+**AI Decision Authority — COMPLETE.** Phase 17 (controlled cutover) still requires
+explicit owner approval. Next engineering work: VPS runner + 0DTE Vercel
+dashboard parallel track for `system_b_grok`.
+
+### AI Decision Authority (post-Phase-16 gap close)
+
+Owner intent: the AI is the decision maker — entry, exit, tracker, analyzer;
+every major lever is watched by the AI.
+
+Deliverables:
+
+- ✅ Position decision contracts — `PositionDecisionPacket`,
+  `AgentPositionAction` (HOLD/REDUCE/CLOSE), `AgentPositionResponse`.
+- ✅ `DecisionAgent.decide_position` on Grok / Deterministic / Mock / Recorded.
+- ✅ `HttpGrokTransport` — stdlib xAI HTTP; auto-attached when `XAI_API_KEY` set.
+- ✅ `AiDecisionAuthority` — entry + exit + tracker + analyzer + journal events.
+- ✅ `ShadowAiLoop` — paper shadow loop wiring AI into open/manage/close.
+- ✅ Hard exit floors still override AI HOLD (stop/eod/emergency/ras/expiration).
+- ✅ Parity — `baseline/expected_outputs/ai_authority/live_state.json`.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (184 tests) all pass.
+See `migrations/manifests/ai-decision-authority.json`.
+
+Still deferred (not Phase 17): continuous VPS process and 0DTE Vercel dashboard
+panel that consumes `ShadowAiLoop.live_state()`.
+
+---
+
+### Phase 16 — Dual-runtime parity: COMPLETE
 
 Phase 16 deliverables (spec §63) — implemented against pinned System A source:
 

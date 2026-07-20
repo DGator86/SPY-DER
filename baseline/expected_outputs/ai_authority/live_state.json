@@ -1,0 +1,31 @@
+{
+  "track": "system_b_grok",
+  "role": "ai_decision_maker",
+  "account_id": "system_b_grok",
+  "mode": "shadow",
+  "agent_keys": [
+    "provider",
+    "model_id",
+    "adapter_version",
+    "healthy"
+  ],
+  "tracker_keys": [
+    "ticks",
+    "last_entry_action",
+    "last_entry_candidate_id",
+    "last_position_action",
+    "last_position_id",
+    "open_position_ids",
+    "entry_selects",
+    "entry_no_edge",
+    "entry_abstains",
+    "position_holds",
+    "position_reduces",
+    "position_closes",
+    "last_rationale",
+    "last_reason_codes",
+    "agent_provider",
+    "agent_model_id",
+    "healthy"
+  ]
+}

@@ -18,6 +18,8 @@ from spy_der.contracts.policies import PolicyDecisionView, PolicyDisagreement
 __all__ = [
     "AGENT_DECISION_SCHEMA",
     "AGENT_PACKET_SCHEMA",
+    "AGENT_POSITION_PACKET_SCHEMA",
+    "AGENT_POSITION_RESPONSE_SCHEMA",
     "AgentCandidateView",
     "AgentCapabilities",
     "AgentDecisionPacket",
@@ -25,21 +27,35 @@ __all__ = [
     "AgentEntryAction",
     "AgentHealth",
     "AgentIdentity",
+    "AgentPositionAction",
+    "AgentPositionResponse",
     "DeploymentContext",
     "ExitPolicySummary",
+    "OpenPositionView",
+    "PositionDecisionPacket",
     "ReadOnlyLegSummary",
     "SnapshotSummary",
+    "make_packet_id",
+    "make_position_packet_id",
     "packet_hash",
 ]
 
 AGENT_PACKET_SCHEMA = "agent.packet.v1"
 AGENT_DECISION_SCHEMA = "agent.decision.v1"
+AGENT_POSITION_PACKET_SCHEMA = "agent.position_packet.v1"
+AGENT_POSITION_RESPONSE_SCHEMA = "agent.position_response.v1"
 
 
 class AgentEntryAction(StrEnum):
     SELECT_CANDIDATE = "SELECT_CANDIDATE"
     NO_EDGE = "NO_EDGE"
     ABSTAIN = "ABSTAIN"
+
+
+class AgentPositionAction(StrEnum):
+    HOLD = "HOLD"
+    REDUCE = "REDUCE"
+    CLOSE = "CLOSE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,6 +232,81 @@ class AgentDecisionResponse:
             raise ValueError("candidate_id is only valid for SELECT_CANDIDATE")
 
 
+@dataclass(frozen=True, slots=True)
+class OpenPositionView:
+    """Read-only open-position summary for AI exit / manage decisions."""
+
+    position_id: str
+    candidate_id: str
+    open_contracts: int
+    entry_price: Decimal
+    mark_price: Decimal
+    unrealized_pnl_ratio: float
+    peak_pnl_ratio: float
+    exit_policy_id: str
+    holding_minutes: float = 0.0
+    max_loss: Decimal = Decimal("0")
+    geometry_hash: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.position_id:
+            raise ValueError("position_id is required")
+        if self.open_contracts <= 0:
+            raise ValueError("open_contracts must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class PositionDecisionPacket:
+    """Processed-output packet for AI position manage / exit decisions (§43)."""
+
+    packet_id: str
+    packet_hash: str
+    created_at: datetime
+    expires_at: datetime
+    snapshot_summary: SnapshotSummary
+    position: OpenPositionView
+    approved_exit_policies: tuple[ExitPolicySummary, ...] = ()
+    hard_vetoes: tuple[str, ...] = ()
+    deterministic_exit_signal: str = ""
+    data_quality: float = 1.0
+    forecast_uncertainty: float = 0.0
+    deployment_context: DeploymentContext = field(default_factory=DeploymentContext)
+    schema_version: str = AGENT_POSITION_PACKET_SCHEMA
+    evidence_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.packet_id:
+            raise ValueError("packet_id is required")
+        require_tz_aware(self.created_at, "created_at")
+        require_tz_aware(self.expires_at, "expires_at")
+        require_probability(self.data_quality, "data_quality")
+        require_probability(self.forecast_uncertainty, "forecast_uncertainty")
+
+
+@dataclass(frozen=True, slots=True)
+class AgentPositionResponse:
+    packet_id: str
+    packet_hash: str
+    action: AgentPositionAction
+    reduce_fraction: float = 0.0
+    confidence: float = 0.0
+    uncertainty: float = 1.0
+    reason_codes: tuple[str, ...] = ()
+    rationale: str = ""
+    schema_version: str = AGENT_POSITION_RESPONSE_SCHEMA
+    model_id: str = ""
+    prompt_version: str = ""
+
+    def __post_init__(self) -> None:
+        require_probability(self.reduce_fraction, "reduce_fraction")
+        require_probability(self.confidence, "confidence")
+        require_probability(self.uncertainty, "uncertainty")
+        if self.action is AgentPositionAction.REDUCE and self.reduce_fraction <= 0.0:
+            raise ValueError("REDUCE requires reduce_fraction > 0")
+        if self.action is not AgentPositionAction.REDUCE and self.reduce_fraction != 0.0:
+            raise ValueError("reduce_fraction is only valid for REDUCE")
+
+
 def packet_hash(payload: dict[str, object]) -> str:
     """Content hash of the packet body (excludes packet_id/hash themselves)."""
     return content_hash(payload)
@@ -223,3 +314,7 @@ def packet_hash(payload: dict[str, object]) -> str:
 
 def make_packet_id(snapshot_id: str, *parts: object) -> str:
     return deterministic_id("apkt", snapshot_id, *parts)
+
+
+def make_position_packet_id(position_id: str, *parts: object) -> str:
+    return deterministic_id("ppkt", position_id, *parts)

@@ -101,6 +101,27 @@ class IsolatedAccountBook:
         self._accounts[account_id] = updated
         return updated
 
+    def realize_pnl(
+        self, account_id: str, realized_pnl: Decimal, *, note: str = ""
+    ) -> PaperAccount:
+        """Credit/debit realized PnL without changing open_position_ids."""
+        acct = self.ensure(account_id)
+        cash = acct.cash + Decimal(str(realized_pnl))
+        updated = PaperAccount(
+            account_id=acct.account_id,
+            cash=cash,
+            equity=cash,
+            starting_cash=acct.starting_cash,
+            open_position_ids=acct.open_position_ids,
+            daily_realized_pnl=acct.daily_realized_pnl + Decimal(str(realized_pnl)),
+            trade_count=acct.trade_count,
+            blocked=acct.blocked,
+            block_reason=acct.block_reason,
+            events=(*acct.events, f"realize:{note or realized_pnl}"),
+        )
+        self._accounts[account_id] = updated
+        return updated
+
     def close_position(
         self,
         account_id: str,
