@@ -1,0 +1,1 @@
+{"all_matched":true,"bucket_matched":[true,true,true,true],"bucket_names":["candidate","feature","outcome","snapshot"],"decision_differs":[false],"inputs_hash":"sha256:100cd2fd3105dcad5d3797f342717e544206b2cb0c51ad8dca3a480a6bdb97b7","notes":["rollback_rehearsal_executed"],"rollback_rehearsal_ok":true}
