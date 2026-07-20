@@ -14,6 +14,8 @@ from spy_der.runtime.parity import (
     run_dual_runtime_parity,
 )
 from spy_der.runtime.primary import PrimaryResearchRuntime, PrimaryTickResult
+from spy_der.runtime.runner import RunnerConfig, SpyDerVpsRunner
+from spy_der.runtime.state_writer import atomic_write_json, write_live_state_file
 
 __all__ = [
     "AiLoopTickResult",
@@ -24,11 +26,15 @@ __all__ = [
     "PerformanceSample",
     "PrimaryResearchRuntime",
     "PrimaryTickResult",
+    "RunnerConfig",
     "ShadowAiLoop",
+    "SpyDerVpsRunner",
     "assert_identical_inputs",
+    "atomic_write_json",
     "compare_parity_buckets",
     "default_approved_exits",
     "measure_runtime",
     "rehearse_rollback",
     "run_dual_runtime_parity",
+    "write_live_state_file",
 ]

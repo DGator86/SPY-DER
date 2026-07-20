@@ -1,0 +1,22 @@
+[Unit]
+Description=SPY-DER parallel-track shadow publisher (paper/shadow only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zerodte
+Group=zerodte
+WorkingDirectory=/opt/spy-der
+EnvironmentFile=-/etc/zerodte/zerodte.env
+ExecStart=/opt/zerodte/venv/bin/spy-der vps-runner \
+    --live-state /var/lib/zerodte/spy_der_state.json \
+    --interval 60
+Restart=always
+RestartSec=5
+
+# Live trading is forbidden. This unit only publishes observation state.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
