@@ -1,0 +1,57 @@
+{
+  "phase": 14,
+  "phase_name": "Evaluation and comparison",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 14), §55-§56",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "4076e47",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:journal.py gate_effectiveness / calibration reports",
+    "0DTE:validation_pipeline.py",
+    "SPY-DER:replay/comparison.py, evaluation/metrics.py"
+  ],
+  "files_migrated": [
+    "NEW evaluation/comparison.py (native/controlled/policy/agent/ablations)",
+    "NEW evaluation/reports.py session-safe reports",
+    "Expanded evaluation/metrics.py evaluate_trades",
+    "Expanded replay SystemVariant enum for §56 variants"
+  ],
+  "files_merged": [],
+  "files_replaced": [],
+  "files_deferred": [
+    "Live dual-runtime orchestration (Phase 16)",
+    "Dashboard UI for comparison boards",
+    "Full session-bootstrap confidence intervals"
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Replay compare_runs still fail-closes on manifest/journal hash mismatch.",
+    "Controlled comparison requires matching ReplayInputManifest."
+  ],
+  "intentional_changes": [
+    "ComparisonManifest hashes identity fields and fails closed on mismatch.",
+    "Ablation IDs mirror master-spec §56 required variants."
+  ],
+  "deliverables": [
+    "src/spy_der/evaluation/comparison.py",
+    "src/spy_der/evaluation/reports.py",
+    "src/spy_der/evaluation/metrics.py",
+    "tests/unit/test_phase14_comparison.py",
+    "tests/parity/test_phase14_comparison_parity.py",
+    "baseline/expected_outputs/phase14/comparison_report.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (166 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "Metrics are session-aggregated offline; no live streaming evaluator yet."
+  ],
+  "rollback": [
+    "Revert the Phase 14 commit(s). Phases 0-13 are unaffected."
+  ],
+  "next_phase": "Phase 15 — Deployment and operations (spec §63)."
+}
