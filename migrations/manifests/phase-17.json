@@ -1,0 +1,66 @@
+{
+  "phase": 17,
+  "phase_name": "Controlled cutover",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 17)",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "0f96fd3",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "owner_approval": {
+    "approved": true,
+    "approved_by": "repository-owner",
+    "approval_note": "Phase 17 activate.",
+    "phase": "phase-17"
+  },
+  "files_inspected": [
+    "SPY-DER:deployment/manifest.py",
+    "SPY-DER:deployment/rollback.py",
+    "SPY-DER:runtime/ai_loop.py",
+    "docs/SPY_DER_MASTER_SPEC.md §58, §63 Phase 17"
+  ],
+  "files_migrated": [
+    "NEW src/spy_der/deployment/cutover.py ControlledCutover + activate_controlled_cutover",
+    "NEW src/spy_der/deployment/agent_manifest.py AgentDeploymentManifest (spec §58)",
+    "NEW src/spy_der/runtime/primary.py PrimaryResearchRuntime",
+    "EXTEND deployment/runbooks.py cutover runbook"
+  ],
+  "files_merged": [],
+  "files_replaced": [],
+  "files_deferred": [
+    "Continuous VPS process publishing live_state to 0DTE Vercel dashboard",
+    "Live broker routing (explicitly out of scope; live execution disabled)"
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Live trading authority remains disabled and cannot be enabled by cutover.",
+    "System A retained as atomic rollback target via DeploymentPointer history.",
+    "Agent authority can be toggled without changing primary/rollback system."
+  ],
+  "intentional_changes": [
+    "System B is the primary research/shadow runtime after owner-approved activation.",
+    "PrimaryResearchRuntime refuses ticks when cutover inactive or agent authority off."
+  ],
+  "deliverables": [
+    "src/spy_der/deployment/cutover.py",
+    "src/spy_der/deployment/agent_manifest.py",
+    "src/spy_der/runtime/primary.py",
+    "tests/unit/test_phase17_cutover.py",
+    "tests/parity/test_phase17_cutover_parity.py",
+    "baseline/expected_outputs/phase17/cutover_snapshot.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (193 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "No continuous VPS runner yet; cutover is in-process control plane.",
+    "0DTE Vercel dashboard parallel panel not wired."
+  ],
+  "rollback": [
+    "Call ControlledCutover.rollback_to_system_a(reason=...).",
+    "Or revert the Phase 17 commit(s); Phases 0-16 and AI authority remain."
+  ],
+  "next_phase": "Migration complete per §63. Optional: VPS runner + 0DTE dashboard parallel track."
+}
