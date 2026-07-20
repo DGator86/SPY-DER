@@ -88,6 +88,8 @@ def envelope_max_risk(packet: PolicyInputPacket) -> Decimal | None:
     if env is None:
         return None
     value = getattr(env, "max_defined_risk_per_trade", None)
+    if value is None:
+        value = getattr(env, "max_risk_dollars", None)
     return Decimal(str(value)) if value is not None else None
 
 

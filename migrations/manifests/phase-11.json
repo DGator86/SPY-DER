@@ -1,0 +1,66 @@
+{
+  "phase": 11,
+  "phase_name": "Risk",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 11), §50",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "6b6f0c8",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:zerodte/contracts/risk.py",
+    "0DTE:risk_manager.py",
+    "0DTE:gate_scorer.py (lockouts)",
+    "0DTE:spy0dte.py (scale_risk)",
+    "0DTE:paper_broker.py (sizing/limits)"
+  ],
+  "files_migrated": [
+    "0DTE:zerodte/contracts/risk.py -> src/spy_der/contracts/risk.py",
+    "0DTE:risk_manager.py -> src/spy_der/risk/portfolio.py + firewall.py",
+    "0DTE:gate_scorer.py lockouts -> src/spy_der/risk/lockout.py",
+    "0DTE:spy0dte.py scale_risk -> src/spy_der/risk/sizing.py",
+    "NEW envelope builder, duplicates/stale-decision guards"
+  ],
+  "files_merged": [
+    "src/spy_der/risk/firewall.py replaces Phase-0 max-loss stub with §50 checks",
+    "src/spy_der/contracts/models.py RiskEnvelope/RiskDecision moved to contracts/risk.py"
+  ],
+  "files_replaced": [],
+  "files_deferred": [
+    "Live broker portfolio sync",
+    "RAS PositionMonitor exit path",
+    "Per-account isolated RiskManager wiring (Phase 12 accounts)"
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Fail-closed: hard vetoes reject order intent.",
+    "Policies still read max_defined_risk_per_trade (alias of max_risk_dollars).",
+    "RiskDecision.allowed/reason remain available for Phase-0 callers.",
+    "Session-scoped portfolio counters reset on session_date change."
+  ],
+  "intentional_changes": [
+    "RiskDecision follows master-spec §50 (approved/vetoes/checks/sizing).",
+    "RiskEnvelope merges System A approved-envelope fields with spec ceilings.",
+    "Firewall accepts optional FirewallContext for freshness/duplicates/staleness."
+  ],
+  "deliverables": [
+    "src/spy_der/contracts/risk.py",
+    "src/spy_der/risk/**",
+    "tests/unit/test_phase11_risk.py",
+    "tests/parity/test_phase11_risk_parity.py",
+    "baseline/expected_outputs/phase11/risk_decision.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (145 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "No live account equity feed.",
+    "Open-risk check uses committed max-loss, not mark-to-market VaR."
+  ],
+  "rollback": [
+    "Revert the Phase 11 commit(s). Phases 0-10 are unaffected."
+  ],
+  "next_phase": "Phase 12 — Execution and positions (spec §63)."
+}

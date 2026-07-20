@@ -125,7 +125,9 @@ tests (spec §65), not asserted here. No parity, performance, or "migrated" clai
 | Source (System A) | Planned target (System B) | Status |
 |---|---|---|
 | `risk_manager.py` | `risk/firewall.py`, `risk/portfolio.py`, `risk/sizing.py` | ✅ |
-| `zerodte/contracts/risk.py` | `contracts/risk.py` | ➕ |
+| `zerodte/contracts/risk.py` | `contracts/risk.py` | ✅ |
+| `gate_scorer.py` lockouts | `risk/lockout.py` | ✅ |
+| `spy0dte.py` `scale_risk` | `risk/sizing.py` | ✅ |
 
 ## 9. Execution & positions → `src/spy_der/execution/`, `positions/`
 

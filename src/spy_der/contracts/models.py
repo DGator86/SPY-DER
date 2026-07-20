@@ -102,12 +102,6 @@ class SystemAction(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class RiskEnvelope:
-    schema_version: str = SCHEMA_VERSION
-    max_defined_risk_per_trade: Decimal = Decimal("0")
-
-
-@dataclass(frozen=True, slots=True)
 class SystemDecision:
     schema_version: str = SCHEMA_VERSION
     action: SystemAction = SystemAction.ABSTAIN
@@ -120,13 +114,6 @@ class SystemDecision:
     candidate_universe_id: str = ""
     veto_codes: tuple[str, ...] = ()
     config_version: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class RiskDecision:
-    schema_version: str = SCHEMA_VERSION
-    allowed: bool = False
-    reason: str = ""
 
 
 @dataclass(frozen=True, slots=True)
