@@ -1,0 +1,63 @@
+{
+  "phase": 13,
+  "phase_name": "Journal and settlement",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 13), §53",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "0a20d29",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:journal.py (settle_session, realized_pnl)",
+    "0DTE:zerodte/runtime/services.py JournalSink",
+    "0DTE:paper_broker.py paper_trades"
+  ],
+  "files_migrated": [
+    "NEW contracts/events.py + contracts/outcomes.py",
+    "NEW journal/store.py (memory + SQLite WAL)",
+    "NEW journal/hash_chain.py, projections.py, reconstruction.py",
+    "0DTE:journal.py settle_session -> evaluation/settlement.py"
+  ],
+  "files_merged": [
+    "Phase-0 JournalEvent/OutcomeRecord stubs replaced by spec §53 contracts"
+  ],
+  "files_replaced": [],
+  "files_deferred": [
+    "Dashboard UI projection consumers",
+    "Promotion/deployment event workflows (Phase 15)",
+    "Full research dataset exports"
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Replay deterministic_events still constructs JournalEvent via timestamp alias.",
+    "Settlement uses candidates.payoff.terminal_payoff (System A realized_pnl).",
+    "Counterfactual settlement covers blocked/no-trade candidates."
+  ],
+  "intentional_changes": [
+    "Per-event hash chain (not only whole-journal hash).",
+    "Empty InMemoryJournalStore is truthy to avoid `journal or Store()` bugs.",
+    "training.calibration no longer imports forecasting.models.base (cycle break)."
+  ],
+  "deliverables": [
+    "src/spy_der/contracts/events.py",
+    "src/spy_der/contracts/outcomes.py",
+    "src/spy_der/journal/**",
+    "src/spy_der/evaluation/settlement.py",
+    "tests/unit/test_phase13_journal.py",
+    "tests/parity/test_phase13_journal_parity.py",
+    "baseline/expected_outputs/phase13/journal_settlement.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (160 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "Projection tables are in-memory rebuilds only.",
+    "No async/concurrent append locking beyond SQLite WAL."
+  ],
+  "rollback": [
+    "Revert the Phase 13 commit(s). Phases 0-12 are unaffected."
+  ],
+  "next_phase": "Phase 14 — Evaluation and comparison (spec §63)."
+}

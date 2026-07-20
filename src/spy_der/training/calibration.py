@@ -12,8 +12,6 @@ from typing import Any
 
 import numpy as np
 
-from spy_der.forecasting.models.base import brier_score, clip_probability, log_loss_score
-
 __all__ = [
     "CalibrationArtifact",
     "IdentityCalibrator",
@@ -28,6 +26,23 @@ __all__ = [
 def _logit(p: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     p = np.clip(np.asarray(p, dtype=float), eps, 1.0 - eps)
     return np.log(p / (1.0 - p))
+
+
+def clip_probability(p: Any, eps: float = 1e-6) -> np.ndarray:
+    """Local copy avoids importing forecasting (circular with model calibrators)."""
+    return np.clip(np.asarray(p, dtype=float), eps, 1.0 - eps)
+
+
+def brier_score(y: Any, p: Any) -> float:
+    y_arr = np.asarray(y, dtype=float)
+    p_arr = clip_probability(p)
+    return float(np.mean((p_arr - y_arr) ** 2))
+
+
+def log_loss_score(y: Any, p: Any, eps: float = 1e-6) -> float:
+    y_arr = np.asarray(y, dtype=float)
+    p_arr = clip_probability(p, eps=eps)
+    return float(-np.mean(y_arr * np.log(p_arr) + (1.0 - y_arr) * np.log(1.0 - p_arr)))
 
 
 @dataclass
