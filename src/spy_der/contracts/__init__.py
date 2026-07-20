@@ -72,7 +72,6 @@ from .market import (
 from .models import (
     CandidateForecast,
     CandidateRanking,
-    DeploymentManifest,
     FeatureBundle,
     HardVeto,
     LegacyDecisionView,
@@ -175,7 +174,6 @@ __all__ = [
     "DataQuality",
     "DebitCredit",
     "DeploymentContext",
-    "DeploymentManifest",
     "ErrorCode",
     "ExitPolicy",
     "ExitPolicySummary",

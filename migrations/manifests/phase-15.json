@@ -1,0 +1,60 @@
+{
+  "phase": 15,
+  "phase_name": "Deployment and operations",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 15)",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "b885daf",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:prediction/deployment.py",
+    "0DTE:prediction/promotion.py",
+    "0DTE:prediction/drift.py",
+    "0DTE:prediction/registry.py"
+  ],
+  "files_migrated": [
+    "0DTE:prediction/deployment.py -> src/spy_der/deployment/manifest.py + rollback.py",
+    "0DTE:prediction/promotion.py -> src/spy_der/deployment/promotion.py",
+    "0DTE:prediction/drift.py -> src/spy_der/deployment/drift.py",
+    "NEW notifications/runbooks/dashboard ops surfaces",
+    "ModelRegistry re-exported from training/registry.py"
+  ],
+  "files_merged": [
+    "Phase-0 contracts.models.DeploymentManifest stub removed; use deployment.manifest"
+  ],
+  "files_replaced": [],
+  "files_deferred": [
+    "External Slack/email notification transports",
+    "Full HTML ops dashboard UI",
+    "Live PredictionRuntime serving bundle loader"
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "No automatic promotion; human reviewer + approval_note required.",
+    "Shadow cannot promote directly to champion.",
+    "Frozen deployments reject activate() of a different manifest."
+  ],
+  "intentional_changes": [
+    "DeploymentMode includes FROZEN for ops lockouts.",
+    "NotificationBus is in-process only (no network)."
+  ],
+  "deliverables": [
+    "src/spy_der/deployment/**",
+    "tests/unit/test_phase15_deployment.py",
+    "tests/parity/test_phase15_deployment_parity.py",
+    "baseline/expected_outputs/phase15/ops_dashboard.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (172 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "Dashboard is a read-model dict, not a web UI."
+  ],
+  "rollback": [
+    "Revert the Phase 15 commit(s). Phases 0-14 are unaffected."
+  ],
+  "next_phase": "Phase 16 — Dual-runtime parity (spec §63)."
+}

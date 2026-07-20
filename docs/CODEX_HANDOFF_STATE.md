@@ -17,7 +17,26 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 14 — Evaluation and comparison: COMPLETE.** Next up: Phase 15.
+**Phase 15 — Deployment and operations: COMPLETE.** Next up: Phase 16.
+
+Phase 15 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ Deployment manifests + modes — `deployment/manifest.py`.
+- ✅ Human-gated promotion — `deployment/promotion.py` (no auto-promote).
+- ✅ Drift gates — `deployment/drift.py`.
+- ✅ Freeze + rollback — `deployment/rollback.py` `DeploymentPointer`.
+- ✅ Notifications + runbooks + ops dashboard — `notifications.py`,
+  `runbooks.py`, `dashboard.py`.
+- ✅ Model registry re-export — existing `training/registry.py` via deployment.
+- ✅ Parity — `baseline/expected_outputs/phase15/ops_dashboard.json`.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (172 tests) all pass.
+See `migrations/manifests/phase-15.json`. External notification transports and
+rich UI dashboards remain deferred.
+
+---
+
+### Phase 14 — Evaluation and comparison: COMPLETE
 
 Phase 14 deliverables (spec §63) — implemented against pinned System A source:
 
@@ -414,28 +433,28 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-Execute **Phase 15 — Deployment and operations** (spec §63):
+Execute **Phase 16 — Dual-runtime parity** (spec §63):
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 15 only: model registry, deployment manifests, promotion,
-drift, freeze, rollback, dashboard, runbooks, and notifications.
+Execute Phase 16 only: identical live-shadow and replay inputs, snapshot
+parity, and dual-runtime wiring checks.
 Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-15.json.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-16.json.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
 
-System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 15
-from deployment/operations modules mapped in `docs/MIGRATION_MAP.md`.
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 16
+from dual-runtime / parity modules mapped in `docs/MIGRATION_MAP.md`.
 
-Phases 1-14 provide ingestion through evaluation/comparison:
+Phases 1-15 provide ingestion through deployment/operations:
 `spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
 `spy_der.training`, `spy_der.evaluation`, `spy_der.forecasting`,
 `spy_der.candidates`, `spy_der.economics`, `spy_der.candidate_value`,
 `spy_der.policies`, `spy_der.synthesis`, `spy_der.agents`, `spy_der.risk`,
-`spy_der.execution`, `spy_der.positions`, `spy_der.journal`, and
-`spy_der.replay`.
+`spy_der.execution`, `spy_der.positions`, `spy_der.journal`,
+`spy_der.replay`, and `spy_der.deployment`.
 
 Per-run instruction for every subsequent phase (spec §70):
 

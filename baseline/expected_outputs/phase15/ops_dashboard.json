@@ -1,0 +1,1 @@
+{"configuration_hash":"sha256:a277301194155f27393538ffa7997157e78025f193e4eecbaf7dad6cfca1839c","deployment_id":"deploy-phase15-parity","drift_level":"ok","frozen":false,"mode":"candidate","recent_notifications":["info:deployment.promote:candidate active"],"runbooks":["freeze","promote","rollback"]}
