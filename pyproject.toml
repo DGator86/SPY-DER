@@ -27,6 +27,7 @@ dev = [
 [project.scripts]
 spy-der = "spy_der.cli:main"
 spy-der-vps-runner = "spy_der.runtime.runner:main"
+spy-der-ai-check = "spy_der.runtime.ai_check:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -1,5 +1,6 @@
 """Runtime orchestration helpers (AI loop, cutover primary, dual-runtime parity)."""
 
+from spy_der.runtime.ai_check import AiCheckResult, run_ai_check
 from spy_der.runtime.ai_loop import AiLoopTickResult, ShadowAiLoop, default_approved_exits
 from spy_der.runtime.parity import (
     DecisionDiff,
@@ -18,6 +19,7 @@ from spy_der.runtime.runner import RunnerConfig, SpyDerVpsRunner
 from spy_der.runtime.state_writer import atomic_write_json, write_live_state_file
 
 __all__ = [
+    "AiCheckResult",
     "AiLoopTickResult",
     "DecisionDiff",
     "DualRuntimeParityReport",
@@ -35,6 +37,7 @@ __all__ = [
     "default_approved_exits",
     "measure_runtime",
     "rehearse_rollback",
+    "run_ai_check",
     "run_dual_runtime_parity",
     "write_live_state_file",
 ]
