@@ -3,12 +3,15 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "system-b"
+name = "spy-der"
 version = "0.1.0"
-description = "System B architectural foundation"
+description = "SPY-DER System B — canonical platform"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+  "exchange-calendars>=4.5",
+  "pandas>=2.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -26,12 +29,12 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-q --cov=system_b --cov-report=term-missing"
+addopts = "-q --cov=spy_der --cov-report=term-missing"
 testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-source = ["system_b"]
+source = ["spy_der"]
 
 [tool.coverage.report]
 show_missing = true
@@ -48,4 +51,8 @@ select = ["E", "F", "I", "B", "UP", "RUF"]
 python_version = "3.12"
 strict = true
 mypy_path = "src"
-packages = ["system_b"]
+packages = ["spy_der"]
+
+[[tool.mypy.overrides]]
+module = ["exchange_calendars.*", "pandas.*"]
+ignore_missing_imports = true

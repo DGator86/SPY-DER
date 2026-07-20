@@ -4,8 +4,8 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 
-from system_b.contracts import JournalEvent
-from system_b.contracts.serialization import to_canonical_json
+from spy_der.contracts import JournalEvent
+from spy_der.contracts.serialization import to_canonical_json
 
 
 @dataclass(frozen=True, slots=True)

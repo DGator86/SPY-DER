@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from system_b.contracts import (
+from spy_der.contracts import (
     Candidate,
     CandidateRanking,
     CandidateUniverse,
@@ -17,8 +17,8 @@ from system_b.contracts import (
     SystemAction,
     V3DecisionView,
 )
-from system_b.risk.firewall import apply_risk_firewall
-from system_b.synthesis.engine import synthesize_decision
+from spy_der.risk.firewall import apply_risk_firewall
+from spy_der.synthesis.engine import synthesize_decision
 
 
 def _candidate(candidate_id: str, max_loss: str) -> Candidate:

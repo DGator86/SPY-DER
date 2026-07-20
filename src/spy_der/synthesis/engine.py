@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from system_b.contracts import (
+from spy_der.contracts import (
     CandidateUniverse,
     LegacyDecisionView,
     MarketForecastBundle,

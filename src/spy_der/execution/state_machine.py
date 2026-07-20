@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from system_b.contracts import OrderStatus, PositionStatus
+from spy_der.contracts import OrderStatus, PositionStatus
 
 _ALLOWED_ORDER_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
     OrderStatus.CREATED: {OrderStatus.ROUTED, OrderStatus.CANCELED, OrderStatus.REJECTED},

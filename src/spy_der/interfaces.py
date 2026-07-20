@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol
 
-from system_b.contracts import (
+from spy_der.contracts import (
     Candidate,
     CandidateForecast,
     CandidateUniverse,

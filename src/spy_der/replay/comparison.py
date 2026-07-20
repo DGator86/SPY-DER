@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from system_b.contracts import JournalEvent
-from system_b.evaluation.metrics import EvaluationResult
-from system_b.replay.deterministic import (
+from spy_der.contracts import JournalEvent
+from spy_der.evaluation.metrics import EvaluationResult
+from spy_der.replay.deterministic import (
     ReplayInputManifest,
     ensure_matching_manifests,
     journal_hash,
