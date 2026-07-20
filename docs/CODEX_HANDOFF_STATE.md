@@ -17,7 +17,26 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 8 — Economics and candidate value: COMPLETE.** Next up: Phase 9.
+**Phase 9 — Policies and deterministic synthesis: COMPLETE.** Next up: Phase 10.
+
+Phase 9 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ Policy contracts — `contracts/policies.py` (`PolicyInputPacket`,
+  `PolicyDecisionView`, `PolicyDisagreement`, modes).
+- ✅ Legacy / V2 / V3 policy adapters — `policies/{legacy,v2,v3}.py`.
+- ✅ Ensemble + disagreement — `policies/ensemble.py`,
+  `policies/disagreement.py` (shadow/champion/legacy modes).
+- ✅ Deterministic decision agent — `synthesis/deterministic.py`;
+  `synthesis/engine.py` delegates to the ensemble.
+- ✅ Parity — `baseline/expected_outputs/phase9/policy_synthesis.json`.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (126 tests) all pass.
+See `migrations/manifests/phase-9.json`. Full legacy matrix routing and AI agent
+packets are deferred to Phase 10.
+
+---
+
+### Phase 8 — Economics and candidate value: COMPLETE
 
 Phase 8 deliverables (spec §63) — implemented against pinned System A source:
 
@@ -294,26 +313,27 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-Execute **Phase 9 — Policies and deterministic synthesis** (spec §63):
+Execute **Phase 10 — Agent framework and Grok** (spec §63):
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 9 only: Legacy policy, V2 policy, V3 policy, ensemble policy,
-deterministic decision agent, and disagreement model.
+Execute Phase 10 only: provider-neutral protocol, registry, packet,
+deterministic/recorded/mock agents, Grok adapter, prompt builder, response
+parser, validation, security, and shadow comparison.
 Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-9.json.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-10.json.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
 
-System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 9
-from policy/synthesis modules mapped in `docs/MIGRATION_MAP.md`.
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 10
+from agent framework modules mapped in `docs/MIGRATION_MAP.md`.
 
-Phases 1-8 provide ingestion, record/replay, structural features, Legacy, V2/V3
-forecasting, candidate factory, and executable economics/value:
+Phases 1-9 provide ingestion through deterministic policy synthesis:
 `spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
 `spy_der.training`, `spy_der.evaluation.labels`, `spy_der.forecasting`,
-`spy_der.candidates`, `spy_der.economics`, and `spy_der.candidate_value`.
+`spy_der.candidates`, `spy_der.economics`, `spy_der.candidate_value`,
+`spy_der.policies`, and `spy_der.synthesis`.
 
 Per-run instruction for every subsequent phase (spec §70):
 

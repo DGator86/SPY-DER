@@ -90,7 +90,7 @@ def test_missing_required_inputs_produce_abstention() -> None:
         required_inputs_present=False,
     )
     assert decision.action == SystemAction.ABSTAIN
-    assert "required input missing" in decision.reason
+    assert "missing_inputs" in decision.reason
 
 
 def test_risk_limits_cannot_be_increased_by_decision_system() -> None:
