@@ -17,7 +17,24 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 13 — Journal and settlement: COMPLETE.** Next up: Phase 14.
+**Phase 14 — Evaluation and comparison: COMPLETE.** Next up: Phase 15.
+
+Phase 14 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ Metrics — `evaluation/metrics.py` `evaluate_trades` / `EvaluationResult`.
+- ✅ Native + controlled comparison — `evaluation/comparison.py`.
+- ✅ Policy + agent comparison + ablations — same module; fail-closed manifests.
+- ✅ Session-safe reports — `evaluation/reports.py`.
+- ✅ Replay variants expanded — `replay/comparison.py` SystemVariant set.
+- ✅ Parity — `baseline/expected_outputs/phase14/comparison_report.json`.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (166 tests) all pass.
+See `migrations/manifests/phase-14.json`. Full live dual-runtime harness remains
+deferred to Phase 16.
+
+---
+
+### Phase 13 — Journal and settlement: COMPLETE
 
 Phase 13 deliverables (spec §63) — implemented against pinned System A source:
 
@@ -397,27 +414,28 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-Execute **Phase 14 — Evaluation and comparison** (spec §63):
+Execute **Phase 15 — Deployment and operations** (spec §63):
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 14 only: System A/B native comparison, controlled comparison,
-policy comparison, agent comparison, ablations, and session-safe reports.
+Execute Phase 15 only: model registry, deployment manifests, promotion,
+drift, freeze, rollback, dashboard, runbooks, and notifications.
 Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-14.json.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-15.json.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
 
-System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 14
-from evaluation/comparison modules mapped in `docs/MIGRATION_MAP.md`.
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 15
+from deployment/operations modules mapped in `docs/MIGRATION_MAP.md`.
 
-Phases 1-13 provide ingestion through journal/settlement:
+Phases 1-14 provide ingestion through evaluation/comparison:
 `spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
 `spy_der.training`, `spy_der.evaluation`, `spy_der.forecasting`,
 `spy_der.candidates`, `spy_der.economics`, `spy_der.candidate_value`,
 `spy_der.policies`, `spy_der.synthesis`, `spy_der.agents`, `spy_der.risk`,
-`spy_der.execution`, `spy_der.positions`, and `spy_der.journal`.
+`spy_der.execution`, `spy_der.positions`, `spy_der.journal`, and
+`spy_der.replay`.
 
 Per-run instruction for every subsequent phase (spec §70):
 
