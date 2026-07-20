@@ -17,7 +17,28 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 9 — Policies and deterministic synthesis: COMPLETE.** Next up: Phase 10.
+**Phase 10 — Agent framework and Grok: COMPLETE.** Next up: Phase 11.
+
+Phase 10 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ Agent contracts — `contracts/agents.py`: `AgentDecisionPacket`,
+  `AgentCandidateView`, `AgentDecisionResponse`, identity/capabilities/health.
+- ✅ Security + validation — `agents/security.py` (no secrets in packets/prompts),
+  `agents/validation.py` (whitelist, size, veto, expiry, hash).
+- ✅ Runtime — `agents/runtime.py` `FailClosedAgentRuntime`; registry;
+  deterministic / mock / recorded / Grok agents.
+- ✅ Grok — `agents/prompts.py`, `agents/parser.py`, `agents/grok.py`
+  (injectable transport; no network by default).
+- ✅ Comparison — `agents/comparison.py` shadow comparison (observation-only).
+- ✅ Parity — `baseline/expected_outputs/phase10/agent_decision.json`.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (135 tests) all pass.
+See `migrations/manifests/phase-10.json`. Live HTTP Grok client and other LLM
+providers remain deferred.
+
+---
+
+### Phase 9 — Policies and deterministic synthesis: COMPLETE
 
 Phase 9 deliverables (spec §63) — implemented against pinned System A source:
 

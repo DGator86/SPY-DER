@@ -1,0 +1,62 @@
+{
+  "phase": 10,
+  "phase_name": "Agent framework and Grok",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 10), §37-§45",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "b134ed1",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:zerodte/agent/{contracts,runtime}.py",
+    "0DTE:zerodte/contracts/decisions.py",
+    "0DTE:tests/test_canonical_runtime.py"
+  ],
+  "files_migrated": [
+    "0DTE:zerodte/contracts/decisions.py AgentDecisionPacket/Decision -> src/spy_der/contracts/agents.py (spec-aligned)",
+    "0DTE:zerodte/agent/runtime.py FailClosedAgentRuntime -> src/spy_der/agents/runtime.py",
+    "NEW registry/packet/validation/security/prompt/parser/comparison",
+    "NEW Deterministic/Mock/Recorded/Grok agents"
+  ],
+  "files_merged": [],
+  "files_replaced": [],
+  "files_deferred": [
+    "Live xAI HTTP client (transport injected; tests use fakes)",
+    "OpenAI/Anthropic/local adapters",
+    "Position-decision path (HOLD/REDUCE/CLOSE)",
+    "Persistent agent audit journal store"
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Fail-closed: any validation/provider failure becomes ABSTAIN.",
+    "Agent may select only packet-whitelisted candidate_id.",
+    "Agent may only reduce size vs deterministic risk_max_size_scalar.",
+    "Hard vetoes block selection.",
+    "Packets/prompts never carry credentials."
+  ],
+  "intentional_changes": [
+    "Agent contracts follow master-spec §41/§42/§44 field names (Decimal economics views).",
+    "Grok adapter is transport-injected; no network by default.",
+    "Deterministic agent consumes Phase 9 policy views embedded in the packet."
+  ],
+  "deliverables": [
+    "src/spy_der/contracts/agents.py",
+    "src/spy_der/agents/**",
+    "tests/unit/test_phase10_agents.py",
+    "tests/parity/test_phase10_agent_parity.py",
+    "baseline/expected_outputs/phase10/agent_decision.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (135 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "No live Grok network integration in CI.",
+    "PositionDecisionPacket / decide_position not implemented."
+  ],
+  "rollback": [
+    "Revert the Phase 10 commit(s). Phases 0-9 are unaffected."
+  ],
+  "next_phase": "Phase 11 — Risk (spec §63)."
+}
