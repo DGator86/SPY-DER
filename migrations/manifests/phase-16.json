@@ -1,0 +1,52 @@
+{
+  "phase": 16,
+  "phase_name": "Dual-runtime parity",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 16)",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "9582af3",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "SPY-DER:replay/deterministic.py",
+    "SPY-DER:deployment/rollback.py",
+    "SPY-DER:evaluation/comparison.py"
+  ],
+  "files_migrated": [
+    "NEW src/spy_der/runtime/parity.py dual-runtime parity harness",
+    "NEW rollback rehearsal + latency/memory sampling"
+  ],
+  "files_merged": [],
+  "files_replaced": [],
+  "files_deferred": [
+    "Live market dual-feed wiring",
+    "Continuous production latency SLOs"
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Manifest mismatch between live-shadow and replay fails closed.",
+    "Decision differences are reported without mutating accounts."
+  ],
+  "intentional_changes": [
+    "Parity buckets are hash comparisons (snapshot/feature/candidate/outcome).",
+    "Rollback rehearsal may create a temporary twin deployment when history empty."
+  ],
+  "deliverables": [
+    "src/spy_der/runtime/**",
+    "tests/unit/test_phase16_parity.py",
+    "tests/parity/test_phase16_parity_report.py",
+    "baseline/expected_outputs/phase16/dual_runtime_parity.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (176 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "Performance samples are local process measurements, not production telemetry."
+  ],
+  "rollback": [
+    "Revert the Phase 16 commit(s). Phases 0-15 are unaffected."
+  ],
+  "next_phase": "Phase 17 — Controlled cutover (REQUIRES explicit owner approval)."
+}

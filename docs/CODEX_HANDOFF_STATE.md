@@ -17,7 +17,24 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 15 — Deployment and operations: COMPLETE.** Next up: Phase 16.
+**Phase 16 — Dual-runtime parity: COMPLETE.** Next up: Phase 17 (owner approval required).
+
+Phase 16 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ Identical live-shadow / replay inputs — `runtime/parity.py` `ParityInputs`
+  fail-closed via `ReplayInputManifest` equality.
+- ✅ Snapshot / feature / candidate / outcome parity buckets.
+- ✅ Decision-difference reports.
+- ✅ Performance samples (latency + peak memory).
+- ✅ Rollback rehearsal via `DeploymentPointer`.
+- ✅ Parity — `baseline/expected_outputs/phase16/dual_runtime_parity.json`.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (176 tests) all pass.
+See `migrations/manifests/phase-16.json`.
+
+---
+
+### Phase 15 — Deployment and operations: COMPLETE
 
 Phase 15 deliverables (spec §63) — implemented against pinned System A source:
 
@@ -433,28 +450,31 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-Execute **Phase 16 — Dual-runtime parity** (spec §63):
+**STOP — Phase 17 requires explicit repository-owner approval** (spec §63).
+
+Do **not** execute Phase 17 (Controlled cutover) until the repository owner
+explicitly approves. Phase 17 would make System B the primary research/shadow
+runtime while retaining System A as rollback; live execution remains disabled.
+
+When approved, the Phase 17 instruction is:
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 16 only: identical live-shadow and replay inputs, snapshot
-parity, and dual-runtime wiring checks.
-Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-16.json.
+Execute Phase 17 only after explicit repository-owner approval:
+System B primary research/shadow runtime, System A retained rollback,
+agent authority independently controlled, live execution still disabled.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-17.json.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
 
-System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 16
-from dual-runtime / parity modules mapped in `docs/MIGRATION_MAP.md`.
-
-Phases 1-15 provide ingestion through deployment/operations:
+Phases 1-16 are complete through dual-runtime parity:
 `spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
 `spy_der.training`, `spy_der.evaluation`, `spy_der.forecasting`,
 `spy_der.candidates`, `spy_der.economics`, `spy_der.candidate_value`,
 `spy_der.policies`, `spy_der.synthesis`, `spy_der.agents`, `spy_der.risk`,
 `spy_der.execution`, `spy_der.positions`, `spy_der.journal`,
-`spy_der.replay`, and `spy_der.deployment`.
+`spy_der.replay`, `spy_der.deployment`, and `spy_der.runtime`.
 
 Per-run instruction for every subsequent phase (spec §70):
 
