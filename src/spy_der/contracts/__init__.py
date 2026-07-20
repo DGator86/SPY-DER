@@ -8,6 +8,7 @@ from .common import (
     content_hash,
     deterministic_id,
 )
+from .forecasts import FEATURE_VERSION, LABEL_VERSION, MarketForecastBundle
 from .market import (
     Bar,
     CanonicalMarketSnapshot,
@@ -34,7 +35,6 @@ from .models import (
     HardVeto,
     JournalEvent,
     LegacyDecisionView,
-    MarketForecastBundle,
     OptionLeg,
     OrderIntent,
     OrderState,
@@ -54,6 +54,8 @@ from .models import (
 from .serialization import to_canonical_json
 
 __all__ = [
+    "FEATURE_VERSION",
+    "LABEL_VERSION",
     "SCHEMA_VERSION",
     "Bar",
     "Candidate",
