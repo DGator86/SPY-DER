@@ -1,0 +1,66 @@
+{
+  "phase": 12,
+  "phase_name": "Execution and positions",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 12), §51-§52",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "89f97d2",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:paper_broker.py",
+    "0DTE:tests/test_paper_broker.py",
+    "0DTE:tests/test_triple_paper_tracks.py"
+  ],
+  "files_migrated": [
+    "0DTE:paper_broker.py ledger/exits -> src/spy_der/execution/accounts.py + positions/",
+    "NEW contracts/execution.py + contracts/positions.py (spec §51-§52)",
+    "NEW PaperExecutionSimulator with deterministic fills",
+    "NEW restart_runtime + reconcile_account"
+  ],
+  "files_merged": [
+    "src/spy_der/execution/state_machine.py expanded to full §51 graph",
+    "Position transitions moved to src/spy_der/positions/state_machine.py"
+  ],
+  "files_replaced": [
+    "Phase-0 OrderIntent/OrderState/PositionState stubs in contracts/models.py"
+  ],
+  "files_deferred": [
+    "Live broker adapters / broker_actual fills",
+    "Persistent sqlite paper trade store",
+    "Full RAS PositionMonitor integration"
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Invalid order transitions fail closed.",
+    "Accounts are isolated; cross-account mutation raises.",
+    "Reconciliation mismatches block new entries."
+  ],
+  "intentional_changes": [
+    "Order/position enums follow master-spec naming (ROUTED/CLOSING kept as aliases).",
+    "Simulator is transport-free and deterministic via seeded SHA256 rolls.",
+    "Restart reconstructs from in-memory order/position snapshots (journal hash-chain in Phase 13)."
+  ],
+  "deliverables": [
+    "src/spy_der/contracts/execution.py",
+    "src/spy_der/contracts/positions.py",
+    "src/spy_der/execution/**",
+    "src/spy_der/positions/**",
+    "tests/unit/test_phase12_execution.py",
+    "tests/parity/test_phase12_execution_parity.py",
+    "baseline/expected_outputs/phase12/execution_position.json"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (153 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "No durable event journal yet (Phase 13).",
+    "Open positions are reconstructed from explicit snapshots, not sqlite."
+  ],
+  "rollback": [
+    "Revert the Phase 12 commit(s). Phases 0-11 are unaffected."
+  ],
+  "next_phase": "Phase 13 — Journal and settlement (spec §63)."
+}

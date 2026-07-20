@@ -134,6 +134,8 @@ tests (spec §65), not asserted here. No parity, performance, or "migrated" clai
 | Source (System A) | Planned target (System B) | Status |
 |---|---|---|
 | `paper_broker.py` | `execution/`, `positions/` | ✅ |
+| order/position enums (spec §51-§52) | `contracts/execution.py`, `contracts/positions.py` | ✅ |
+| fill simulator / accounts / restart | `execution/simulator.py`, `accounts.py`, `positions/*` | ✅ |
 
 ## 10. Journal, evaluation, training, deployment → `journal/`, `evaluation/`, `training/`, `deployment/`
 
