@@ -1,0 +1,65 @@
+{
+  "phase": 3,
+  "phase_name": "RND and structural features",
+  "spec_reference": "docs/SPY_DER_MASTER_SPEC.md §63 (Phase 3), §17, §18, §19, §22",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "de4a6e7ced98ff97c778e8b4418c08848d7ce82d",
+  "target_repository": "DGator86/SPY-DER",
+  "target_commit_before": "684cc0cb787c3227b6dc3d28f02e2e3d60d01456",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "files_inspected": [
+    "0DTE:gex/base.py (signed_dollar_gamma, aggregate_strikes, levels_from_maps)",
+    "0DTE:gex/contracts.py (GEXSnapshot fields)",
+    "0DTE:gex_window.py (GexRankWindow persistence)",
+    "0DTE:rnd_extractor.py (Breeden-Litzenberger RND)",
+    "0DTE:volatility_channel_features.py, prediction/structural_state.py"
+  ],
+  "files_migrated": [
+    "0DTE:gex/base.py -> src/spy_der/features/gex.py (OI signed-dollar-gamma, gamma flip, call/put walls, concentration)",
+    "0DTE:gex_window.GexRankWindow -> src/spy_der/features/gex.GexRankWindow (disk-persisted |net GEX| percentile)",
+    "0DTE:rnd_extractor.py (core) -> src/spy_der/features/rnd.py (bounded Breeden-Litzenberger density summary)"
+  ],
+  "files_merged": [],
+  "files_replaced": [],
+  "files_deferred": [
+    "GEX variants beyond OI (volume/hybrid/weekly, gex/volume_proxy.py, gex/hybrid.py, gex/weekly.py) -> later structural pass; the OI baseline is authoritative per System A.",
+    "History-dependent structure (velocities, wall stability/rupture, pin score, market_dynamics.py, realized vol) -> requires a rolling feature service; recorded in StructuralState.missing_fields.",
+    "Full rnd_extractor pipeline (total-variance fitting, smooth call reconstruction, arbitrage repair) -> layered onto the bounded RND core later."
+  ],
+  "files_deprecated": [],
+  "behavior_preserved": [
+    "Signed dollar gamma = gamma * weight * 100 * spot^2 * 0.01; dealer-short-calls/long-puts sign (calls +, puts -).",
+    "net_gex/gross in $bn; gamma flip by cumulative-gamma sign crossing with linear interpolation; call wall = max call gamma at strike >= spot; put wall = max put gamma at strike <= spot.",
+    "GexRankWindow reads neutral 0.5 until min_samples, ranks abs(net_gex) over a multi-day horizon, and survives restarts via atomic JSON (corrupt state re-warms)."
+  ],
+  "intentional_changes": [
+    "GEX consumes the Phase 1 CanonicalMarketSnapshot option chain (OptionQuote gamma + open_interest) instead of provider WeightedContract objects.",
+    "RND implemented as a bounded, dependency-light Breeden-Litzenberger core (finite differences on a uniform strike grid, non-negativity clip, normalization) that returns None when unsupported rather than fabricating a density (spec §67).",
+    "StructuralState is a typed, content-addressed contract; single-snapshot pass records history-dependent fields as missing (spec §22)."
+  ],
+  "deliverables": [
+    "src/spy_der/contracts/structure.py (GexLevels, VolatilitySummary, RndSummary, StructuralState)",
+    "src/spy_der/features/gex.py (compute_oi_gex, GexRankWindow)",
+    "src/spy_der/features/volatility.py (compute_volatility)",
+    "src/spy_der/features/rnd.py (compute_rnd)",
+    "src/spy_der/features/structural.py (StructuralStateService)",
+    "tests/unit/test_features.py, tests/parity/test_structural_parity.py",
+    "baseline/expected_outputs/phase3/structural_state.json (frozen golden structural state)"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy src (strict)", "result": "pass"},
+    {"name": "pytest (54 tests incl. RND recovering a lognormal sigma)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "Only the OI GEX variant is implemented; volume/hybrid/weekly variants and cross-variant disagreement are deferred.",
+    "RND is a bounded first cut (no smoothing/arbitrage repair); it is validated to recover a Black-Scholes lognormal sigma within tolerance but is not yet the full System A pipeline.",
+    "Volatility summary covers ATM straddle / expected move; term structure and realized/implied relationships are a later pass.",
+    "Structural parity is determinism/golden-file against a synthetic chain; parity against a running System A structural state is future work."
+  ],
+  "rollback": [
+    "Revert the Phase 3 commit. Phases 0-2 are unaffected; no runtime services or persisted state beyond the opt-in GexRankWindow file (best-effort, self-healing).",
+    "numpy was added as an explicit dependency (already transitively present via pandas); removing the feature modules removes the direct use."
+  ],
+  "next_phase": "Phase 4 — MTF and Legacy (spec §63): resampling, multi-timeframe features, normalization, dynamics, the Legacy analyzer, permissions, veto classification, and LegacyDecisionView."
+}

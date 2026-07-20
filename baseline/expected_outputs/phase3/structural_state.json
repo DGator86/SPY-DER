@@ -1,0 +1,44 @@
+{
+  "gex_oi": {
+    "call_wall": "500.0",
+    "gamma_flip": "500.0",
+    "gex_concentration": 0.0,
+    "n_contracts": 62,
+    "n_strikes": 31,
+    "net_gex_bn": 0.0,
+    "net_ratio": 0.0,
+    "put_wall": "500.0",
+    "wall_concentration": 0.23787117295408158
+  },
+  "missing_fields": [
+    "gamma_flip_velocity",
+    "call_wall_velocity",
+    "put_wall_velocity",
+    "wall_stability",
+    "wall_rupture",
+    "pin_score",
+    "realized_volatility",
+    "regime_probabilities"
+  ],
+  "regime_evidence": [],
+  "rnd": {
+    "forward": 499.99999999999835,
+    "mean": 499.99999999999835,
+    "n_strikes": 31,
+    "normalized": true,
+    "prob_below_spot": 0.41448125000004943,
+    "skew": 0.01870665330642196,
+    "std": 3.460450259726033
+  },
+  "schema_version": "1.0.0",
+  "snapshot_id": "snap-2c7ba6403ea8",
+  "structural_state_id": "struct-72bacd101148",
+  "structural_state_version": "1.0.0",
+  "volatility": {
+    "atm_straddle": "2.6762",
+    "atm_strike": "500",
+    "expected_move": "2.6762",
+    "expected_move_consumed": 0.7473283013227711,
+    "expected_move_pct": 0.0053524
+  }
+}

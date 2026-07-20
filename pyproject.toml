@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "exchange-calendars>=4.5",
+  "numpy>=1.26",
   "pandas>=2.0",
 ]
 
@@ -54,5 +55,5 @@ mypy_path = "src"
 packages = ["spy_der"]
 
 [[tool.mypy.overrides]]
-module = ["exchange_calendars.*", "pandas.*"]
+module = ["exchange_calendars.*", "pandas.*", "numpy.*"]
 ignore_missing_imports = true

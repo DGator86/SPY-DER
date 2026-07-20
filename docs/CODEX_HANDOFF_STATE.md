@@ -17,7 +17,34 @@ be overridden here.
 
 ## Current Phase
 
-**Phase 2 — Providers and replay: COMPLETE.** Next up: Phase 3.
+**Phase 3 — RND and structural features: COMPLETE.** Next up: Phase 4.
+
+Phase 3 deliverables (spec §63) — implemented against pinned System A source:
+
+- ✅ Structural contracts — `contracts/structure.py`: `GexLevels`,
+  `VolatilitySummary`, `RndSummary`, `StructuralState` (spec §22).
+- ✅ GEX (OI) — `features/gex.py` `compute_oi_gex`, migrated from System A
+  `gex/base.py`: net GEX, gamma flip, call/put walls, concentration (spec §18).
+- ✅ Persistent adaptive state — `features/gex.py` `GexRankWindow`, migrated from
+  `gex_window.py`: neutral 0.5 until warm, multi-day |net GEX| percentile,
+  survives restarts via atomic JSON.
+- ✅ Volatility — `features/volatility.py`: ATM straddle, expected move,
+  expected-move-consumed (spec §19).
+- ✅ RND — `features/rnd.py`: bounded Breeden-Litzenberger density summary
+  (forward/mean/std/skew, P(S<spot)); validated to recover a lognormal sigma
+  (spec §17).
+- ✅ Structural service — `features/structural.py` `StructuralStateService`
+  assembles `StructuralState`; history-dependent fields flagged missing.
+- ✅ Parity — `baseline/expected_outputs/phase3/structural_state.json` golden
+  fixture + parity test.
+
+Checks: `ruff check .`, `mypy src` (strict), and `pytest` (54 tests) all pass.
+See `migrations/manifests/phase-3.json`. GEX variants beyond OI, history-dependent
+dynamics, and the full RND smoothing pipeline are deferred.
+
+---
+
+### Phase 2 — Providers and replay: COMPLETE
 
 Phase 2 deliverables (spec §63) — implemented against pinned System A source:
 
@@ -144,30 +171,30 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-Execute **Phase 3 — RND and structural features** (spec §63):
+Execute **Phase 4 — MTF and Legacy** (spec §63):
 
 ```
 Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase 3 only: RND (risk-neutral density), GEX variants, gamma flip,
-call/put walls, volatility features, structural state, persistent adaptive
-state, and parity tests.
+Execute Phase 4 only: resampling, multi-timeframe features, normalization,
+dynamics, the Legacy analyzer, permissions, veto classification, and
+LegacyDecisionView.
 Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-3.json.
+Update docs/CODEX_HANDOFF_STATE.md and migrations/manifests/phase-4.json.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
 
-System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 3
-from `rnd_extractor.py` (Breeden-Litzenberger RND, spec §17), the `gex/` package
-(`base.py`, `oi.py`, `volume_proxy.py`, `hybrid.py`, `weekly.py`) and
-`gex_window.py` (spec §18), volatility features
-(`volatility_channel_features.py`, spec §19), `market_dynamics.py` (spec §21),
-and `prediction/structural_state.py` -> `StructuralState` (spec §22). Feed the
-Phase 1/2 canonical snapshots into the feature service.
+System A source is available at `/workspace/0dte` (pin: `de4a6e7`). Start Phase 4
+from `resample.py` (bars -> per-TF indicators, spec §20), `mtf_matrix.py`
+(standardized matrix + normalization), `market_dynamics.py` (spec §21),
+`gate_scorer.py` / `decision_matrix.py` / `regime_classifier.py` /
+`regime_alignment.py` (Legacy gates/permissions/vetoes, spec §23), producing a
+`LegacyDecisionView` (spec §23).
 
-Phases 1-2 provide the ingestion + record/replay substrate: `spy_der.market_data`
-exposes `MarketCalendar`, `CanonicalSnapshotAssembler`, `SystemASnapshotAdapter`,
-`CompositeFeed`, `SnapshotRecorder`, and `ReplayFeed`.
+Phases 1-3 provide ingestion, record/replay, and structural features:
+`spy_der.market_data` exposes the calendar/assembler/adapter/composite/record/
+replay; `spy_der.features` exposes `compute_oi_gex`, `GexRankWindow`,
+`compute_volatility`, `compute_rnd`, and `StructuralStateService`.
 
 Per-run instruction for every subsequent phase (spec §70):
 
