@@ -11,10 +11,10 @@ from spy_der.cli import main as cli_main
 from spy_der.runtime.ai_check import run_ai_check
 
 
-def test_default_grok_model_is_current() -> None:
+def test_default_grok_model_is_trader_non_reasoning() -> None:
     agent = GrokDecisionAgent(cfg=GrokConfig(auto_http=False))
-    assert agent.model_id == "grok-4.5"
-    assert agent.identity.model_id == "grok-4.5"
+    assert agent.model_id == "grok-4.20-0309-non-reasoning"
+    assert agent.identity.model_id == "grok-4.20-0309-non-reasoning"
 
 
 def test_xai_model_env_overrides_default(monkeypatch: pytest.MonkeyPatch) -> None:

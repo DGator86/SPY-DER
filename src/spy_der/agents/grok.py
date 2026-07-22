@@ -33,7 +33,13 @@ from spy_der.contracts.agents import (
     PositionDecisionPacket,
 )
 
-__all__ = ["GROK_ADAPTER_VERSION", "GrokDecisionAgent", "GrokTransport"]
+__all__ = [
+    "DEFAULT_TRADER_MODEL_ID",
+    "GROK_ADAPTER_VERSION",
+    "GrokConfig",
+    "GrokDecisionAgent",
+    "GrokTransport",
+]
 
 GROK_ADAPTER_VERSION = "grok-adapter.v2"
 
@@ -41,18 +47,22 @@ GROK_ADAPTER_VERSION = "grok-adapter.v2"
 GrokTransport = Callable[[str, dict[str, str], dict[str, Any]], str]
 
 
+# Default hot-path trader: non-reasoning keeps 60s ticks cheap.
+DEFAULT_TRADER_MODEL_ID = "grok-4.20-0309-non-reasoning"
+
+
 @dataclass(frozen=True, slots=True)
 class GrokConfig:
     api_base: str = "https://api.x.ai/v1/chat/completions"
-    model_id: str = "grok-4.5"
+    model_id: str = DEFAULT_TRADER_MODEL_ID
     api_key_env: str = "XAI_API_KEY"
     # Env overrides so ops can bump the model / endpoint without a code change.
     model_id_env: str = "XAI_MODEL"
     api_base_env: str = "XAI_API_BASE"
-    # Cost controls: grok-4.5 defaults to reasoning_effort=high (billed as output).
-    # Prefer low for 60s shadow ticks; override via XAI_REASONING_EFFORT.
+    # Cost controls: only sent for reasoning models. Empty = omit the field
+    # (correct for non-reasoning trader). Reviewer sets low via its own env.
     reasoning_effort_env: str = "XAI_REASONING_EFFORT"
-    reasoning_effort: str = "low"
+    reasoning_effort: str = ""
     max_completion_tokens_env: str = "XAI_MAX_COMPLETION_TOKENS"
     max_completion_tokens: int = 512
     timeout_seconds: float = 30.0
@@ -69,6 +79,21 @@ def _env_int(name: str, default: int) -> int:
     except ValueError:
         return default
     return value if value > 0 else default
+
+
+def _should_send_reasoning_effort(model_id: str, effort: str) -> bool:
+    """Omit reasoning_effort for non-reasoning models (they may reject it)."""
+    if not effort or effort in {"none", "off", "disable", "disabled"}:
+        return False
+    mid = model_id.lower()
+    if "non-reasoning" in mid:
+        return False
+    return (
+        "grok-4.5" in mid
+        or mid.endswith("-reasoning")
+        or "multi-agent" in mid
+        or "grok-4.3" in mid
+    )
 
 
 class GrokDecisionAgent:
@@ -89,7 +114,9 @@ class GrokDecisionAgent:
         self._model_id = os.environ.get(self.cfg.model_id_env, "").strip() or self.cfg.model_id
         self._api_base = os.environ.get(self.cfg.api_base_env, "").strip() or self.cfg.api_base
         effort = os.environ.get(self.cfg.reasoning_effort_env, "").strip().lower()
-        if effort not in {"low", "medium", "high"}:
+        if effort and effort not in {"low", "medium", "high", "none", "off", "disable"}:
+            effort = self.cfg.reasoning_effort
+        elif not effort:
             effort = self.cfg.reasoning_effort
         self._reasoning_effort = effort
         self._max_completion_tokens = _env_int(
@@ -103,6 +130,14 @@ class GrokDecisionAgent:
     @property
     def model_id(self) -> str:
         return self._model_id
+
+    @property
+    def transport(self) -> GrokTransport | None:
+        return self._transport
+
+    @property
+    def api_key(self) -> str:
+        return self._resolve_api_key()
 
     @property
     def identity(self) -> AgentIdentity:
@@ -198,6 +233,10 @@ class GrokDecisionAgent:
                 prompt_version=POSITION_PROMPT_VERSION,
             )
 
+    def call_raw(self, prompt: dict[str, str]) -> str:
+        """Low-level chat call used by entry/position/review prompts."""
+        return self._call(prompt)
+
     def _call(self, prompt: dict[str, str]) -> str:
         assert self._transport is not None
         api_key = self._resolve_api_key()
@@ -215,9 +254,7 @@ class GrokDecisionAgent:
             # Cap completion (+ reasoning) tokens so a single tick cannot run away.
             "max_completion_tokens": self._max_completion_tokens,
         }
-        # grok-4.5 and other reasoning models accept this; non-reasoning models
-        # typically ignore unknown fields. Keep effort configurable via env.
-        if self._reasoning_effort:
+        if _should_send_reasoning_effort(self._model_id, self._reasoning_effort):
             body["reasoning_effort"] = self._reasoning_effort
         raw = self._transport(self._api_base, headers, body)
         return _extract_content(raw)

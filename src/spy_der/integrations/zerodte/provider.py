@@ -15,12 +15,19 @@ from typing import Any
 
 from spy_der.agents.authority import AiDecisionAuthority
 from spy_der.agents.deterministic import DeterministicDecisionAgent
-from spy_der.agents.grok import GrokDecisionAgent
+from spy_der.agents.grok import DEFAULT_TRADER_MODEL_ID, GrokConfig, GrokDecisionAgent
+from spy_der.agents.parser import ParseError
 from spy_der.agents.protocols import DecisionAgent
+from spy_der.agents.review import (
+    apply_trade_review,
+    make_default_reviewer,
+    run_trade_review,
+)
 from spy_der.agents.security import assert_no_secrets
 from spy_der.contracts.agents import (
     AgentCandidateView,
     AgentDecisionPacket,
+    AgentDecisionResponse,
     AgentEntryAction,
     DeploymentContext,
     ExitPolicySummary,
@@ -164,9 +171,12 @@ class SpyDerShadowDecision:
     track: str = PARALLEL_TRACK_ID
     label: str = PARALLEL_TRACK_LABEL
     mode: str = "shadow"
+    trader_model_id: str = ""
+    reviewer_model_id: str = ""
+    reviewer_action: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "track": self.track,
             "label": self.label,
             "source": self.provider,
@@ -182,6 +192,13 @@ class SpyDerShadowDecision:
             "reason_codes": list(self.reason_codes),
             "model_id": self.model_id,
         }
+        if self.trader_model_id:
+            payload["trader_model_id"] = self.trader_model_id
+        if self.reviewer_model_id:
+            payload["reviewer_model_id"] = self.reviewer_model_id
+        if self.reviewer_action:
+            payload["reviewer_action"] = self.reviewer_action
+        return payload
 
 
 def decide_shadow_tick(
@@ -206,9 +223,11 @@ def decide_shadow_tick(
 
     Cost controls (env, no redeploy of callers required after package update):
     - ``SPY_DER_AI=0`` / ``XAI_ENABLED=0`` → deterministic agent (no HTTP)
+    - ``XAI_MODEL`` → trader model (default ``grok-4.20-0309-non-reasoning``)
+    - ``XAI_REVIEW_MODEL`` / ``XAI_REVIEW_ENABLED`` → reviewer on TRADE only
     - ``SPY_DER_AI_TOP_K`` → max candidates sent (default 8; ``0`` = all)
     - empty candidate set → ``NO_EDGE`` without an API call
-    - unchanged ``packet_hash`` → reuse prior decision (no API call)
+    - unchanged candidate fingerprint → reuse prior decision (no API call)
     """
     global _LAST_CACHE_KEY, _LAST_DECISION
 
@@ -217,7 +236,7 @@ def decide_shadow_tick(
         now = now.replace(tzinfo=UTC)
 
     selected = _select_candidates(tuple(candidates))
-    agent = agent or _default_agent()
+    agent = agent or _default_trader_agent()
 
     # Empty universe: no edge, and no reason to pay for a model call.
     if not selected:
@@ -233,6 +252,7 @@ def decide_shadow_tick(
             reason_codes=("no_candidates",),
             provider=agent.identity.provider,
             model_id=agent.identity.model_id,
+            trader_model_id=agent.identity.model_id,
         )
         _LAST_CACHE_KEY = None
         _LAST_DECISION = decision
@@ -255,6 +275,9 @@ def decide_shadow_tick(
     ):
         return _LAST_DECISION
 
+    trader_model_id = agent.identity.model_id
+    reviewer_model_id = ""
+    reviewer_action = ""
     try:
         authority = AiDecisionAuthority(agent, account_id="system_b_grok")
         packet = _build_packet(
@@ -270,6 +293,40 @@ def decide_shadow_tick(
             forecast_uncertainty=forecast_uncertainty,
         )
         result = authority.decide_entry(packet, now=now)
+        resp = result.response
+
+        # Second pass: flagship reviewer only when trader wants TRADE.
+        if resp.action is AgentEntryAction.SELECT_CANDIDATE and resp.candidate_id:
+            reviewer = _reviewer_for(agent)
+            if reviewer is not None:
+                try:
+                    review = run_trade_review(reviewer, packet, resp)
+                    resp = apply_trade_review(
+                        resp,
+                        review,
+                        risk_max_size_scalar=risk_max_size_scalar,
+                    )
+                    reviewer_model_id = review.model_id
+                    reviewer_action = review.action
+                except (ParseError, ValueError, TypeError, KeyError, RuntimeError) as exc:
+                    # Fail closed on review errors: do not open on a broken review.
+                    resp = AgentDecisionResponse(
+                        packet_id=resp.packet_id,
+                        packet_hash=resp.packet_hash,
+                        action=AgentEntryAction.ABSTAIN,
+                        candidate_id=None,
+                        size_scalar=0.0,
+                        exit_policy_id=None,
+                        confidence=0.0,
+                        uncertainty=1.0,
+                        reason_codes=(*resp.reason_codes, "reviewer_failure"),
+                        rationale=f"reviewer_failure:{type(exc).__name__}:{exc}",
+                        model_id=reviewer.model_id,
+                        prompt_version=resp.prompt_version,
+                        geometry_hash=None,
+                    )
+                    reviewer_model_id = reviewer.model_id
+                    reviewer_action = "FAILURE"
     except Exception as exc:  # fail-closed by contract
         return SpyDerShadowDecision(
             action="ABSTAIN",
@@ -283,8 +340,8 @@ def decide_shadow_tick(
             reason_codes=("spy_der_bridge_error",),
             provider=agent.identity.provider,
             model_id=agent.identity.model_id,
+            trader_model_id=agent.identity.model_id,
         )
-    resp = result.response
 
     if resp.action is AgentEntryAction.SELECT_CANDIDATE and resp.candidate_id:
         view = next((c for c in selected if c.candidate_id == resp.candidate_id), None)
@@ -299,7 +356,10 @@ def decide_shadow_tick(
             rationale=resp.rationale,
             reason_codes=resp.reason_codes,
             provider=agent.identity.provider,
-            model_id=agent.identity.model_id,
+            model_id=resp.model_id or agent.identity.model_id,
+            trader_model_id=trader_model_id,
+            reviewer_model_id=reviewer_model_id,
+            reviewer_action=reviewer_action,
         )
     else:
         action = "NO_EDGE" if resp.action is AgentEntryAction.NO_EDGE else "ABSTAIN"
@@ -314,7 +374,10 @@ def decide_shadow_tick(
             rationale=resp.rationale,
             reason_codes=resp.reason_codes,
             provider=agent.identity.provider,
-            model_id=agent.identity.model_id,
+            model_id=resp.model_id or agent.identity.model_id,
+            trader_model_id=trader_model_id,
+            reviewer_model_id=reviewer_model_id,
+            reviewer_action=reviewer_action,
         )
     _LAST_CACHE_KEY = cache_key
     _LAST_DECISION = decision
@@ -326,11 +389,27 @@ def parallel_track_payload(decision: SpyDerShadowDecision) -> dict[str, Any]:
     return decision.as_dict()
 
 
-def _default_agent() -> DecisionAgent:
+def _default_trader_agent() -> DecisionAgent:
     # Prefer Grok when an API key is present AND the runtime AI killswitch is on.
     if _ai_enabled() and os.environ.get("XAI_API_KEY"):
-        return GrokDecisionAgent()
+        return GrokDecisionAgent(
+            cfg=GrokConfig(model_id=DEFAULT_TRADER_MODEL_ID, auto_http=True)
+        )
     return DeterministicDecisionAgent()
+
+
+def _reviewer_for(trader: DecisionAgent) -> GrokDecisionAgent | None:
+    """Attach reviewer sharing the trader transport when possible.
+
+    Only Grok traders are reviewed — mock/deterministic agents skip the
+    second pass so offline tests and $0 fallback stay single-shot.
+    """
+    if not isinstance(trader, GrokDecisionAgent):
+        return None
+    return make_default_reviewer(
+        transport=trader.transport,
+        api_key=trader.api_key or None,
+    )
 
 
 def _build_packet(
