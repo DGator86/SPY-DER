@@ -19,15 +19,31 @@ Optional Grok key in `/etc/zerodte/zerodte.env`:
 
 ```bash
 XAI_API_KEY=...
-# Optional overrides (no redeploy needed):
-XAI_MODEL=grok-4.5          # decision model id; default grok-4.5
+# Optional overrides (restart zerodte-shadow after edits):
+XAI_MODEL=grok-4.5                 # decision model id; default grok-4.5
 XAI_API_BASE=https://api.x.ai/v1/chat/completions
+XAI_REASONING_EFFORT=low           # low|medium|high — default low (xAI default is high)
+XAI_MAX_COMPLETION_TOKENS=512      # caps completion+reasoning tokens per call
+SPY_DER_AI=1                       # set 0 to force deterministic (no HTTP)
+SPY_DER_AI_TOP_K=8                 # max candidates sent per tick (0 = all)
+SPY_DER_AI_CACHE=1                 # reuse decision when candidate set unchanged
 ```
 
-Without `XAI_API_KEY`, SPY-DER uses the deterministic agent so the panel still
-updates.
+Without `XAI_API_KEY` (or with `SPY_DER_AI=0`), SPY-DER uses the deterministic
+agent so the panel still updates at **$0 API cost**.
 
-Disable with `SPY_DER_ENABLED=0` in the deploy environment if needed.
+### Cost notes
+
+- Shadow ticks every **60s during RTH** → ~390 entry calls/trading day if uncached.
+- `grok-4.5` is a **reasoning** model; xAI defaults to `reasoning_effort=high`.
+  Reasoning tokens bill as **output** ($6 / 1M). That dominates spend.
+- SPY-DER defaults effort to **`low`** and caps `max_completion_tokens`.
+- Immediate stop: remove/comment `XAI_API_KEY` or set `SPY_DER_AI=0`, then
+  `systemctl restart zerodte-shadow`.
+- Cheaper model option: `XAI_MODEL=grok-4.20-0309-non-reasoning` (confirm current
+  xAI catalog).
+
+Disable package install with `SPY_DER_ENABLED=0` in the deploy environment if needed.
 
 ### Verify the live AI
 

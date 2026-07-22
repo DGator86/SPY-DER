@@ -7,6 +7,7 @@ Live broker routing stays disabled — paper/shadow only.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -36,10 +37,97 @@ __all__ = [
     "SpyDerShadowDecision",
     "decide_shadow_tick",
     "parallel_track_payload",
+    "reset_shadow_tick_cache",
 ]
 
 PARALLEL_TRACK_ID = "spy_der"
 PARALLEL_TRACK_LABEL = "SPY-DER"
+
+# Last (content fingerprint -> decision) so unchanged candidate sets skip a paid
+# call even when 0DTE rotates snapshot_id every tick.
+_LAST_CACHE_KEY: str | None = None
+_LAST_DECISION: SpyDerShadowDecision | None = None
+
+
+def reset_shadow_tick_cache() -> None:
+    """Test helper — clear the unpaid-repeat cache."""
+    global _LAST_CACHE_KEY, _LAST_DECISION
+    _LAST_CACHE_KEY = None
+    _LAST_DECISION = None
+
+
+def _decision_cache_key(
+    *,
+    symbol: str,
+    session_date: date,
+    candidates: tuple[ShadowCandidateView, ...],
+    risk_max_size_scalar: float,
+    hard_vetoes: tuple[str, ...],
+    data_quality: float,
+    forecast_uncertainty: float,
+) -> str:
+    body = {
+        "symbol": symbol,
+        "session_date": session_date.isoformat(),
+        "risk_max_size_scalar": risk_max_size_scalar,
+        "hard_vetoes": list(hard_vetoes),
+        "data_quality": data_quality,
+        "forecast_uncertainty": forecast_uncertainty,
+        "candidates": [
+            {
+                "candidate_id": c.candidate_id,
+                "geometry_hash": c.geometry_hash,
+                "utility": c.utility,
+                "v3_rank": c.v3_rank,
+                "fill_probability": c.fill_probability,
+                "hard_vetoed": c.hard_vetoed,
+                "maximum_loss": str(c.maximum_loss),
+            }
+            for c in candidates
+        ],
+    }
+    return packet_hash(body)
+
+
+def _ai_enabled() -> bool:
+    """Runtime killswitch. SPY_DER_AI=0 / XAI_ENABLED=0 → deterministic (no HTTP)."""
+    for name in ("SPY_DER_AI", "XAI_ENABLED"):
+        raw = os.environ.get(name, "").strip().lower()
+        if raw in {"0", "false", "off", "no"}:
+            return False
+    return True
+
+
+def _top_k() -> int | None:
+    """Optional cap on candidates sent to the model (SPY_DER_AI_TOP_K)."""
+    raw = os.environ.get("SPY_DER_AI_TOP_K", "").strip()
+    if not raw:
+        return 8  # default: keep prompts small on the 60s VPS tick
+    try:
+        value = int(raw)
+    except ValueError:
+        return 8
+    if value <= 0:
+        return None  # 0 / negative => send all
+    return value
+
+
+def _select_candidates(
+    candidates: tuple[ShadowCandidateView, ...],
+) -> tuple[ShadowCandidateView, ...]:
+    limit = _top_k()
+    if limit is None or len(candidates) <= limit:
+        return candidates
+    # Prefer higher utility, then better (lower) v3_rank, preserve stability.
+    ranked = sorted(
+        candidates,
+        key=lambda c: (
+            -(c.utility if c.utility is not None else float("-inf")),
+            c.v3_rank if c.v3_rank is not None else 10**9,
+            c.candidate_id,
+        ),
+    )
+    return tuple(ranked[:limit])
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,12 +203,58 @@ def decide_shadow_tick(
     Fail-closed: any error building the packet (e.g. out-of-range inputs) or
     running the agent returns an ``ABSTAIN`` decision rather than raising, so a
     single malformed tick never takes down the caller's shadow loop.
+
+    Cost controls (env, no redeploy of callers required after package update):
+    - ``SPY_DER_AI=0`` / ``XAI_ENABLED=0`` → deterministic agent (no HTTP)
+    - ``SPY_DER_AI_TOP_K`` → max candidates sent (default 8; ``0`` = all)
+    - empty candidate set → ``NO_EDGE`` without an API call
+    - unchanged ``packet_hash`` → reuse prior decision (no API call)
     """
+    global _LAST_CACHE_KEY, _LAST_DECISION
+
     now = now or datetime.now(tz=UTC)
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
 
+    selected = _select_candidates(tuple(candidates))
     agent = agent or _default_agent()
+
+    # Empty universe: no edge, and no reason to pay for a model call.
+    if not selected:
+        decision = SpyDerShadowDecision(
+            action="NO_EDGE",
+            candidate_id=None,
+            size_scalar=0.0,
+            structure=None,
+            direction=None,
+            confidence=0.0,
+            uncertainty=0.0,
+            rationale="no_shadow_candidates",
+            reason_codes=("no_candidates",),
+            provider=agent.identity.provider,
+            model_id=agent.identity.model_id,
+        )
+        _LAST_CACHE_KEY = None
+        _LAST_DECISION = decision
+        return decision
+
+    cache_key = _decision_cache_key(
+        symbol=symbol,
+        session_date=session_date,
+        candidates=selected,
+        risk_max_size_scalar=risk_max_size_scalar,
+        hard_vetoes=hard_vetoes,
+        data_quality=data_quality,
+        forecast_uncertainty=forecast_uncertainty,
+    )
+    if (
+        _LAST_DECISION is not None
+        and _LAST_CACHE_KEY == cache_key
+        and os.environ.get("SPY_DER_AI_CACHE", "1").strip().lower()
+        not in {"0", "false", "off", "no"}
+    ):
+        return _LAST_DECISION
+
     try:
         authority = AiDecisionAuthority(agent, account_id="system_b_grok")
         packet = _build_packet(
@@ -128,7 +262,7 @@ def decide_shadow_tick(
             symbol=symbol,
             session_date=session_date,
             underlying_price=Decimal(str(underlying_price)),
-            candidates=tuple(candidates),
+            candidates=selected,
             now=now,
             risk_max_size_scalar=risk_max_size_scalar,
             hard_vetoes=hard_vetoes,
@@ -153,8 +287,8 @@ def decide_shadow_tick(
     resp = result.response
 
     if resp.action is AgentEntryAction.SELECT_CANDIDATE and resp.candidate_id:
-        view = next((c for c in candidates if c.candidate_id == resp.candidate_id), None)
-        return SpyDerShadowDecision(
+        view = next((c for c in selected if c.candidate_id == resp.candidate_id), None)
+        decision = SpyDerShadowDecision(
             action="TRADE",
             candidate_id=resp.candidate_id,
             size_scalar=float(resp.size_scalar),
@@ -167,20 +301,24 @@ def decide_shadow_tick(
             provider=agent.identity.provider,
             model_id=agent.identity.model_id,
         )
-    action = "NO_EDGE" if resp.action is AgentEntryAction.NO_EDGE else "ABSTAIN"
-    return SpyDerShadowDecision(
-        action=action,
-        candidate_id=None,
-        size_scalar=0.0,
-        structure=None,
-        direction=None,
-        confidence=float(resp.confidence),
-        uncertainty=float(resp.uncertainty),
-        rationale=resp.rationale,
-        reason_codes=resp.reason_codes,
-        provider=agent.identity.provider,
-        model_id=agent.identity.model_id,
-    )
+    else:
+        action = "NO_EDGE" if resp.action is AgentEntryAction.NO_EDGE else "ABSTAIN"
+        decision = SpyDerShadowDecision(
+            action=action,
+            candidate_id=None,
+            size_scalar=0.0,
+            structure=None,
+            direction=None,
+            confidence=float(resp.confidence),
+            uncertainty=float(resp.uncertainty),
+            rationale=resp.rationale,
+            reason_codes=resp.reason_codes,
+            provider=agent.identity.provider,
+            model_id=agent.identity.model_id,
+        )
+    _LAST_CACHE_KEY = cache_key
+    _LAST_DECISION = decision
+    return decision
 
 
 def parallel_track_payload(decision: SpyDerShadowDecision) -> dict[str, Any]:
@@ -189,10 +327,8 @@ def parallel_track_payload(decision: SpyDerShadowDecision) -> dict[str, Any]:
 
 
 def _default_agent() -> DecisionAgent:
-    import os
-
-    # Prefer Grok when an API key (or injected transport) is available.
-    if os.environ.get("XAI_API_KEY"):
+    # Prefer Grok when an API key is present AND the runtime AI killswitch is on.
+    if _ai_enabled() and os.environ.get("XAI_API_KEY"):
         return GrokDecisionAgent()
     return DeterministicDecisionAgent()
 

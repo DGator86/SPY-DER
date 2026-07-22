@@ -35,16 +35,27 @@ def test_xai_api_base_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
 
     agent = GrokDecisionAgent(transport=transport, api_key="k")
     # Build a minimal packet via the public bridge path.
-    from datetime import UTC, datetime
+    from datetime import UTC, date, datetime
+    from decimal import Decimal
 
-    from spy_der.integrations.zerodte import decide_shadow_tick
+    from spy_der.integrations.zerodte import ShadowCandidateView, decide_shadow_tick
 
     decide_shadow_tick(
         snapshot_id="s",
         symbol="SPY",
         session_date=datetime.now(tz=UTC).date(),
         underlying_price=600,
-        candidates=(),
+        candidates=(
+            ShadowCandidateView(
+                candidate_id="c0",
+                family="put_credit_spread",
+                direction="bearish",
+                maximum_loss=Decimal("120"),
+                capital_required=Decimal("120"),
+                geometry_hash="sha256:test",
+                expiration=date(2026, 7, 22),
+            ),
+        ),
         now=datetime.now(tz=UTC),
         agent=agent,
     )
