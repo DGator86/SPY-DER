@@ -49,9 +49,26 @@ class GrokConfig:
     # Env overrides so ops can bump the model / endpoint without a code change.
     model_id_env: str = "XAI_MODEL"
     api_base_env: str = "XAI_API_BASE"
+    # Cost controls: grok-4.5 defaults to reasoning_effort=high (billed as output).
+    # Prefer low for 60s shadow ticks; override via XAI_REASONING_EFFORT.
+    reasoning_effort_env: str = "XAI_REASONING_EFFORT"
+    reasoning_effort: str = "low"
+    max_completion_tokens_env: str = "XAI_MAX_COMPLETION_TOKENS"
+    max_completion_tokens: int = 512
     timeout_seconds: float = 30.0
     # When True, attach HttpGrokTransport if env key is present and no transport given.
     auto_http: bool = True
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 class GrokDecisionAgent:
@@ -71,6 +88,13 @@ class GrokDecisionAgent:
         # model id / endpoint via /etc/zerodte/zerodte.env with no redeploy.
         self._model_id = os.environ.get(self.cfg.model_id_env, "").strip() or self.cfg.model_id
         self._api_base = os.environ.get(self.cfg.api_base_env, "").strip() or self.cfg.api_base
+        effort = os.environ.get(self.cfg.reasoning_effort_env, "").strip().lower()
+        if effort not in {"low", "medium", "high"}:
+            effort = self.cfg.reasoning_effort
+        self._reasoning_effort = effort
+        self._max_completion_tokens = _env_int(
+            self.cfg.max_completion_tokens_env, self.cfg.max_completion_tokens
+        )
         if self._transport is None and self.cfg.auto_http and self._resolve_api_key():
             self._transport = make_http_grok_transport(
                 timeout_seconds=self.cfg.timeout_seconds
@@ -181,14 +205,20 @@ class GrokDecisionAgent:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}" if api_key else "",
         }
-        body = {
+        body: dict[str, Any] = {
             "model": self._model_id,
             "messages": [
                 {"role": "system", "content": prompt["system"]},
                 {"role": "user", "content": prompt["user"]},
             ],
             "temperature": 0.0,
+            # Cap completion (+ reasoning) tokens so a single tick cannot run away.
+            "max_completion_tokens": self._max_completion_tokens,
         }
+        # grok-4.5 and other reasoning models accept this; non-reasoning models
+        # typically ignore unknown fields. Keep effort configurable via env.
+        if self._reasoning_effort:
+            body["reasoning_effort"] = self._reasoning_effort
         raw = self._transport(self._api_base, headers, body)
         return _extract_content(raw)
 
