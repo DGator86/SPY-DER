@@ -19,14 +19,17 @@ Optional Grok key in `/etc/zerodte/zerodte.env`:
 
 ```bash
 XAI_API_KEY=...
-# Optional overrides (restart zerodte-shadow after edits):
-XAI_MODEL=grok-4.5                 # decision model id; default grok-4.5
+# Dual-model defaults (restart zerodte-shadow after edits):
+XAI_MODEL=grok-4.20-0309-non-reasoning   # hot-path trader (every tick)
+XAI_REVIEW_MODEL=grok-4.5                # reviewer (TRADE proposals only)
+XAI_REVIEW_ENABLED=1                     # set 0 to skip reviewer
+XAI_REVIEW_REASONING_EFFORT=low          # reviewer effort (4.5 default is high)
+XAI_REVIEW_MAX_COMPLETION_TOKENS=256
 XAI_API_BASE=https://api.x.ai/v1/chat/completions
-XAI_REASONING_EFFORT=low           # low|medium|high — default low (xAI default is high)
-XAI_MAX_COMPLETION_TOKENS=512      # caps completion+reasoning tokens per call
-SPY_DER_AI=1                       # set 0 to force deterministic (no HTTP)
-SPY_DER_AI_TOP_K=8                 # max candidates sent per tick (0 = all)
-SPY_DER_AI_CACHE=1                 # reuse decision when candidate set unchanged
+XAI_MAX_COMPLETION_TOKENS=512            # trader completion cap
+SPY_DER_AI=1                             # set 0 to force deterministic (no HTTP)
+SPY_DER_AI_TOP_K=8                       # max candidates sent per tick (0 = all)
+SPY_DER_AI_CACHE=1                       # reuse decision when candidate set unchanged
 ```
 
 Without `XAI_API_KEY` (or with `SPY_DER_AI=0`), SPY-DER uses the deterministic
@@ -34,14 +37,12 @@ agent so the panel still updates at **$0 API cost**.
 
 ### Cost notes
 
-- Shadow ticks every **60s during RTH** → ~390 entry calls/trading day if uncached.
-- `grok-4.5` is a **reasoning** model; xAI defaults to `reasoning_effort=high`.
-  Reasoning tokens bill as **output** ($6 / 1M). That dominates spend.
-- SPY-DER defaults effort to **`low`** and caps `max_completion_tokens`.
-- Immediate stop: remove/comment `XAI_API_KEY` or set `SPY_DER_AI=0`, then
-  `systemctl restart zerodte-shadow`.
-- Cheaper model option: `XAI_MODEL=grok-4.20-0309-non-reasoning` (confirm current
-  xAI catalog).
+- Shadow ticks every **60s during RTH** → ~390 **trader** calls/day if uncached.
+- Default trader is **non-reasoning** (`grok-4.20-0309-non-reasoning`).
+- Default reviewer is **`grok-4.5` @ low**, and runs **only when trader says TRADE**
+  (APPROVE / VETO / RESIZE). `NO_EDGE` ticks never pay for the reviewer.
+- `grok-4.5` with xAI's default `high` reasoning is expensive; keep reviewer at `low`.
+- Immediate stop: `SPY_DER_AI=0` (or remove `XAI_API_KEY`) + restart `zerodte-shadow`.
 
 Disable package install with `SPY_DER_ENABLED=0` in the deploy environment if needed.
 

@@ -32,8 +32,11 @@ def _cand(i: int = 0) -> ShadowCandidateView:
     )
 
 
-def test_reasoning_effort_defaults_to_low(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_non_reasoning_trader_omits_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("SPY_DER_AI_CACHE", "0")
+    monkeypatch.setenv("XAI_REVIEW_ENABLED", "0")
     reset_shadow_tick_cache()
     captured: dict[str, Any] = {}
 
@@ -57,14 +60,17 @@ def test_reasoning_effort_defaults_to_low(monkeypatch: pytest.MonkeyPatch) -> No
         now=datetime(2026, 7, 22, 15, 0, tzinfo=UTC),
         agent=agent,
     )
-    assert captured["reasoning_effort"] == "low"
+    assert "reasoning_effort" not in captured
+    assert captured["model"] == "grok-4.20-0309-non-reasoning"
     assert captured["max_completion_tokens"] == 512
 
 
-def test_reasoning_effort_and_max_tokens_env(
+def test_reasoning_effort_and_max_tokens_env_for_reasoning_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SPY_DER_AI_CACHE", "0")
+    monkeypatch.setenv("XAI_REVIEW_ENABLED", "0")
+    monkeypatch.setenv("XAI_MODEL", "grok-4.5")
     monkeypatch.setenv("XAI_REASONING_EFFORT", "medium")
     monkeypatch.setenv("XAI_MAX_COMPLETION_TOKENS", "256")
     reset_shadow_tick_cache()
@@ -95,6 +101,7 @@ def test_reasoning_effort_and_max_tokens_env(
 def test_killswitch_disables_grok(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XAI_API_KEY", "xai-test-key-not-used")
     monkeypatch.setenv("SPY_DER_AI", "0")
+    monkeypatch.setenv("XAI_REVIEW_ENABLED", "0")
     reset_shadow_tick_cache()
     decision = decide_shadow_tick(
         snapshot_id="s3",
@@ -107,7 +114,8 @@ def test_killswitch_disables_grok(monkeypatch: pytest.MonkeyPatch) -> None:
     assert decision.provider == "deterministic"
 
 
-def test_empty_candidates_skip_transport() -> None:
+def test_empty_candidates_skip_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XAI_REVIEW_ENABLED", "0")
     calls = {"n": 0}
 
     def transport(url: str, headers: dict[str, str], body: dict[str, Any]) -> str:
@@ -132,6 +140,7 @@ def test_empty_candidates_skip_transport() -> None:
 
 def test_cache_skips_repeat_call(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SPY_DER_AI_CACHE", "1")
+    monkeypatch.setenv("XAI_REVIEW_ENABLED", "0")
     calls = {"n": 0}
 
     def transport(url: str, headers: dict[str, str], body: dict[str, Any]) -> str:
@@ -168,6 +177,7 @@ def test_cache_skips_repeat_call(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_top_k_limits_candidates_sent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SPY_DER_AI_TOP_K", "2")
     monkeypatch.setenv("SPY_DER_AI_CACHE", "0")
+    monkeypatch.setenv("XAI_REVIEW_ENABLED", "0")
     seen: list[int] = []
 
     def transport(url: str, headers: dict[str, str], body: dict[str, Any]) -> str:
