@@ -1,0 +1,957 @@
+From 4c7cafd7871ca0c27fbfc60ecbf39a2855387165 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Mon, 20 Jul 2026 15:29:35 +0000
+Subject: [PATCH 1/3] Add SPY-DER as fourth parallel paper/dashboard track
+
+Wire spy_der into PAPER_TRACKS, unified paper intents, live_state
+forecast.parallel_tracks, and the Parallel decisions panel so operators
+can compare SPY-DER against Legacy/V2/V3 on the Vercel dashboard.
+---
+ .gitignore                              |   1 +
+ dashboard/queries.py                    |   2 +-
+ dashboard/state.py                      |  40 ++++-
+ dashboard/static/app.js                 |  89 +++++++----
+ dashboard/static/index.html             |   2 +-
+ dashboard/static/style.css              |  13 +-
+ deploy/SPY_DER_PARALLEL.md              |  47 ++++++
+ paper_broker.py                         |  15 +-
+ spy_der_bridge.py                       | 192 ++++++++++++++++++++++++
+ tests/fixtures/live_state_baseline.json |  52 ++++++-
+ tests/test_baseline_contracts.py        |   2 +-
+ tests/test_spy_der_parallel.py          |  79 ++++++++++
+ tests/test_triple_paper_tracks.py       |   1 +
+ unified_loop.py                         | 109 +++++++++++++-
+ 14 files changed, 601 insertions(+), 43 deletions(-)
+ create mode 100644 deploy/SPY_DER_PARALLEL.md
+ create mode 100644 spy_der_bridge.py
+ create mode 100644 tests/test_spy_der_parallel.py
+
+diff --git a/.gitignore b/.gitignore
+index 43e36cb..328edbc 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -7,3 +7,4 @@ tickets.jsonl
+ public/
+ # real secrets file — only the .example template is tracked
+ zerodte.env
++.coverage
+diff --git a/dashboard/queries.py b/dashboard/queries.py
+index e610be8..921bae7 100644
+--- a/dashboard/queries.py
++++ b/dashboard/queries.py
+@@ -503,7 +503,7 @@ def paper_summary(paper_db_path: str) -> dict:
+     by_reason: dict[str, int] = {}
+     by_track: dict[str, dict] = {
+         t: {"trades": 0, "total_pnl": 0.0, "wins": 0, "open_positions": 0}
+-        for t in ("legacy", "v2", "v3")
++        for t in ("legacy", "v2", "v3", "spy_der")
+     }
+     for r in all_rows:
+         reason = r[1] or "unknown"
+diff --git a/dashboard/state.py b/dashboard/state.py
+index ba2ff87..e49008f 100644
+--- a/dashboard/state.py
++++ b/dashboard/state.py
+@@ -194,8 +194,8 @@ def serialize_tick_result(
+         if k.startswith("v2_fc_")
+     }
+ 
+-    # Parallel decision summary for Legacy vs V3 tabs.
+-    # V3 side uses only v2_policy_* — never fall back to policy_* (legacy).
++    # Parallel decision summary for Legacy / V2 / V3 / SPY-DER panels.
++    # V2 side uses only v2_policy_* — never fall back to policy_* (legacy).
+     parallel = {
+         "legacy": {
+             "structure": intent.decision.structure,
+@@ -204,6 +204,7 @@ def serialize_tick_result(
+             "gate_pass": doing.get("gate_pass"),
+             "gate_score": doing.get("gate_score"),
+             "decision": doing.get("decision"),
++            "label": "Legacy",
+         },
+         "v2": {
+             "structure": raw_signals.get("v2_policy_structure"),
+@@ -216,8 +217,40 @@ def serialize_tick_result(
+             "mode": raw_signals.get("policy_mode"),
+             "disagreement": raw_signals.get("policy_disagreement"),
+             "fallback_used": raw_signals.get("policy_fallback_used"),
++            "label": "V2",
+         },
+     }
++    # V3 from Part 3 decision summary (statistical action preferred).
++    part3_for_parallel = part3
++    if part3_for_parallel is None:
++        part3_for_parallel = getattr(result, "part3", None) or {}
++    ds_p3 = (part3_for_parallel or {}).get("decision_summary") or {}
++    parallel["v3"] = {
++        "label": "V3",
++        "structure": ds_p3.get("family"),
++        "direction": ds_p3.get("direction"),
++        "action": ds_p3.get("statistical_action") or ds_p3.get("action"),
++        "confidence": ds_p3.get("p_positive_utility"),
++        "uncertainty": ds_p3.get("uncertainty"),
++        "size_cap": None,
++        "candidate_id": ds_p3.get("selected_candidate_id"),
++        "mode": (part3_for_parallel or {}).get("mode", "shadow"),
++        "source": "part3",
++    }
++    spy_der_payload = getattr(result, "spy_der", None)
++    if isinstance(spy_der_payload, dict) and spy_der_payload:
++        parallel["spy_der"] = dict(spy_der_payload)
++        parallel["spy_der"].setdefault("label", "SPY-DER")
++        parallel["spy_der"].setdefault("track", "spy_der")
++    else:
++        parallel["spy_der"] = {
++            "track": "spy_der",
++            "label": "SPY-DER",
++            "source": "spy_der",
++            "mode": "shadow",
++            "action": "UNAVAILABLE",
++            "available": False,
++        }
+ 
+     # MTF sigma cones (live panes) — prefer orchestrator cache via result attr.
+     sigma_cones = getattr(result, "sigma_cones", None)
+@@ -279,6 +312,8 @@ def serialize_tick_result(
+     }
+ 
+     # live.v1 forecast: summary + shadow signals; never source_version=v3.
++    # parallel keeps the historical V2 object; parallel_tracks is the
++    # multi-system comparison map (legacy / v2 / v3 / spy_der).
+     forecast_section: dict[str, Any] = {
+         "source_version": "v2",
+         "source_type": (
+@@ -289,6 +324,7 @@ def serialize_tick_result(
+         "v2_signals": v2_signals,
+         "sigma_cones": sigma_cones,
+         "parallel": parallel.get("v2"),
++        "parallel_tracks": parallel,
+     }
+     if forecast_summary:
+         forecast_section.update(forecast_summary)
+diff --git a/dashboard/static/app.js b/dashboard/static/app.js
+index fb13570..8bed6fb 100644
+--- a/dashboard/static/app.js
++++ b/dashboard/static/app.js
+@@ -148,10 +148,26 @@
+   function liveInputs(live) {
+     return (live && live.market && live.market.inputs) || {};
+   }
++  const PARALLEL_TRACK_ORDER = ["legacy", "v2", "v3", "spy_der"];
++  const PARALLEL_TRACK_LABELS = {
++    legacy: "Legacy",
++    v2: "V2",
++    v3: "V3",
++    spy_der: "SPY-DER",
++  };
++  const PAPER_TRACKS = ["legacy", "v2", "v3", "spy_der"];
++
+   function liveParallel(live) {
++    const tracks = (live && live.forecast && live.forecast.parallel_tracks) || null;
++    if (tracks && typeof tracks === "object") {
++      return tracks;
++    }
++    // Compatibility fallback when parallel_tracks is absent.
+     return {
+       legacy: (live && live.legacy && live.legacy.parallel) || {},
+       v2: (live && live.forecast && live.forecast.parallel) || {},
++      v3: {},
++      spy_der: { action: "UNAVAILABLE", available: false, label: "SPY-DER" },
+     };
+   }
+   function liveV2Signals(live) {
+@@ -458,46 +474,66 @@
+     $("playbook-metrics").innerHTML = cards.join("");
+   }
+ 
+-  /* ---------------- parallel Legacy vs V3 ---------------- */
++  /* ---------------- parallel Legacy / V2 / V3 / SPY-DER ---------------- */
+   function renderParallel(live, latest) {
+     const p = liveParallel(live);
+     const leg = p.legacy || {};
+     const v2 = p.v2 || {};
+-    // Journal signals only for dual-run metadata; V3 structure/action from
+-    // live.forecast.parallel (never fall back to legacy policy_*).
++    const v3 = p.v3 || {};
++    const sd = p.spy_der || {};
+     const s = tickSignals(latest) || liveV2Signals(live);
+-    const mode = v2.mode || s.policy_mode || "—";
++    const mode = sd.mode || v3.mode || v2.mode || s.policy_mode || "shadow";
+     $("parallel-mode").textContent = mode;
+-    const disagree = num(v2.disagreement) === 1 || num(s.policy_disagreement) === 1;
++
++    const actions = [
++      leg.decision || leg.action,
++      v2.action,
++      v3.action,
++      sd.action,
++    ].map((a) => String(a || "").toUpperCase());
++    const active = actions.filter((a) => a && a !== "—" && a !== "UNAVAILABLE");
++    const disagree = active.length >= 2 && new Set(active).size > 1;
+     const fallback = num(v2.fallback_used) === 1 || num(s.policy_fallback_used) === 1;
+ 
+-    $("parallel-compare").innerHTML = `
+-      <div class="policy-side${disagree ? " disagree" : ""}">
+-        <div class="ps-label">Legacy (matrix)</div>
+-        <div class="ps-struct">${esc(leg.structure || "NT")}</div>
+-        <div class="ps-meta">${esc(leg.decision || "—")}${leg.direction ? " · " + esc(leg.direction) : ""}</div>
+-      </div>
+-      <div class="policy-side${disagree ? " disagree" : ""}">
+-        <div class="ps-label">V3 policy</div>
+-        <div class="ps-struct">${esc(v2.structure || "—")}</div>
+-        <div class="ps-meta">${esc(v2.action || "—")}${v2.direction ? " · " + esc(v2.direction) : ""}</div>
++    function sideCard(trackId, row, primary, secondary) {
++      const label = PARALLEL_TRACK_LABELS[trackId] || trackId;
++      const struct = row.structure || (trackId === "legacy" ? "NT" : "—");
++      const metaBits = [];
++      if (primary) metaBits.push(primary);
++      if (secondary) metaBits.push(secondary);
++      const unavailable = row.available === false || String(row.action || "").toUpperCase() === "UNAVAILABLE";
++      return `
++      <div class="policy-side${disagree ? " disagree" : ""}${unavailable ? " unavailable" : ""}">
++        <div class="ps-label">${esc(label)}</div>
++        <div class="ps-struct">${esc(struct)}</div>
++        <div class="ps-meta">${esc(metaBits.join(" · ") || "—")}</div>
+       </div>`;
++    }
++
++    $("parallel-compare").innerHTML = [
++      sideCard("legacy", leg, leg.decision || "—", leg.direction),
++      sideCard("v2", v2, v2.action || "—", v2.direction),
++      sideCard("v3", v3, v3.action || "—", v3.direction),
++      sideCard("spy_der", sd, sd.action || "—", sd.direction || sd.provider || sd.source),
++    ].join("");
+ 
+     $("parallel-metrics").innerHTML = [
+       metricCard("Legacy gate", leg.gate_pass == null ? "—" : (leg.gate_pass ? "PASS" : "FAIL"),
+         leg.gate_pass ? "pos" : (leg.gate_pass === false ? "warn" : "")),
+       metricCard("Legacy size", fmt(leg.size_mult, 2)),
+-      metricCard("V3 size cap", fmt(v2.size_cap != null ? v2.size_cap : s.policy_size_cap, 2)),
+-      metricCard("V3 conf.", fmt(v2.confidence, 2)),
+-      metricCard("V3 unc.", fmt(v2.uncertainty, 2),
+-        num(v2.uncertainty) > 0.5 ? "warn" : ""),
+-      metricCard("Source", esc(v2.source || "—")),
++      metricCard("V2 size cap", fmt(v2.size_cap != null ? v2.size_cap : s.policy_size_cap, 2)),
++      metricCard("V3 action", esc(v3.action || "—")),
++      metricCard("SPY-DER", esc(sd.action || "—"),
++        String(sd.action || "").toUpperCase() === "TRADE" ? "pos" : ""),
++      metricCard("SPY-DER conf.", fmt(sd.confidence, 2)),
+     ].join("");
+ 
+     const chips = [];
+     if (disagree) chips.push('<span class="chip disagree">disagreement</span>');
+     if (fallback) chips.push('<span class="chip fallback">fallback legacy</span>');
+-    if (!chips.length) chips.push('<span class="chip ok">aligned / dual-run</span>');
++    if (sd.available === false) chips.push('<span class="chip fallback">SPY-DER offline</span>');
++    else chips.push('<span class="chip track-spy_der">SPY-DER live</span>');
++    if (!disagree && !fallback) chips.push('<span class="chip ok">aligned / multi-run</span>');
+     $("parallel-chips").innerHTML = chips.join("");
+   }
+ 
+@@ -754,7 +790,7 @@
+       return;
+     }
+     const by = paper.by_track || {};
+-    const tracks = ["legacy", "v2", "v3"];
++    const tracks = PAPER_TRACKS.slice();
+     const cards = [
+       metricCard("Equity (legacy)", money(paper.equity, 0), "info"),
+       metricCard("Total P&L", money(paper.total_pnl, 0),
+@@ -851,8 +887,8 @@
+   /* ---------------- track helpers (Legacy vs V3) ---------------- */
+   function fillTrack(ctx) {
+     ctx = ctx || {};
+-    if (ctx.fill_track === "v2" || ctx.fill_track === "legacy"
+-        || ctx.fill_track === "v3") return ctx.fill_track;
++    const t = String(ctx.fill_track || "").toLowerCase();
++    if (PAPER_TRACKS.indexOf(t) >= 0) return t;
+     const mode = String(ctx.policy_mode || "").toLowerCase();
+     if (mode === "champion") return "v2";
+     return "legacy";
+@@ -1366,10 +1402,11 @@
+       metricCard("Closed trades", paper.trades),
+       metricCard("Best exit", topReason(paper.by_exit_reason)),
+     ];
+-    ["legacy", "v2", "v3"].forEach((t) => {
++    PAPER_TRACKS.forEach((t) => {
+       const bt = by[t] || {};
+       const p = num(bt.total_pnl);
+-      cards.push(metricCard(t.toUpperCase() + " P&L",
++      const label = (PARALLEL_TRACK_LABELS[t] || t).toUpperCase() + " P&L";
++      cards.push(metricCard(label,
+         money(bt.total_pnl != null ? bt.total_pnl : 0, 0),
+         p > 0 ? "pos" : p < 0 ? "neg" : ""));
+     });
+diff --git a/dashboard/static/index.html b/dashboard/static/index.html
+index 4f7a304..1513480 100644
+--- a/dashboard/static/index.html
++++ b/dashboard/static/index.html
+@@ -260,7 +260,7 @@
+         </section>
+ 
+         <section class="panel accent" id="parallel-panel">
+-          <h2>Parallel decisions <span class="h2-right" id="parallel-mode">—</span></h2>
++          <h2>Parallel decisions <span class="h2-sub">Legacy · V2 · V3 · SPY-DER</span> <span class="h2-right" id="parallel-mode">—</span></h2>
+           <div class="policy-compare" id="parallel-compare"></div>
+           <div class="metrics" id="parallel-metrics"></div>
+           <div class="chips" id="parallel-chips" style="margin-top:10px"></div>
+diff --git a/dashboard/static/style.css b/dashboard/static/style.css
+index d0bcc80..5932e4c 100644
+--- a/dashboard/static/style.css
++++ b/dashboard/static/style.css
+@@ -756,7 +756,7 @@ html, body {
+ /* ---- V3 policy / GEX / forecast panels ---- */
+ .policy-compare {
+   display: grid;
+-  grid-template-columns: 1fr 1fr;
++  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+   gap: 8px;
+   margin-bottom: 10px;
+ }
+@@ -807,6 +807,17 @@ html, body {
+   text-transform: uppercase;
+   font-size: 10px;
+ }
++.chip.track-spy_der {
++  color: #f0a35e;
++  border-color: rgba(240,163,94,0.5);
++  background: rgba(240,163,94,0.10);
++  letter-spacing: 0.06em;
++  text-transform: uppercase;
++  font-size: 10px;
++}
++.policy-side.unavailable {
++  opacity: 0.55;
++}
+ .chip.track-disagree {
+   color: var(--amber);
+   border-color: var(--amber);
+diff --git a/deploy/SPY_DER_PARALLEL.md b/deploy/SPY_DER_PARALLEL.md
+new file mode 100644
+index 0000000..4f713de
+--- /dev/null
++++ b/deploy/SPY_DER_PARALLEL.md
+@@ -0,0 +1,47 @@
++# SPY-DER parallel track on the VPS
++
++SPY-DER appears beside Legacy / V2 / V3 in the dashboard **Parallel decisions**
++panel and as a fourth independent paper ledger (`spy_der`).
++
++## Install on the VPS
++
++```bash
++# Same venv the shadow runner uses
++sudo -u zerodte /opt/zerodte/venv/bin/pip install -e /opt/spy-der
++
++# Optional: standalone heartbeat publisher
++sudo cp /opt/spy-der/deploy/spy-der-shadow.service /etc/systemd/system/
++sudo systemctl enable --now spy-der-shadow.service
++```
++
++Clone / sync SPY-DER to `/opt/spy-der` (or your preferred path) and keep it
++updated with `main`.
++
++## Environment
++
++Add to `/etc/zerodte/zerodte.env` when you want live Grok decisions:
++
++```bash
++XAI_API_KEY=...
++# optional model override is owned by SPY-DER GrokConfig / deployment manifest
++```
++
++Without `XAI_API_KEY`, SPY-DER falls back to the deterministic ensemble agent
++so the parallel panel still updates every tick.
++
++## What you should see
++
++1. **Parallel decisions** panel — four cards: Legacy, V2, V3, SPY-DER.
++2. **Paper** metrics — `SPY-DER P&L` beside the other tracks.
++3. Open positions tagged `fill_track=spy_der`.
++
++Live broker routing remains disabled. This is paper/shadow comparison only.
++
++## Rollback
++
++```bash
++# Disable SPY-DER package import (track shows UNAVAILABLE)
++sudo -u zerodte /opt/zerodte/venv/bin/pip uninstall -y spy-der
++
++# Or roll the 0DTE checkout back before the parallel-track PR
++```
+diff --git a/paper_broker.py b/paper_broker.py
+index 83ac1f6..2456128 100644
+--- a/paper_broker.py
++++ b/paper_broker.py
+@@ -52,8 +52,15 @@ ET = ZoneInfo("America/New_York")
+ log = logging.getLogger("paper_broker")
+ 
+ # Parallel paper tracks — each gets its own virtual cash ledger so legacy /
+-# V2 prediction-policy / V3 Part-3 decisions can be compared side-by-side.
+-PAPER_TRACKS = ("legacy", "v2", "v3")
++# V2 prediction-policy / V3 Part-3 / SPY-DER AI decisions can be compared
++# side-by-side on the dashboard.
++PAPER_TRACKS = ("legacy", "v2", "v3", "spy_der")
++PAPER_TRACK_LABELS = {
++    "legacy": "Legacy",
++    "v2": "V2",
++    "v3": "V3",
++    "spy_der": "SPY-DER",
++}
+ 
+ 
+ # --------------------------------------------------------------------------- #
+@@ -65,8 +72,8 @@ class PaperConfig:
+     multiplier: int = 100                 # option contract multiplier
+     max_open_positions: int = 1           # per-track cap (0DTE: one structure each)
+     # When True (default), open independent positions for each paper_intent
+-    # track on the tick (legacy / v2 / v3). When False, only the legacy
+-    # authoritative TradeDecision is filled (pre-triple-paper behavior).
++    # track on the tick (legacy / v2 / v3 / spy_der). When False, only the
++    # legacy authoritative TradeDecision is filled.
+     parallel_tracks: bool = True
+     # Risk fractions apply to CURRENT equity, not starting cash: the budget
+     # compounds as the account grows and shrinks in a drawdown. Anchoring to
+diff --git a/spy_der_bridge.py b/spy_der_bridge.py
+new file mode 100644
+index 0000000..76a6ebc
+--- /dev/null
++++ b/spy_der_bridge.py
+@@ -0,0 +1,192 @@
++"""Soft bridge from 0DTE shadow loop into SPY-DER AI decisions.
++
++When the `spy_der` package is installed in the VPS venv, each tick asks
++SPY-DER to choose among shadow candidates for the `spy_der` paper track
++and parallel panel. When unavailable, the track reports `UNAVAILABLE`
++and no paper fills are opened.
++"""
++from __future__ import annotations
++
++import logging
++from dataclasses import dataclass
++from datetime import date, datetime
++from decimal import Decimal
++from typing import Any, Optional
++
++log = logging.getLogger("spy_der_bridge")
++
++PARALLEL_TRACK_ID = "spy_der"
++PARALLEL_TRACK_LABEL = "SPY-DER"
++
++
++@dataclass(frozen=True)
++class BridgeDecision:
++    action: str
++    candidate_id: Optional[str]
++    size_scalar: float
++    structure: Optional[str]
++    direction: Optional[str]
++    confidence: float
++    uncertainty: float
++    rationale: str
++    reason_codes: tuple[str, ...]
++    provider: str
++    model_id: str
++    available: bool
++
++    def as_parallel_payload(self) -> dict[str, Any]:
++        return {
++            "track": PARALLEL_TRACK_ID,
++            "label": PARALLEL_TRACK_LABEL,
++            "source": self.provider,
++            "mode": "shadow",
++            "action": self.action,
++            "structure": self.structure,
++            "direction": self.direction,
++            "candidate_id": self.candidate_id,
++            "size_cap": self.size_scalar,
++            "confidence": self.confidence,
++            "uncertainty": self.uncertainty,
++            "rationale": self.rationale,
++            "reason_codes": list(self.reason_codes),
++            "model_id": self.model_id,
++            "available": self.available,
++        }
++
++
++def spy_der_available() -> bool:
++    try:
++        import spy_der.integrations.zerodte  # noqa: F401
++        return True
++    except Exception:
++        return False
++
++
++def decide_spy_der_tick(
++    *,
++    snapshot_id: str,
++    symbol: str,
++    session_date: date,
++    underlying_price: float,
++    shadow_candidates: list[Any],
++    now: datetime,
++    hard_vetoes: tuple[str, ...] = (),
++) -> BridgeDecision:
++    """Ask SPY-DER AI for a shadow decision; fail closed to ABSTAIN."""
++    if not spy_der_available():
++        return BridgeDecision(
++            action="UNAVAILABLE",
++            candidate_id=None,
++            size_scalar=0.0,
++            structure=None,
++            direction=None,
++            confidence=0.0,
++            uncertainty=1.0,
++            rationale="spy_der package not installed in VPS venv",
++            reason_codes=("spy_der_not_installed",),
++            provider="none",
++            model_id="",
++            available=False,
++        )
++    try:
++        from spy_der.integrations.zerodte import (
++            ShadowCandidateView,
++            decide_shadow_tick,
++        )
++    except Exception as exc:
++        log.warning("spy_der import failed: %s", exc)
++        return BridgeDecision(
++            action="UNAVAILABLE",
++            candidate_id=None,
++            size_scalar=0.0,
++            structure=None,
++            direction=None,
++            confidence=0.0,
++            uncertainty=1.0,
++            rationale=f"import_error:{type(exc).__name__}",
++            reason_codes=("spy_der_import_error",),
++            provider="none",
++            model_id="",
++            available=False,
++        )
++
++    views: list[Any] = []
++    for i, cand in enumerate(shadow_candidates or []):
++        try:
++            cid = str(
++                getattr(cand, "candidate_id", None)
++                or getattr(cand, "id", None)
++                or f"shadow-{i}"
++            )
++            family = str(getattr(cand, "family", None) or "unknown")
++            direction = str(getattr(cand, "direction", None) or "both")
++            max_loss = Decimal(str(getattr(cand, "max_loss", None) or 1))
++            capital = Decimal(str(getattr(cand, "capital_required", None) or max_loss))
++            geom = str(getattr(cand, "geometry_hash", None) or f"sha256:{cid}")
++            exp = getattr(cand, "expiration", None)
++            if not isinstance(exp, date):
++                exp = session_date
++            mid = getattr(cand, "credit", None)
++            if mid is None:
++                mid = getattr(cand, "mid_price", None)
++            mid_d = Decimal(str(mid)) if mid is not None else None
++            util = getattr(cand, "ev_per_risk", None)
++            if util is None:
++                util = getattr(cand, "ev", None)
++            views.append(
++                ShadowCandidateView(
++                    candidate_id=cid,
++                    family=family,
++                    direction=direction,
++                    maximum_loss=max_loss,
++                    capital_required=capital,
++                    geometry_hash=geom,
++                    expiration=exp,
++                    mid_price=mid_d,
++                    utility=float(util) if util is not None else None,
++                    v3_rank=i + 1,
++                )
++            )
++        except Exception as exc:
++            log.debug("skip shadow candidate %s: %s", i, exc)
++
++    try:
++        decision = decide_shadow_tick(
++            snapshot_id=snapshot_id or "snap-unknown",
++            symbol=symbol or "SPY",
++            session_date=session_date,
++            underlying_price=Decimal(str(underlying_price)),
++            candidates=views,
++            now=now,
++            hard_vetoes=hard_vetoes,
++        )
++        return BridgeDecision(
++            action=decision.action,
++            candidate_id=decision.candidate_id,
++            size_scalar=float(decision.size_scalar),
++            structure=decision.structure,
++            direction=decision.direction,
++            confidence=float(decision.confidence),
++            uncertainty=float(decision.uncertainty),
++            rationale=decision.rationale,
++            reason_codes=tuple(decision.reason_codes),
++            provider=decision.provider,
++            model_id=decision.model_id,
++            available=True,
++        )
++    except Exception as exc:
++        log.warning("spy_der decide failed: %s", exc)
++        return BridgeDecision(
++            action="ABSTAIN",
++            candidate_id=None,
++            size_scalar=0.0,
++            structure=None,
++            direction=None,
++            confidence=0.0,
++            uncertainty=1.0,
++            rationale=f"bridge_error:{type(exc).__name__}:{exc}",
++            reason_codes=("spy_der_bridge_error",),
++            provider="spy_der",
++            model_id="",
++            available=True,
++        )
+diff --git a/tests/fixtures/live_state_baseline.json b/tests/fixtures/live_state_baseline.json
+index 552ce55..f01ab2e 100644
+--- a/tests/fixtures/live_state_baseline.json
++++ b/tests/fixtures/live_state_baseline.json
+@@ -1,5 +1,5 @@
+ {
+-  "_comment": "live.v1 /api/live payload shape lock (PR D). Flat aliases removed; dashboard consumes sections only. Regenerate when serializer changes intentionally. Values synthetic; only recursive key/type structure is asserted.",
++  "_comment": "live.v1 /api/live payload shape lock. Includes forecast.parallel_tracks (legacy/v2/v3/spy_der). Regenerate when serializer changes intentionally.",
+   "schema_version": "live.v1",
+   "baseline_tree": "3ada4db (post PR #122 / PR C; PR D removes compat_flat_keys)",
+   "payload": {
+@@ -149,7 +149,8 @@
+         "size_mult": 1.0,
+         "gate_pass": false,
+         "gate_score": 0.0,
+-        "decision": "NO_TRADE"
++        "decision": "NO_TRADE",
++        "label": "Legacy"
+       }
+     },
+     "forecast": {
+@@ -168,7 +169,52 @@
+         "source": null,
+         "mode": null,
+         "disagreement": null,
+-        "fallback_used": null
++        "fallback_used": null,
++        "label": "V2"
++      },
++      "parallel_tracks": {
++        "legacy": {
++          "structure": "IC",
++          "direction": "both",
++          "size_mult": 1.0,
++          "gate_pass": false,
++          "gate_score": 0.0,
++          "decision": "NO_TRADE",
++          "label": "Legacy"
++        },
++        "v2": {
++          "structure": null,
++          "direction": null,
++          "action": null,
++          "confidence": null,
++          "uncertainty": null,
++          "size_cap": null,
++          "source": null,
++          "mode": null,
++          "disagreement": null,
++          "fallback_used": null,
++          "label": "V2"
++        },
++        "v3": {
++          "label": "V3",
++          "structure": null,
++          "direction": null,
++          "action": null,
++          "confidence": null,
++          "uncertainty": null,
++          "size_cap": null,
++          "candidate_id": null,
++          "mode": "shadow",
++          "source": "part3"
++        },
++        "spy_der": {
++          "track": "spy_der",
++          "label": "SPY-DER",
++          "source": "spy_der",
++          "mode": "shadow",
++          "action": "UNAVAILABLE",
++          "available": false
++        }
+       }
+     },
+     "v3": {
+diff --git a/tests/test_baseline_contracts.py b/tests/test_baseline_contracts.py
+index cd8a741..93110b8 100644
+--- a/tests/test_baseline_contracts.py
++++ b/tests/test_baseline_contracts.py
+@@ -306,7 +306,7 @@ def test_appjs_consumes_feeds_section():
+ # --------------------------------------------------------------------------- #
+ def test_paper_tracks_inventory():
+     from paper_broker import PAPER_TRACKS, PaperBroker, PaperConfig
+-    assert PAPER_TRACKS == ("legacy", "v2", "v3")
++    assert PAPER_TRACKS == ("legacy", "v2", "v3", "spy_der")
+     with tempfile.TemporaryDirectory() as tmp:
+         broker = PaperBroker(db_path=os.path.join(tmp, "paper.sqlite"),
+                              cfg=PaperConfig())
+diff --git a/tests/test_spy_der_parallel.py b/tests/test_spy_der_parallel.py
+new file mode 100644
+index 0000000..fc3e59e
+--- /dev/null
++++ b/tests/test_spy_der_parallel.py
+@@ -0,0 +1,79 @@
++"""SPY-DER parallel track + live_state panel wiring."""
++from __future__ import annotations
++
++import datetime as dt
++from zoneinfo import ZoneInfo
++
++from dashboard.state import serialize_tick_result
++from decision_matrix import Decision, TradeIntent
++from gate_scorer import MarketSnapshot
++from paper_broker import PAPER_TRACKS, PAPER_TRACK_LABELS
++from regime_classifier import RegimeState
++from unified_loop import TickResult, TickSnapshot
++
++ET = ZoneInfo("America/New_York")
++
++
++def test_paper_tracks_include_spy_der():
++    assert "spy_der" in PAPER_TRACKS
++    assert PAPER_TRACK_LABELS["spy_der"] == "SPY-DER"
++
++
++def test_live_state_parallel_tracks_include_spy_der():
++    market = MarketSnapshot(
++        spot=600.0, net_gex=4e9, gamma_flip=595.0,
++        call_wall=605.0, put_wall=595.0, gex_pct_rank=0.85,
++        vix9d=12.0, vix=13.0, vix3m=15.0, vvix=92.0, vvix_baseline=95.0,
++        straddle_breakeven=4.0, expected_range=3.2,
++        adx=14.0, rsi=50.0, bb_width=1.4, bb_width_baseline=2.0,
++        vwap=600.0, vwap_reversion_count=2,
++        tick_abs_mean=400.0, cvd_slope=0.01,
++        now=dt.datetime(2026, 6, 30, 10, 0, tzinfo=ET),
++        has_catalyst=False,
++    )
++    regime = RegimeState(
++        confidences={"compression": 72},
++        reliabilities={"compression": 0.8},
++        dominant_regime="compression",
++        permitted_engine="premium_selling",
++        vetoes=[],
++        global_information_gain=12.0,
++        standardized={},
++        stand_down=False,
++    )
++    intent = TradeIntent(
++        exec_regime="compression",
++        context_regime="compression",
++        direction_bias="neutral",
++        bias_value=0.0,
++        decision=Decision("IC", "both", "HIGH", "theta", "note", "15m"),
++        size_mult=1.0,
++        vetoes=[],
++        note="",
++    )
++    result = TickResult(
++        ts=dt.datetime(2026, 6, 30, 10, 0, tzinfo=ET),
++        regime=regime,
++        intent=intent,
++        decision=None,
++        final_size_mult=0.0,
++        vetoes=[],
++        snapshot=TickSnapshot(market=market, bars=None, chain=None),
++        signals={},
++        spy_der={
++            "track": "spy_der",
++            "label": "SPY-DER",
++            "action": "TRADE",
++            "structure": "put_credit",
++            "direction": "bearish",
++            "confidence": 0.7,
++            "available": True,
++            "source": "deterministic",
++            "mode": "shadow",
++        },
++    )
++    payload = serialize_tick_result(result, feed_source="Tradier")
++    tracks = payload["forecast"]["parallel_tracks"]
++    assert set(tracks) >= {"legacy", "v2", "v3", "spy_der"}
++    assert tracks["spy_der"]["action"] == "TRADE"
++    assert tracks["spy_der"]["label"] == "SPY-DER"
+diff --git a/tests/test_triple_paper_tracks.py b/tests/test_triple_paper_tracks.py
+index 941021a..b2af6ba 100644
+--- a/tests/test_triple_paper_tracks.py
++++ b/tests/test_triple_paper_tracks.py
+@@ -67,6 +67,7 @@ def test_parallel_tracks_open_three_independent_positions(tmp_path):
+     tracks = sorted(p.entry_ctx["fill_track"] for p in b.open_positions)
+     assert tracks == ["legacy", "v2", "v3"]
+     assert all(t in PAPER_TRACKS for t in tracks)
++    assert "spy_der" in PAPER_TRACKS
+     # Independent ledgers — none spent cash on open (credit structures)
+     for t in PAPER_TRACKS:
+         assert b.ledgers[t] == pytest.approx(1000.0)
+diff --git a/unified_loop.py b/unified_loop.py
+index 829f762..d881aae 100644
+--- a/unified_loop.py
++++ b/unified_loop.py
+@@ -98,8 +98,10 @@ class TickResult:
+     sigma_cones: Optional[dict] = None
+     # Part 3 shadow decision payload for live_state / dashboard assessment.
+     part3: Optional[dict] = None
++    # SPY-DER AI parallel-track decision for live_state / dashboard panel.
++    spy_der: Optional[dict] = None
+     # Parallel paper fills: list of {track, candidate, size_mult, ...} for
+-    # legacy / v2 / v3. PaperBroker opens each track independently.
++    # legacy / v2 / v3 / spy_der. PaperBroker opens each track independently.
+     paper_intents: list = field(default_factory=list)
+ 
+ 
+@@ -645,17 +647,19 @@ class UnifiedOrchestrator:
+             final_size_mult: float,
+             matrix_stand_down: bool) -> list:
+         """
+-        Build parallel paper intents for legacy / V2 / V3.
++        Build parallel paper intents for legacy / V2 / V3 / SPY-DER.
+ 
+         - legacy: matrix intent → Track A decide (independent of champion override)
+         - v2: PredictionPolicy TRADE → decide with V2 structure/direction
+         - v3: Part 3 TRADE → selected shadow candidate
++        - spy_der: SPY-DER AI decision over shadow candidates (paper/shadow only)
+ 
+         Session warmup is enforced in PaperBroker. Regime stand-down blocks
+-        legacy only — V2/V3 still fill when their engines say TRADE so the
+-        tracks can be compared.
++        legacy only — V2/V3/SPY-DER still fill when their engines say TRADE so
++        the tracks can be compared.
+         """
+         intents: list = []
++        self._tick_spy_der = None
+         if snap is None or snap.chain is None:
+             return intents
+ 
+@@ -759,6 +763,101 @@ class UnifiedOrchestrator:
+                     "reason": "part3_meta",
+                 })
+ 
++        # ---- SPY-DER (AI decision maker) ----
++        try:
++            from types import SimpleNamespace
++
++            from spy_der_bridge import PARALLEL_TRACK_ID, decide_spy_der_tick
++
++            market = getattr(snap, "market", None)
++            spot = float(getattr(market, "spot", 0.0) or 0.0)
++            tick_now = getattr(market, "now", None)
++            if tick_now is None:
++                import datetime as _dt
++                from zoneinfo import ZoneInfo
++                tick_now = _dt.datetime.now(ZoneInfo("America/New_York"))
++            session_date = tick_now.date()
++            shadow_cands = list(getattr(self, "_tick_shadow_cands", None) or [])
++            annotated = []
++            for i, c in enumerate(shadow_cands):
++                cid0 = getattr(c, "candidate_id", None) or getattr(c, "id", None)
++                if cid0 is None:
++                    annotated.append(SimpleNamespace(
++                        candidate_id=f"shadow-{i}-{getattr(c, 'family', 'x')}",
++                        family=getattr(c, "family", "unknown"),
++                        direction=getattr(c, "direction", "both"),
++                        max_loss=getattr(c, "max_loss", 1.0),
++                        capital_required=getattr(c, "capital_required", None),
++                        geometry_hash=getattr(c, "geometry_hash", None),
++                        expiration=getattr(c, "expiration", session_date),
++                        credit=getattr(c, "credit", None),
++                        mid_price=getattr(c, "mid_price", None),
++                        ev=getattr(c, "ev", None),
++                        ev_per_risk=getattr(c, "ev_per_risk", None),
++                        _raw=c,
++                    ))
++                else:
++                    annotated.append(c)
++            if not annotated and v3_action == "TRADE":
++                cid = ds.get("selected_candidate_id")
++                v3_only = self._pick_shadow_candidate(
++                    candidate_id=cid,
++                    family=ds.get("family") or (part3.get("ranking") or {}).get("top_family"),
++                )
++                if v3_only is not None:
++                    annotated = [v3_only]
++            snap_id = str(signals.get("_snapshot_id") or signals.get("snapshot_id") or "")
++            sd = decide_spy_der_tick(
++                snapshot_id=snap_id or f"tick-{int(tick_now.timestamp())}",
++                symbol=str(getattr(self, "symbol", "SPY") or "SPY"),
++                session_date=session_date,
++                underlying_price=spot,
++                shadow_candidates=annotated,
++                now=tick_now,
++                hard_vetoes=tuple(str(v) for v in (regime_state.vetoes or [])),
++            )
++            self._tick_spy_der = sd.as_parallel_payload()
++            if sd.action == "TRADE" and sd.candidate_id:
++                sd_cand = self._pick_shadow_candidate(
++                    candidate_id=sd.candidate_id,
++                    family=sd.structure,
++                )
++                if sd_cand is None:
++                    for c in annotated:
++                        cid2 = str(
++                            getattr(c, "candidate_id", None)
++                            or getattr(c, "id", None)
++                            or ""
++                        )
++                        if cid2 == sd.candidate_id:
++                            sd_cand = getattr(c, "_raw", c)
++                            break
++                if sd_cand is not None:
++                    intents.append({
++                        "track": PARALLEL_TRACK_ID,
++                        "candidate": sd_cand,
++                        "size_mult": float(sd.size_scalar or 1.0) or 1.0,
++                        "gate_kelly": None,
++                        "gate_score": None,
++                        "structure": sd.structure,
++                        "direction": sd.direction,
++                        "candidate_id": sd.candidate_id,
++                        "spy_der_action": sd.action,
++                        "confidence": sd.confidence,
++                        "uncertainty": sd.uncertainty,
++                        "reason": "spy_der_ai",
++                    })
++        except Exception as exc:
++            self._tick_spy_der = {
++                "track": "spy_der",
++                "label": "SPY-DER",
++                "source": "spy_der",
++                "mode": "shadow",
++                "action": "ABSTAIN",
++                "available": False,
++                "rationale": f"bridge_exception:{type(exc).__name__}",
++            }
++
+         return intents
+ 
+     def _resolve_prediction_bundle(self, snap, signals: dict, intent,
+@@ -1354,6 +1453,7 @@ class UnifiedOrchestrator:
+                 signals=pub_signals,
+                 sigma_cones=getattr(self, "_tick_sigma_cones", None),
+                 part3=getattr(self, "_tick_part3", None),
++                spy_der=getattr(self, "_tick_spy_der", None),
+                 paper_intents=paper_intents,
+             )
+             if self.journal:
+@@ -1533,6 +1633,7 @@ class UnifiedOrchestrator:
+             signals=pub_signals,
+             sigma_cones=getattr(self, "_tick_sigma_cones", None),
+             part3=getattr(self, "_tick_part3", None),
++            spy_der=getattr(self, "_tick_spy_der", None),
+             paper_intents=paper_intents,
+         )
+ 
+-- 
+2.43.0
+
