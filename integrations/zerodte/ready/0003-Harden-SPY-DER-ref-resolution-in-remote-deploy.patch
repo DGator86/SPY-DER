@@ -1,0 +1,55 @@
+From 9dcf9f05d56b1c75f4862e6b7697ea20c72b0212 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Mon, 20 Jul 2026 16:46:15 +0000
+Subject: [PATCH 3/3] Harden SPY-DER ref resolution in remote-deploy
+
+Match 0DTE's origin/<branch> reset pattern so the VPS auto-update
+timer always fast-forwards /opt/spy-der to SPY-DER main.
+---
+ deploy/remote-deploy.sh | 22 +++++-----------------
+ 1 file changed, 5 insertions(+), 17 deletions(-)
+
+diff --git a/deploy/remote-deploy.sh b/deploy/remote-deploy.sh
+index 28c3ad2..13e4c96 100755
+--- a/deploy/remote-deploy.sh
++++ b/deploy/remote-deploy.sh
+@@ -25,7 +25,7 @@ SVC_USER=zerodte
+ # SPY-DER System B — parallel paper/dashboard track (paper/shadow only).
+ SPY_DER_REPO_URL="${SPY_DER_REPO_URL:-https://github.com/DGator86/SPY-DER.git}"
+ SPY_DER_DIR="${SPY_DER_DIR:-/opt/spy-der}"
+-SPY_DER_REF="${SPY_DER_REF:-main}"
++SPY_DER_REF="${SPY_DER_REF:-origin/main}"
+ SPY_DER_ENABLED="${SPY_DER_ENABLED:-1}"
+ 
+ log() { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
+@@ -77,23 +77,11 @@ if [ "$SPY_DER_ENABLED" = "1" ]; then
+     fi
+     git -C "$SPY_DER_DIR" remote set-url origin "$SPY_DER_REPO_URL"
+     git -C "$SPY_DER_DIR" fetch --prune origin
+-    if git -C "$SPY_DER_DIR" rev-parse --verify -q "origin/${SPY_DER_REF#origin/}^{commit}" >/dev/null \
+-       && [[ "$SPY_DER_REF" != origin/* ]]; then
+-        SPY_TARGET="origin/$SPY_DER_REF"
+-    elif git -C "$SPY_DER_DIR" rev-parse --verify -q "${SPY_DER_REF}^{commit}" >/dev/null; then
+-        SPY_TARGET="$SPY_DER_REF"
++    # Same ref resolution as 0DTE: branch name -> origin/<branch>, else SHA.
++    if git -C "$SPY_DER_DIR" rev-parse --verify -q "origin/${SPY_DER_REF#origin/}^{commit}" >/dev/null; then
++        SPY_TARGET="origin/${SPY_DER_REF#origin/}"
+     else
+-        SPY_TARGET="origin/main"
+-    fi
+-    # Normalize: accept "main" or "origin/main"
+-    if git -C "$SPY_DER_DIR" rev-parse --verify -q "origin/main^{commit}" >/dev/null; then
+-        if [[ "$SPY_DER_REF" == "main" ]]; then
+-            SPY_TARGET="origin/main"
+-        elif [[ "$SPY_DER_REF" == origin/* ]]; then
+-            SPY_TARGET="$SPY_DER_REF"
+-        elif git -C "$SPY_DER_DIR" rev-parse --verify -q "origin/$SPY_DER_REF^{commit}" >/dev/null; then
+-            SPY_TARGET="origin/$SPY_DER_REF"
+-        fi
++        SPY_TARGET="$SPY_DER_REF"
+     fi
+     git -C "$SPY_DER_DIR" reset --hard "$SPY_TARGET"
+     echo "SPY-DER commit: $(git -C "$SPY_DER_DIR" rev-parse --short HEAD)"
+-- 
+2.43.0
+
