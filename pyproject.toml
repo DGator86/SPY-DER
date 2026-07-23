@@ -56,7 +56,10 @@ target-version = "py311"
 select = ["E", "F", "I", "B", "UP", "RUF"]
 
 [tool.mypy]
-python_version = "3.11"
+# Type-check against 3.12: numpy 2.x's bundled stubs use a PEP 695 `type`
+# statement that mypy only parses when targeting 3.12+. requires-python stays
+# at 3.11 (the runtime floor) — this only affects static analysis.
+python_version = "3.12"
 strict = true
 mypy_path = "src"
 packages = ["spy_der"]
