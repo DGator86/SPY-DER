@@ -119,6 +119,31 @@ def _top_k() -> int | None:
     return value
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _review_gate_passes(resp: AgentDecisionResponse) -> bool:
+    """Spend gate for the flagship reviewer: skip it on low-conviction / small
+    trades so we only pay for a second-pass review when it can matter.
+
+    ``XAI_REVIEW_MIN_CONFIDENCE`` — skip review when trader confidence is below.
+    ``XAI_REVIEW_MIN_SIZE`` — skip review when trader size_scalar is below.
+    Both default to 0 (review every TRADE, prior behaviour).
+    """
+    min_conf = _env_float("XAI_REVIEW_MIN_CONFIDENCE", 0.0)
+    if min_conf > 0.0 and float(resp.confidence) < min_conf:
+        return False
+    min_size = _env_float("XAI_REVIEW_MIN_SIZE", 0.0)
+    return not (min_size > 0.0 and float(resp.size_scalar) < min_size)
+
+
 def _select_candidates(
     candidates: tuple[ShadowCandidateView, ...],
 ) -> tuple[ShadowCandidateView, ...]:
@@ -295,9 +320,13 @@ def decide_shadow_tick(
         result = authority.decide_entry(packet, now=now)
         resp = result.response
 
-        # Second pass: flagship reviewer only when trader wants TRADE.
+        # Second pass: flagship reviewer only when trader wants TRADE — and only
+        # when the trade clears the conviction/size spend gate.
         if resp.action is AgentEntryAction.SELECT_CANDIDATE and resp.candidate_id:
-            reviewer = _reviewer_for(agent)
+            gated = _review_gate_passes(resp)
+            reviewer = _reviewer_for(agent) if gated else None
+            if not gated:
+                reviewer_action = "skipped_below_threshold"
             if reviewer is not None:
                 try:
                     review = run_trade_review(reviewer, packet, resp)

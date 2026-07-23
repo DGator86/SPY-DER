@@ -16,10 +16,21 @@ from __future__ import annotations
 
 import math
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime
 from typing import Any
 
 from spy_der.agents.parser import ParseError, extract_json_object
+
+# Default seconds between fresh Grok forecasts. Between refreshes the last Grok
+# forecast is reused (re-anchored to live spot), so the chart stays current
+# without paying for a model call every 60s tick. 0 disables the throttle.
+_DEFAULT_PREDICT_INTERVAL_SEC = 300.0
+
+# Throttle cache: last Grok forecast and when it was produced (module-global,
+# single-process VPS loop). Reset via _reset_forecast_cache() in tests.
+_last_grok_pred: SpyDerPrediction | None = None
+_last_grok_at: datetime | None = None
 
 __all__ = [
     "PREDICTION_PROMPT_VERSION",
@@ -323,6 +334,24 @@ def _forecast_agent() -> Any | None:
     return agent if getattr(agent, "transport", None) is not None else None
 
 
+def _predict_interval_sec() -> float:
+    """Min seconds between fresh Grok forecasts (``XAI_PREDICT_INTERVAL_SEC``)."""
+    raw = os.environ.get("XAI_PREDICT_INTERVAL_SEC", "").strip()
+    if not raw:
+        return _DEFAULT_PREDICT_INTERVAL_SEC
+    try:
+        value = float(raw)
+    except ValueError:
+        return _DEFAULT_PREDICT_INTERVAL_SEC
+    return value if value >= 0 else _DEFAULT_PREDICT_INTERVAL_SEC
+
+
+def _reset_forecast_cache() -> None:
+    global _last_grok_pred, _last_grok_at
+    _last_grok_pred = None
+    _last_grok_at = None
+
+
 def predict_shadow_tick(
     *,
     market: object,
@@ -335,14 +364,29 @@ def predict_shadow_tick(
     ``market`` is 0DTE's market snapshot (duck-typed). Returns ``None`` only when
     there is no usable spot; otherwise always returns a prediction (Grok when
     available, deterministic trader model as the fail-closed fallback).
+
+    Throttle: a fresh Grok call is made at most once per
+    ``XAI_PREDICT_INTERVAL_SEC`` (default 300s). Between refreshes the last Grok
+    forecast is reused, re-anchored to the live spot so drift stays accurate —
+    cutting predictor spend from every-tick to once per interval.
     """
+    global _last_grok_pred, _last_grok_at
     view = ShadowMarketView.from_market(market)
     if view is None:
         return None
     resolved = agent if agent is not None else _forecast_agent()
     if resolved is not None:
+        interval = _predict_interval_sec()
+        if interval > 0 and _last_grok_pred is not None and _last_grok_at is not None:
+            age = (datetime.now(tz=UTC) - _last_grok_at).total_seconds()
+            if age < interval:
+                # Reuse the cached Grok forecast, re-anchored to live spot.
+                return replace(_last_grok_pred, spot_at_pred=round(view.spot, 2))
         try:
-            return _grok_prediction(view, now_iso, resolved)
+            pred = _grok_prediction(view, now_iso, resolved)
+            _last_grok_pred = pred
+            _last_grok_at = datetime.now(tz=UTC)
+            return pred
         except (ParseError, ValueError, TypeError, KeyError, RuntimeError, AttributeError):
             pass  # fail-closed to the deterministic model below
     return _deterministic(view, now_iso)

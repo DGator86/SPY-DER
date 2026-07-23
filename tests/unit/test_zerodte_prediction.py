@@ -15,7 +15,12 @@ from spy_der.integrations.zerodte import (
     SpyDerPrediction,
     predict_shadow_tick,
 )
-from spy_der.integrations.zerodte.prediction import _forecast_agent
+from spy_der.integrations.zerodte.prediction import _forecast_agent, _reset_forecast_cache
+
+
+def setup_function() -> None:
+    # Isolate the predictor throttle cache between tests.
+    _reset_forecast_cache()
 
 
 def _market(**kw: float) -> SimpleNamespace:
