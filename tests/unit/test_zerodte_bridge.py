@@ -14,6 +14,7 @@ from spy_der.integrations.zerodte import (
     decide_shadow_tick,
     parallel_track_payload,
 )
+from spy_der.integrations.zerodte.provider import reset_shadow_tick_cache
 from spy_der.runtime import write_live_state_file
 from spy_der.runtime.runner import RunnerConfig, SpyDerVpsRunner
 
@@ -79,6 +80,122 @@ def test_deterministic_fallback_no_edge_on_empty() -> None:
         agent=DeterministicDecisionAgent(),
     )
     assert decision.action in {"NO_EDGE", "ABSTAIN"}
+
+
+_BLEEDING_PUT_CREDIT_RECORD = {
+    "n_trades": 12,
+    "win_rate": 0.33,
+    "total_pnl": -180.0,
+    "ev_bias_per_share": -0.42,
+    "by_family": [
+        {"family": "put_credit", "n_trades": 8, "total_pnl": -220.0, "win_rate": 0.25},
+        {"family": "call_credit", "n_trades": 4, "total_pnl": 40.0, "win_rate": 0.75},
+    ],
+    "lessons": ["family=put_credit is bleeding: -$220.00 over 8 trades"],
+}
+
+
+def test_track_record_reaches_packet_and_prompt() -> None:
+    from spy_der.agents.prompts import build_entry_prompt
+    from spy_der.contracts.agents import AgentDecisionPacket
+
+    captured: list[AgentDecisionPacket] = []
+
+    class _Capture(DeterministicDecisionAgent):
+        def decide_entry(self, packet):  # type: ignore[override]
+            captured.append(packet)
+            return super().decide_entry(packet)
+
+    reset_shadow_tick_cache()
+    decide_shadow_tick(
+        snapshot_id="snap-tr",
+        symbol="SPY",
+        session_date=date(2026, 7, 20),
+        underlying_price=Decimal("600"),
+        candidates=_cands(),
+        now=datetime(2026, 7, 20, 15, 0, tzinfo=UTC),
+        agent=_Capture(),
+        track_record=_BLEEDING_PUT_CREDIT_RECORD,
+    )
+    assert captured, "agent never saw a packet"
+    record = captured[0].track_record
+    assert record is not None
+    assert record.n_trades == 12
+    assert record.by_family[0].family == "put_credit"
+    prompt = build_entry_prompt(captured[0])
+    assert "track_record" in prompt["user"]
+    assert "put_credit is bleeding" in prompt["user"]
+
+
+def test_track_record_derates_bleeding_family() -> None:
+    # Without feedback the deterministic agent picks c1 (put_credit, higher
+    # utility). With a losing put_credit record, c2 (call_credit) outranks it.
+    reset_shadow_tick_cache()
+    baseline = decide_shadow_tick(
+        snapshot_id="snap-a",
+        symbol="SPY",
+        session_date=date(2026, 7, 20),
+        underlying_price=Decimal("600"),
+        candidates=_cands(),
+        now=datetime(2026, 7, 20, 15, 0, tzinfo=UTC),
+        agent=DeterministicDecisionAgent(),
+    )
+    assert baseline.candidate_id == "c1"
+    informed = decide_shadow_tick(
+        snapshot_id="snap-b",
+        symbol="SPY",
+        session_date=date(2026, 7, 20),
+        underlying_price=Decimal("600"),
+        candidates=_cands(),
+        now=datetime(2026, 7, 20, 15, 1, tzinfo=UTC),
+        agent=DeterministicDecisionAgent(),
+        track_record=_BLEEDING_PUT_CREDIT_RECORD,
+    )
+    # A changed record must invalidate the unchanged-candidates cache AND
+    # change the selection — this is the learning loop acting.
+    assert informed.candidate_id == "c2"
+
+
+def test_track_record_derate_when_every_family_bleeds() -> None:
+    reset_shadow_tick_cache()
+    record = {
+        "n_trades": 16,
+        "win_rate": 0.2,
+        "total_pnl": -300.0,
+        "by_family": [
+            {"family": "put_credit", "n_trades": 8, "total_pnl": -200.0, "win_rate": 0.2},
+            {"family": "call_credit", "n_trades": 8, "total_pnl": -100.0, "win_rate": 0.2},
+        ],
+    }
+    decision = decide_shadow_tick(
+        snapshot_id="snap-c",
+        symbol="SPY",
+        session_date=date(2026, 7, 20),
+        underlying_price=Decimal("600"),
+        candidates=_cands(),
+        now=datetime(2026, 7, 20, 15, 2, tzinfo=UTC),
+        agent=DeterministicDecisionAgent(),
+        track_record=record,
+    )
+    assert decision.action == "TRADE"
+    assert decision.size_scalar == 0.5
+    assert "track_record_derate" in decision.reason_codes
+
+
+def test_malformed_track_record_degrades_to_no_feedback() -> None:
+    reset_shadow_tick_cache()
+    decision = decide_shadow_tick(
+        snapshot_id="snap-d",
+        symbol="SPY",
+        session_date=date(2026, 7, 20),
+        underlying_price=Decimal("600"),
+        candidates=_cands(),
+        now=datetime(2026, 7, 20, 15, 3, tzinfo=UTC),
+        agent=DeterministicDecisionAgent(),
+        track_record={"n_trades": "garbage", "by_family": "nope"},
+    )
+    assert decision.action == "TRADE"
+    assert decision.candidate_id == "c1"
 
 
 def test_decide_shadow_tick_fails_closed_on_bad_input() -> None:

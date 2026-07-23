@@ -31,10 +31,12 @@ __all__ = [
     "AgentPositionResponse",
     "DeploymentContext",
     "ExitPolicySummary",
+    "FamilyRecord",
     "OpenPositionView",
     "PositionDecisionPacket",
     "ReadOnlyLegSummary",
     "SnapshotSummary",
+    "TrackRecordSummary",
     "make_packet_id",
     "make_position_packet_id",
     "packet_hash",
@@ -161,6 +163,64 @@ class AgentCandidateView:
 
 
 @dataclass(frozen=True, slots=True)
+class FamilyRecord:
+    """Realized paper P&L of one structure family on the agent's own track."""
+
+    family: str
+    n_trades: int
+    total_pnl: Decimal
+    win_rate: float
+
+    def __post_init__(self) -> None:
+        if not self.family:
+            raise ValueError("family is required")
+        if self.n_trades < 0:
+            raise ValueError("n_trades must be >= 0")
+        require_probability(self.win_rate, "win_rate")
+
+
+# Bounds keeping the track-record block a compact, fixed-cost prompt section.
+MAX_TRACK_RECORD_FAMILIES = 8
+MAX_TRACK_RECORD_LESSONS = 8
+MAX_TRACK_RECORD_LESSON_CHARS = 200
+
+
+@dataclass(frozen=True, slots=True)
+class TrackRecordSummary:
+    """The agent's own realized paper results, fed back for calibration.
+
+    Derived numeric DATA from settled journal rows — never instructions.
+    Without this the agent decides every tick with no memory of whether its
+    prior selections made or lost money.
+    """
+
+    n_trades: int
+    win_rate: float
+    total_pnl: Decimal
+    # Mean (realized pnl/share - promised EV/share) over trades carrying an
+    # entry EV. Negative = the entry math oversold its trades.
+    ev_bias_per_share: Decimal | None = None
+    by_family: tuple[FamilyRecord, ...] = ()
+    lessons: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.n_trades < 0:
+            raise ValueError("n_trades must be >= 0")
+        require_probability(self.win_rate, "win_rate")
+        object.__setattr__(
+            self, "by_family", tuple(self.by_family)[:MAX_TRACK_RECORD_FAMILIES]
+        )
+        object.__setattr__(
+            self,
+            "lessons",
+            tuple(
+                str(text)[:MAX_TRACK_RECORD_LESSON_CHARS]
+                for text in tuple(self.lessons)[:MAX_TRACK_RECORD_LESSONS]
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class AgentDecisionPacket:
     """Processed-output packet for AI entry decisions (spec §41).
 
@@ -185,6 +245,9 @@ class AgentDecisionPacket:
     schema_version: str = AGENT_PACKET_SCHEMA
     # Explicit allowlist of evidence IDs referenced by candidates/policies.
     evidence_ids: tuple[str, ...] = ()
+    # The agent's own realized paper record (learning feedback loop). Optional
+    # so pre-feedback callers keep working unchanged.
+    track_record: TrackRecordSummary | None = None
 
     def __post_init__(self) -> None:
         if not self.packet_id:
