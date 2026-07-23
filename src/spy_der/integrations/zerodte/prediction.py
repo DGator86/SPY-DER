@@ -297,10 +297,20 @@ def _grok_prediction(view: ShadowMarketView, now_iso: str, agent: Any) -> SpyDer
     )
 
 
+def _ai_enabled() -> bool:
+    """System-wide killswitch, matching the entry/position path.
+
+    ``SPY_DER_AI=0`` or ``XAI_ENABLED=0`` disables all Grok calls (no HTTP).
+    """
+    for name in ("SPY_DER_AI", "XAI_ENABLED"):
+        if os.environ.get(name, "").strip().lower() in {"0", "false", "off", "no"}:
+            return False
+    return True
+
+
 def _forecast_agent() -> Any | None:
     """Grok agent when the killswitch is on and a key is present, else None."""
-    ai_flag = os.environ.get("SPY_DER_AI_ENABLED", "1").strip().lower()
-    if ai_flag in {"0", "false", "off", "no"}:
+    if not _ai_enabled():
         return None
     if not os.environ.get("XAI_API_KEY"):
         return None

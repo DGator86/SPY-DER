@@ -21,6 +21,7 @@ from spy_der.agents.prompts import (
 )
 from spy_der.agents.security import redact_secrets
 from spy_der.agents.transport import make_http_grok_transport
+from spy_der.agents.usage import record_from_raw as record_usage_from_raw
 from spy_der.contracts.agents import (
     AgentCapabilities,
     AgentDecisionPacket,
@@ -257,6 +258,8 @@ class GrokDecisionAgent:
         if _should_send_reasoning_effort(self._model_id, self._reasoning_effort):
             body["reasoning_effort"] = self._reasoning_effort
         raw = self._transport(self._api_base, headers, body)
+        # Meter token spend for the dashboard usage bar (best-effort, never fatal).
+        record_usage_from_raw(self._model_id, raw)
         return _extract_content(raw)
 
 

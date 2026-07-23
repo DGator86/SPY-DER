@@ -1,5 +1,6 @@
 """0DTE VPS / dashboard integration surface."""
 
+from spy_der.agents.usage import snapshot as usage_snapshot
 from spy_der.integrations.zerodte.prediction import (
     PREDICTION_PROMPT_VERSION,
     PREDICTION_SCHEMA,
@@ -30,4 +31,5 @@ __all__ = [
     "decide_shadow_tick",
     "parallel_track_payload",
     "predict_shadow_tick",
+    "usage_snapshot",
 ]

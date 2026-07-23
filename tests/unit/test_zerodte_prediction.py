@@ -7,12 +7,15 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from spy_der.integrations.zerodte import (
     PREDICTION_SCHEMA,
     ShadowMarketView,
     SpyDerPrediction,
     predict_shadow_tick,
 )
+from spy_der.integrations.zerodte.prediction import _forecast_agent
 
 
 def _market(**kw: float) -> SimpleNamespace:
@@ -111,6 +114,17 @@ def test_grok_output_is_clamped_to_walls_and_bounds() -> None:
     assert p.target <= 606.0 + 1e-6
     assert 0.0 <= p.confidence <= 1.0
     assert p.target_low <= p.target <= p.target_high
+
+
+def test_killswitch_disables_grok_forecast(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The predictor honours the system-wide killswitch (SPY_DER_AI / XAI_ENABLED),
+    # not a bespoke env var — so a global AI-off fully disables Grok forecasts.
+    monkeypatch.setenv("XAI_API_KEY", "test-key")
+    monkeypatch.setenv("SPY_DER_AI", "0")
+    assert _forecast_agent() is None
+    monkeypatch.setenv("SPY_DER_AI", "1")
+    monkeypatch.setenv("XAI_ENABLED", "0")
+    assert _forecast_agent() is None
 
 
 def test_grok_parse_failure_falls_back_to_deterministic() -> None:
