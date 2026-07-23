@@ -31,7 +31,9 @@ from spy_der.contracts.agents import (
     AgentEntryAction,
     DeploymentContext,
     ExitPolicySummary,
+    FamilyRecord,
     SnapshotSummary,
+    TrackRecordSummary,
     make_packet_id,
     packet_hash,
 )
@@ -63,6 +65,48 @@ def reset_shadow_tick_cache() -> None:
     _LAST_DECISION = None
 
 
+def _coerce_track_record(raw: Any) -> TrackRecordSummary | None:
+    """Build the TrackRecordSummary contract from a caller-supplied plain dict.
+
+    The 0DTE bridge stays decoupled from contract classes by passing a dict;
+    anything malformed degrades to None (no feedback) rather than failing the
+    tick — the feedback loop must never be the reason a decision errors.
+    """
+    if not isinstance(raw, dict) or not raw:
+        return None
+    try:
+        n_trades = int(raw.get("n_trades") or 0)
+        if n_trades <= 0:
+            return None
+        families = []
+        for f in raw.get("by_family") or []:
+            if not isinstance(f, dict) or not f.get("family"):
+                continue
+            families.append(
+                FamilyRecord(
+                    family=str(f["family"]),
+                    n_trades=int(f.get("n_trades") or 0),
+                    total_pnl=Decimal(str(f.get("total_pnl") or 0)),
+                    win_rate=float(f.get("win_rate") or 0.0),
+                )
+            )
+        ev_bias = raw.get("ev_bias_per_share")
+        return TrackRecordSummary(
+            n_trades=n_trades,
+            win_rate=float(raw.get("win_rate") or 0.0),
+            total_pnl=Decimal(str(raw.get("total_pnl") or 0)),
+            ev_bias_per_share=(
+                Decimal(str(ev_bias)) if ev_bias is not None else None
+            ),
+            by_family=tuple(families),
+            lessons=tuple(
+                str(text) for text in (raw.get("lessons") or []) if text
+            ),
+        )
+    except (ValueError, TypeError, ArithmeticError):
+        return None
+
+
 def _decision_cache_key(
     *,
     symbol: str,
@@ -72,10 +116,21 @@ def _decision_cache_key(
     hard_vetoes: tuple[str, ...],
     data_quality: float,
     forecast_uncertainty: float,
+    track_record: TrackRecordSummary | None = None,
 ) -> str:
     body = {
         "symbol": symbol,
         "session_date": session_date.isoformat(),
+        # A newly settled trade changes the record and must invalidate the
+        # unchanged-candidates cache — the whole point of feedback is that the
+        # same market can deserve a different answer after a loss.
+        "track_record": (
+            {
+                "n_trades": track_record.n_trades,
+                "total_pnl": str(track_record.total_pnl),
+            }
+            if track_record is not None else None
+        ),
         "risk_max_size_scalar": risk_max_size_scalar,
         "hard_vetoes": list(hard_vetoes),
         "data_quality": data_quality,
@@ -239,8 +294,15 @@ def decide_shadow_tick(
     hard_vetoes: tuple[str, ...] = (),
     data_quality: float = 1.0,
     forecast_uncertainty: float = 0.0,
+    track_record: dict[str, Any] | None = None,
 ) -> SpyDerShadowDecision:
     """Run AI entry decision over 0DTE shadow candidates.
+
+    ``track_record`` is the agent's own realized paper history (plain dict from
+    the caller's trade journal: n_trades / win_rate / total_pnl /
+    ev_bias_per_share / by_family / lessons). It reaches the model as packet
+    data so decisions are calibrated by past outcomes; malformed input degrades
+    to no feedback, never an error.
 
     Fail-closed: any error building the packet (e.g. out-of-range inputs) or
     running the agent returns an ``ABSTAIN`` decision rather than raising, so a
@@ -283,6 +345,7 @@ def decide_shadow_tick(
         _LAST_DECISION = decision
         return decision
 
+    record = _coerce_track_record(track_record)
     cache_key = _decision_cache_key(
         symbol=symbol,
         session_date=session_date,
@@ -291,6 +354,7 @@ def decide_shadow_tick(
         hard_vetoes=hard_vetoes,
         data_quality=data_quality,
         forecast_uncertainty=forecast_uncertainty,
+        track_record=record,
     )
     if (
         _LAST_DECISION is not None
@@ -316,6 +380,7 @@ def decide_shadow_tick(
             hard_vetoes=hard_vetoes,
             data_quality=data_quality,
             forecast_uncertainty=forecast_uncertainty,
+            track_record=record,
         )
         result = authority.decide_entry(packet, now=now)
         resp = result.response
@@ -453,6 +518,7 @@ def _build_packet(
     hard_vetoes: tuple[str, ...],
     data_quality: float,
     forecast_uncertainty: float,
+    track_record: TrackRecordSummary | None = None,
 ) -> AgentDecisionPacket:
     views = tuple(
         AgentCandidateView(
@@ -517,4 +583,5 @@ def _build_packet(
         data_quality=data_quality,
         forecast_uncertainty=forecast_uncertainty,
         evidence_ids=tuple(sorted({eid for v in views for eid in v.evidence_ids})),
+        track_record=track_record,
     )

@@ -68,9 +68,25 @@ class DeterministicDecisionAgent:
                 preferred = by_name[name]
                 break
         if preferred is None:
+            # Track-record tilt: a family with a real losing record on our own
+            # paper track ranks behind every family that has not proven itself
+            # a bleeder — the utility number promised those losses too.
+            def _family_bleeds(family: str) -> bool:
+                tr = packet.track_record
+                if tr is None:
+                    return False
+                return any(
+                    f.family == family
+                    and f.n_trades >= 5
+                    and f.total_pnl < 0
+                    and f.win_rate < 0.4
+                    for f in tr.by_family
+                )
+
             ranked = sorted(
                 [c for c in packet.candidates if not c.hard_vetoed],
                 key=lambda c: (
+                    _family_bleeds(c.family),
                     -(c.candidate_utility if c.candidate_utility is not None else float("-inf")),
                     c.candidate_id,
                 ),
@@ -91,18 +107,31 @@ class DeterministicDecisionAgent:
                 if packet.approved_exit_policies
                 else None
             )
+            # Every remaining family has a losing record: still act (the tilt
+            # is a preference, not a veto) but at half size, flagged.
+            derated = _family_bleeds(top.family)
+            size = min(1.0, packet.risk_max_size_scalar)
+            reason_codes = ("utility_fallback",)
+            rationale = "selected top utility candidate"
+            if derated:
+                size *= 0.5
+                reason_codes = ("utility_fallback", "track_record_derate")
+                rationale = (
+                    "selected top utility candidate; half size — its family "
+                    "has a losing realized record"
+                )
             return AgentDecisionResponse(
                 packet_id=packet.packet_id,
                 packet_hash=packet.packet_hash,
                 action=AgentEntryAction.SELECT_CANDIDATE,
                 candidate_id=top.candidate_id,
-                size_scalar=min(1.0, packet.risk_max_size_scalar),
+                size_scalar=size,
                 exit_policy_id=exit_id,
                 confidence=0.5,
                 uncertainty=top.uncertainty,
                 geometry_hash=top.geometry_hash,
-                reason_codes=("utility_fallback",),
-                rationale="selected top utility candidate",
+                reason_codes=reason_codes,
+                rationale=rationale,
                 model_id=self.identity.model_id,
                 prompt_version=self.identity.prompt_version,
             )
