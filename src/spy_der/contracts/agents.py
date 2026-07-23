@@ -197,7 +197,7 @@ class TrackRecordSummary:
     n_trades: int
     win_rate: float
     total_pnl: Decimal
-    # Mean (realized pnl/share − promised EV/share) over trades carrying an
+    # Mean (realized pnl/share - promised EV/share) over trades carrying an
     # entry EV. Negative = the entry math oversold its trades.
     ev_bias_per_share: Decimal | None = None
     by_family: tuple[FamilyRecord, ...] = ()

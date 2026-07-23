@@ -118,7 +118,7 @@ def _decision_cache_key(
     forecast_uncertainty: float,
     track_record: TrackRecordSummary | None = None,
 ) -> str:
-    body = {
+    body: dict[str, object] = {
         "symbol": symbol,
         "session_date": session_date.isoformat(),
         # A newly settled trade changes the record and must invalidate the

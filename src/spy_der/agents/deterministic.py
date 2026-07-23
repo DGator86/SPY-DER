@@ -111,7 +111,7 @@ class DeterministicDecisionAgent:
             # is a preference, not a veto) but at half size, flagged.
             derated = _family_bleeds(top.family)
             size = min(1.0, packet.risk_max_size_scalar)
-            reason_codes = ("utility_fallback",)
+            reason_codes: tuple[str, ...] = ("utility_fallback",)
             rationale = "selected top utility candidate"
             if derated:
                 size *= 0.5
