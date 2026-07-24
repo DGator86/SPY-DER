@@ -1,0 +1,38 @@
+[Unit]
+# Daily light dojo: review the last 3 recorded sessions + a shallow universe
+# sparring pass. Never auto-promotes.
+Description=SPY-DER dojo — daily recent-3-day review
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=spy-der
+Group=spy-der
+WorkingDirectory=/opt/spy-der
+EnvironmentFile=-/etc/spy-der/spy-der.env
+EnvironmentFile=-/etc/zerodte/zerodte.env
+StateDirectory=spy-der
+Environment=SPY_DER_STATE_ROOT=%S/spy-der
+# Experience packets are published by 0DTE into the SPY-DER inbox.
+ExecStart=/opt/spy-der/venv/bin/spy-der dojo \
+    --reports-dir /var/lib/spy-der/reports/dojo \
+    --configs-dir /var/lib/spy-der/configs \
+    --experience-dir /var/lib/spy-der/inbox/experience \
+    --recent-days 3 \
+    --days 3 \
+    --universes 6 \
+    --generations 1 \
+    --trials 10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/spy-der
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spy-der-dojo-daily
+
+SuccessExitStatus=0

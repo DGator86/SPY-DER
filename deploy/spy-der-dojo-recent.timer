@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the recent SPY-DER dojo (10-day review)
+
+[Timer]
+OnCalendar=Mon,Wed,Fri 07:00 America/New_York
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

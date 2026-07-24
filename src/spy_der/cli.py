@@ -11,8 +11,10 @@ def main(argv: list[str] | None = None) -> int:
         print("Usage: spy-der <command>")
         print()
         print("Commands:")
-        print("  vps-runner   Run VPS parallel-track state publisher")
-        print("  ai-check     Verify the live AI decision maker end-to-end")
+        print("  vps-runner         Run VPS parallel-track state publisher")
+        print("  ai-check           Verify the live AI decision maker end-to-end")
+        print("  decision-service   Local HTTP /v1/decision boundary for 0DTE")
+        print("  dojo               Run protocol-driven Dojo training cycle")
         return 0
     cmd, *rest = argv
     if cmd in {"vps-runner", "runner"}:
@@ -23,6 +25,14 @@ def main(argv: list[str] | None = None) -> int:
         from spy_der.runtime.ai_check import main as ai_check_main
 
         return ai_check_main(rest)
+    if cmd in {"decision-service", "decision_service", "serve-decision"}:
+        from spy_der.runtime.decision_service import main as decision_main
+
+        return decision_main(rest)
+    if cmd in {"dojo", "dojo-runner"}:
+        from spy_der.runtime.dojo_runner import main as dojo_main
+
+        return dojo_main(rest)
     print(f"unknown command: {cmd}", file=sys.stderr)
     return 2
 

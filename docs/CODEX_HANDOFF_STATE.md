@@ -17,10 +17,36 @@ be overridden here.
 
 ## Current Phase
 
+**Ownership-boundary Dojo migration — Phase 1 IN PROGRESS / scaffold landed.**
+
+Owner correction: SPY-DER is **not** a shared 0DTE training system owner for
+market/forecast pipelines. The Dojo belongs to SPY-DER; 0DTE keeps market
+infrastructure + dashboard and consumes SPY-DER through versioned contracts.
+See `docs/OWNERSHIP_BOUNDARY.md` and `docs/DOJO_MIGRATION.md`.
+
+### Ownership-boundary Dojo migration — Phase 1
+
+Deliverables:
+
+- ✅ Versioned contracts — `MarketPacket` / `OutcomePacket` / `DashboardPacket`
+  / decision request+response (`spy_der.contracts.integration`).
+- ✅ Experience-provider protocols — `MarketExperienceProvider`,
+  `SyntheticUniverseProvider`, `CandidateEvaluator`.
+- ✅ Protocol-driven Dojo package — `spy_der.dojo` (no 0DTE internal imports).
+- ✅ Adaptive learning staging — `spy_der.learning` (pending_review only).
+- ✅ Local HTTP decision service — `POST /v1/decision` + `HttpDecisionClient`.
+- ✅ Deploy units — `spy-der-agent.service`, `spy-der-dojo-{daily,recent,weekly}.*`.
+- ⏳ Full 0DTE `dojo.py` behavioral parity via CandidateEvaluator — deferred.
+- ⏳ 0DTE repo deletions + thin dashboard adapter land — requires 0DTE PR.
+
+See `migrations/manifests/ownership-boundary-dojo.json`.
+
+---
+
 **Phase 17 — Controlled cutover: COMPLETE** (owner approved: "Phase 17 activate.").
 
-System B is the primary research/shadow runtime. System A is retained rollback.
-Agent authority is independently controlled. Live execution remains disabled.
+System B research/parity scaffold remains. Live execution remains disabled.
+Production ownership of market/forecast/candidate pipelines stays with 0DTE.
 
 ### Phase 17 — Controlled cutover: COMPLETE
 
@@ -501,29 +527,28 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-**Migration phases 0–17 are COMPLETE** per spec §63.
+**Ownership-boundary migration Phase 2+** (after Phase 1 contracts landed):
 
-System B is the primary research/shadow runtime under controlled cutover.
-Live trading authority remains excluded. Optional engineering follow-ons:
+1. Cut 0DTE shadow loop from in-process `decide_shadow_tick` to
+   `HttpDecisionClient` → `POST /v1/decision`.
+2. Publish 0DTE experience packets into `/var/lib/spy-der/inbox/experience`.
+3. Dual-run `spy-der-dojo-*` timers; then delete 0DTE `dojo.py` /
+   `zerodte-dojo-*` via an 0DTE PR (this agent cannot push there).
+4. Wire `CandidateEvaluator` / `SyntheticUniverseProvider` adapters so Dojo
+   universe P&L scoring matches the former 0DTE matrix_universe behavior.
+5. Land 0DTE `integrations/spy_der/dashboard_reader.py` per
+   `docs/ops/0DTE_DASHBOARD_ADAPTER.md`.
 
-1. Continuous VPS runner publishing `PrimaryResearchRuntime.live_state()`.
-2. 0DTE Vercel dashboard parallel panel for `system_b_grok`.
+Research phases 0–17 remain COMPLETE for the in-repo parity scaffold.
+Live trading authority remains excluded.
 
-Phases 1-17 complete:
-`spy_der.market_data`, `spy_der.features`, `spy_der.legacy`,
-`spy_der.training`, `spy_der.evaluation`, `spy_der.forecasting`,
-`spy_der.candidates`, `spy_der.economics`, `spy_der.candidate_value`,
-`spy_der.policies`, `spy_der.synthesis`, `spy_der.agents`, `spy_der.risk`,
-`spy_der.execution`, `spy_der.positions`, `spy_der.journal`,
-`spy_der.replay`, `spy_der.deployment` (incl. cutover), and `spy_der.runtime`.
-
-Per-run instruction for every subsequent phase (spec §70):
+Per-run instruction:
 
 ```
-Read docs/SPY_DER_MASTER_SPEC.md and docs/CODEX_HANDOFF_STATE.md.
-Execute Phase <NUMBER> only.
-Do not work on later phases.
-Update docs/CODEX_HANDOFF_STATE.md and the phase migration manifest.
+Read docs/OWNERSHIP_BOUNDARY.md, docs/DOJO_MIGRATION.md,
+and docs/CODEX_HANDOFF_STATE.md.
+Execute the next ownership-boundary phase only.
+Update docs/CODEX_HANDOFF_STATE.md and the migration manifest.
 Run the required tests.
 Report changed files, results, blockers, and rollback.
 ```
