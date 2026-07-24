@@ -1,0 +1,67 @@
+{
+  "phase": "dojo-phase4-evaluation",
+  "phase_name": "Wire CandidateEvaluator + functional Dojo scoring",
+  "spec_reference": "docs/OWNERSHIP_BOUNDARY.md, docs/DOJO_MIGRATION.md Phase 4",
+  "source_repository": "DGator86/SPY-DER",
+  "target_repository": "DGator86/SPY-DER",
+  "generated_at": "2026-07-24T23:30:00Z",
+  "files_inspected": [
+    "src/spy_der/dojo/runner.py",
+    "src/spy_der/dojo/universe.py",
+    "src/spy_der/dojo/sequential.py",
+    "src/spy_der/dojo/evaluation.py",
+    "docs/OWNERSHIP_BOUNDARY.md",
+    "docs/DOJO_MIGRATION.md"
+  ],
+  "files_migrated": [
+    "FIX docs/OWNERSHIP_BOUNDARY.md (Dojo sole-ownership sentence)",
+    "NEW src/spy_der/dojo/authority.py",
+    "NEW src/spy_der/dojo/decisions.py",
+    "NEW src/spy_der/dojo/outcomes.py",
+    "EXTEND src/spy_der/dojo/evaluation.py (rich metrics + OutcomeCandidateEvaluator)",
+    "EXTEND src/spy_der/dojo/recorded.py",
+    "EXTEND src/spy_der/dojo/universe.py",
+    "EXTEND src/spy_der/dojo/sequential.py",
+    "EXTEND src/spy_der/dojo/runner.py (stop discarding evaluator)",
+    "EXTEND src/spy_der/dojo/protocols.py (DecisionAuthority)",
+    "EXTEND src/spy_der/learning/learner.py (gated staging)",
+    "EXTEND src/spy_der/learning/memories.py (failure episodes)",
+    "NEW tests/unit/test_dojo_phase4.py",
+    "UPDATE docs/DOJO_MIGRATION.md + docs/ops/dojo.md"
+  ],
+  "files_deferred": [
+    "0DTE deletion of dojo.py / zerodte-dojo-* and thin dashboard adapter (0DTE PR)",
+    "Production SyntheticUniverseProvider backed by 0DTE matrix_universe",
+    "VPS systemd cutover from zerodte-dojo-* to spy-der-dojo-*"
+  ],
+  "behavior_preserved": [
+    "Dojo never auto-promotes; stages pending_review only after gates.",
+    "Live trading remains disabled.",
+    "Offline Dojo defaults to deterministic agents (no Grok spend)."
+  ],
+  "intentional_changes": [
+    "CandidateEvaluator is wired through recorded, sequential, and universe phases.",
+    "Champion / challenger / baseline DecisionAuthority scoring is first-class.",
+    "OWNERSHIP_BOUNDARY.md no longer implies SPY-DER does not own the Dojo."
+  ],
+  "deliverables": [
+    "docs/OWNERSHIP_BOUNDARY.md",
+    "src/spy_der/dojo/authority.py",
+    "src/spy_der/dojo/evaluation.py",
+    "src/spy_der/dojo/runner.py",
+    "tests/unit/test_dojo_phase4.py"
+  ],
+  "tests": [
+    {"name": "ruff check dojo/learning", "result": "pass"},
+    {"name": "mypy src/spy_der/dojo src/spy_der/learning", "result": "pass"},
+    {"name": "pytest tests/unit (incl. test_dojo_phase4)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "0DTE still hosts the original dojo.py until an 0DTE PR lands.",
+    "Synthetic scoring requires labeled MarketPacket.forecast outcomes or a 0DTE outcome adapter."
+  ],
+  "rollback": [
+    "Revert this branch. Phase-1 ownership scaffold remains intact."
+  ],
+  "next_phase": "0DTE PR: delete AI/Dojo ownership and land thin packet publishers + HTTP decision client; then VPS cutover."
+}

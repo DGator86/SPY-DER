@@ -40,8 +40,9 @@ def optimize_with_holdout(
 ) -> OptimizationResult:
     """Select a hypothesis without writing champion state.
 
-    Full search against 0DTE CandidateEvaluator is Phase-4 work. Until then,
-    pick the highest-priority hypothesis when enough experience exists.
+    Holdout search uses the experience summary already scored by
+    CandidateEvaluator in the recorded / sequential phases. Full multi-trial
+    counterfactual search against a 0DTE backtest adapter can deepen this later.
     """
     if holdout <= 0.0 or holdout >= 1.0:
         return OptimizationResult(

@@ -7,11 +7,13 @@ The Dojo consumes 0DTE market experience only through
 """
 
 from spy_der.dojo.config import DojoConfig
+from spy_der.dojo.evaluation import OutcomeCandidateEvaluator
 from spy_der.dojo.runner import run_dojo
 from spy_der.dojo.sequential import SequentialDojoConfig, run_sequential_dojo
 
 __all__ = [
     "DojoConfig",
+    "OutcomeCandidateEvaluator",
     "SequentialDojoConfig",
     "run_dojo",
     "run_sequential_dojo",

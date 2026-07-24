@@ -1,9 +1,10 @@
 """Protocol-driven Dojo runner — SPY-DER owned, no 0DTE internal imports.
 
 Phases:
-  1. recorded  — MarketExperienceProvider baseline
-  2. learner   — adaptive learning cycle (stages pending_review only)
-  3. universe  — SyntheticUniverseProvider sparring
+  1. recorded   — MarketExperienceProvider + DecisionAuthority scoring
+  2. sequential — leak-free blind-day forward transfer / retention
+  3. learner    — adaptive learning cycle (stages pending_review only)
+  4. universe   — SyntheticUniverseProvider sparring with AI scoring
 
 Promotion never happens here. Reports land under /var/lib/spy-der/reports/dojo.
 """
@@ -17,16 +18,21 @@ import time
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from spy_der.dojo.authority import default_authorities
 from spy_der.dojo.config import DEFAULT_CONFIGS_DIR, DEFAULT_REPORTS_DIR, DojoConfig
+from spy_der.dojo.evaluation import OutcomeCandidateEvaluator
 from spy_der.dojo.protocols import (
     CandidateEvaluator,
+    DecisionAuthority,
     MarketExperienceProvider,
     SyntheticUniverseProvider,
 )
 from spy_der.dojo.recorded import run_recorded_phase
 from spy_der.dojo.reports import persist_dojo_report
+from spy_der.dojo.sequential import SequentialDojoConfig, run_sequential_dojo
 from spy_der.dojo.universe import run_universe_phase
 from spy_der.learning.learner import run_learning_cycle
+from spy_der.learning.memories import append_failure_episode, append_lesson
 
 __all__ = ["main", "run_dojo"]
 
@@ -35,6 +41,7 @@ ET = ZoneInfo("America/New_York")
 
 def _build_flags(
     recorded: dict[str, Any],
+    sequential: dict[str, Any],
     learner: dict[str, Any],
     universe: dict[str, Any],
 ) -> list[dict[str, str]]:
@@ -47,12 +54,37 @@ def _build_flags(
                 "detail": str(recorded.get("note", "")),
             }
         )
+    if sequential.get("status") == "insufficient_data":
+        flags.append(
+            {
+                "severity": "info",
+                "flag": "sequential_insufficient",
+                "detail": str(sequential.get("note", "")),
+            }
+        )
+    retention = sequential.get("retention") or {}
+    if retention and not retention.get("ok", True):
+        flags.append(
+            {
+                "severity": "warn",
+                "flag": "retention_regression",
+                "detail": str(retention.get("detail", "")),
+            }
+        )
     if learner.get("outcome") == "promotion_recommended":
         flags.append(
             {
                 "severity": "info",
                 "flag": "promotion_pending_review",
                 "detail": "learner staged a candidate — human promoter required",
+            }
+        )
+    if learner.get("outcome") == "gated":
+        flags.append(
+            {
+                "severity": "warn",
+                "flag": "staging_gated",
+                "detail": str(learner.get("note", "promotion gates failed")),
             }
         )
     if universe.get("status") == "insufficient_data":
@@ -83,12 +115,14 @@ def _build_flags(
 
 def _summary_text(
     recorded: dict[str, Any],
+    sequential: dict[str, Any],
     learner: dict[str, Any],
     universe: dict[str, Any],
     flags: list[dict[str, str]],
 ) -> str:
     parts = [
         f"recorded tape: {recorded.get('status')}",
+        f"sequential: {sequential.get('status')}",
         f"learner: {learner.get('outcome', learner.get('status'))}",
     ]
     if universe.get("status") == "ok":
@@ -102,21 +136,105 @@ def _summary_text(
     return " · ".join(parts)
 
 
+def _persist_lessons(
+    state_root: str,
+    recorded: dict[str, Any],
+    sequential: dict[str, Any],
+    universe: dict[str, Any],
+) -> list[str]:
+    """Write AI lessons / failure episodes from scored phases."""
+    written: list[str] = []
+    evaluation = recorded.get("evaluation") or {}
+    if evaluation.get("status") == "ok" and evaluation.get("total_pnl") is not None:
+        if float(evaluation["total_pnl"]) < 0:
+            lesson = append_lesson(
+                state_root,
+                lesson_id=f"recorded-neg-pnl-{recorded.get('n_sessions', 0)}",
+                text=(
+                    f"Recorded tape total P&L {evaluation['total_pnl']:+.4f} "
+                    f"over {evaluation.get('trades', 0)} trades"
+                ),
+                tags=("recorded", "negative_pnl"),
+            )
+            written.append(lesson.lesson_id)
+            episode = append_failure_episode(
+                state_root,
+                episode_id=f"fail-recorded-{recorded.get('n_sessions', 0)}",
+                summary=lesson.text,
+                details={
+                    "phase": "recorded",
+                    "evaluation": evaluation,
+                    "forward_transfer": recorded.get("forward_transfer"),
+                },
+            )
+            written.append(episode.episode_id)
+
+    retention = sequential.get("retention") or {}
+    if retention and not retention.get("ok", True):
+        lesson = append_lesson(
+            state_root,
+            lesson_id="sequential-forgetting",
+            text=str(retention.get("detail") or "retention regression"),
+            tags=("sequential", "forgetting"),
+        )
+        written.append(lesson.lesson_id)
+
+    for arch, metrics in (universe.get("archetype_matrix") or {}).items():
+        mean = metrics.get("mean_session_pnl")
+        if (
+            metrics.get("n_sessions", 0) >= 3
+            and mean is not None
+            and float(mean) < 0
+        ):
+            lesson = append_lesson(
+                state_root,
+                lesson_id=f"weak-archetype-{arch}",
+                text=f"Weak synthetic archetype {arch}: mean session P&L {float(mean):+.4f}",
+                tags=("universe", "weak_archetype", arch),
+            )
+            written.append(lesson.lesson_id)
+    return written
+
+
 def run_dojo(
     cfg: DojoConfig | None = None,
     *,
     experience: MarketExperienceProvider | None = None,
     synthetic: SyntheticUniverseProvider | None = None,
     evaluator: CandidateEvaluator | None = None,
+    authorities: dict[str, DecisionAuthority] | None = None,
+    skip_sequential: bool = False,
+    challenger_changes: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run the three Dojo phases. ``evaluator`` is reserved for Phase-4 wiring."""
-    del evaluator  # attached in a later phase when 0DTE backtest adapter lands
+    """Run recorded / sequential / learner / universe with CandidateEvaluator wired."""
     cfg = cfg or DojoConfig()
     report_date = cfg.report_date or dt.datetime.now(ET).date().isoformat()
     cfg.report_date = report_date
     started = time.time()
 
-    recorded = run_recorded_phase(cfg, experience)
+    scorer: CandidateEvaluator = evaluator or OutcomeCandidateEvaluator()
+    authority_set = authorities or default_authorities(
+        challenger_changes=challenger_changes
+    )
+
+    recorded = run_recorded_phase(
+        cfg,
+        experience,
+        authorities=authority_set,
+        evaluator=scorer,
+    )
+    sequential = (
+        {"status": "skipped", "note": "skip_sequential"}
+        if skip_sequential
+        else run_sequential_dojo(
+            experience,
+            cfg=SequentialDojoConfig(
+                min_warm_sessions=max(2, cfg.min_sessions - 1),
+            ),
+            authorities=authority_set,
+            evaluator=scorer,
+        )
+    )
     learner = (
         {"status": "skipped", "note": "skip_learner"}
         if cfg.skip_learner
@@ -126,18 +244,50 @@ def run_dojo(
             experience=experience,
             trials=cfg.learn_trials,
             holdout=cfg.learn_holdout,
+            authorities=authority_set,
+            evaluator=scorer,
+            sequential_result=sequential,
+            recorded_result=recorded,
         )
     )
-    universe = run_universe_phase(cfg, synthetic)
+    # If learner staged a challenger, re-score universe with those changes too.
+    staged_changes: dict[str, Any] | None = None
+    if learner.get("outcome") == "promotion_recommended":
+        optimization = learner.get("optimization")
+        selected = (
+            optimization.get("selected") if isinstance(optimization, dict) else None
+        )
+        if isinstance(selected, dict):
+            change = selected.get("change")
+            if isinstance(change, dict):
+                staged_changes = dict(change)
+    universe_authorities = (
+        default_authorities(challenger_changes=staged_changes)
+        if staged_changes
+        else authority_set
+    )
+    universe = run_universe_phase(
+        cfg,
+        synthetic,
+        authorities=universe_authorities,
+        evaluator=scorer,
+    )
 
-    flags = _build_flags(recorded, learner, universe)
-    summary = _summary_text(recorded, learner, universe, flags)
+    from pathlib import Path
+
+    state_root = str(Path(cfg.configs_dir).parent)
+    lessons = _persist_lessons(state_root, recorded, sequential, universe)
+
+    flags = _build_flags(recorded, sequential, learner, universe)
+    summary = _summary_text(recorded, sequential, learner, universe, flags)
     metrics = {
         "phases": {
             "recorded": recorded,
+            "sequential": sequential,
             "learner": learner,
             "universe": universe,
         },
+        "lessons_written": lessons,
         "elapsed_s": round(time.time() - started, 1),
         "config": {
             "wf_folds": cfg.wf_folds,
@@ -148,6 +298,7 @@ def run_dojo(
             "universe_days": cfg.universe_days,
             "recent_days": cfg.recent_days,
             "catalog_seed": cfg.catalog_seed,
+            "authorities": sorted(authority_set.keys()),
         },
     }
     paths = persist_dojo_report(
@@ -169,8 +320,8 @@ def run_dojo(
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=(
-            "SPY-DER Dojo — protocol-driven recorded / learner / universe "
-            "training. Never auto-promotes."
+            "SPY-DER Dojo — protocol-driven recorded / sequential / learner / "
+            "universe training. Never auto-promotes."
         )
     )
     ap.add_argument("--reports-dir", default=DEFAULT_REPORTS_DIR)
@@ -179,6 +330,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skip-recorded", action="store_true")
     ap.add_argument("--skip-learner", action="store_true")
     ap.add_argument("--skip-universe", action="store_true")
+    ap.add_argument("--skip-sequential", action="store_true")
     ap.add_argument("--folds", type=int, default=3)
     ap.add_argument("--trials", type=int, default=15)
     ap.add_argument("--universes", type=int, default=6)
@@ -213,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
         catalog_seed=args.seed,
         recent_days=args.recent_days,
     )
-    out = run_dojo(cfg, experience=experience)
+    out = run_dojo(cfg, experience=experience, skip_sequential=args.skip_sequential)
     print(f"\n  dojo report ({out['report_date']})")
     print(f"  {out['summary']}")
     for flag in out["flags"]:
