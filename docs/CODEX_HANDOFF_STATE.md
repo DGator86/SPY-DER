@@ -17,14 +17,14 @@ be overridden here.
 
 ## Current Phase
 
-**Ownership-boundary Dojo migration — Phase 1 COMPLETE (scaffold + contracts).**
+**Dojo Phase 4 — CandidateEvaluator functional wiring (in progress / this PR).**
 
 Owner correction: SPY-DER is **not** a shared 0DTE training system owner for
 market/forecast pipelines. The Dojo belongs to SPY-DER; 0DTE keeps market
 infrastructure + dashboard and consumes SPY-DER through versioned contracts.
 See `docs/OWNERSHIP_BOUNDARY.md` and `docs/DOJO_MIGRATION.md`.
 
-### Ownership-boundary Dojo migration — Phase 1
+### Ownership-boundary Dojo migration — Phase 1 (COMPLETE)
 
 Deliverables:
 
@@ -36,10 +36,21 @@ Deliverables:
 - ✅ Adaptive learning staging — `spy_der.learning` (pending_review only).
 - ✅ Local HTTP decision service — `POST /v1/decision` + `HttpDecisionClient`.
 - ✅ Deploy units — `spy-der-agent.service`, `spy-der-dojo-{daily,recent,weekly}.*`.
-- ⏳ Full 0DTE `dojo.py` behavioral parity via CandidateEvaluator — deferred.
-- ⏳ 0DTE repo deletions + thin dashboard adapter land — requires 0DTE PR.
 
 See `migrations/manifests/ownership-boundary-dojo.json`.
+
+### Dojo Phase 4 — CandidateEvaluator wiring
+
+- ✅ Wire `CandidateEvaluator` through recorded / sequential / universe phases.
+- ✅ Champion / challenger / deterministic baseline decision lanes.
+- ✅ Synthetic-universe P&L, win rate, directional accuracy (no longer null).
+- ✅ Sequential blind-day scoring + forward transfer + retention panel.
+- ✅ Lessons + failure episodes under `/var/lib/spy-der`.
+- ✅ Stage pending_review only after complete gates.
+- ⏳ 0DTE repo deletions + thin dashboard adapter — requires 0DTE PR.
+- ⏳ VPS cutover (`zerodte-dojo-*` → `spy-der-dojo-*`) — after 0DTE cleanup.
+
+See `migrations/manifests/dojo-phase4-evaluator.json`.
 
 ---
 
@@ -527,17 +538,18 @@ Phase 0 deliverables (spec §63) — all produced against real, pinned source:
 
 ## Next Phase
 
-**Ownership-boundary migration Phase 2+** (after Phase 1 contracts landed):
+**0DTE cleanup + VPS cutover** (SPY-DER Phase 4 functional Dojo is landed):
 
 1. Cut 0DTE shadow loop from in-process `decide_shadow_tick` to
    `HttpDecisionClient` → `POST /v1/decision`.
-2. Publish 0DTE experience packets into `/var/lib/spy-der/inbox/experience`.
+2. Publish 0DTE experience / outcome packets into SPY-DER inbox paths.
 3. Dual-run `spy-der-dojo-*` timers; then delete 0DTE `dojo.py` /
-   `zerodte-dojo-*` via an 0DTE PR (this agent cannot push there).
-4. Wire `CandidateEvaluator` / `SyntheticUniverseProvider` adapters so Dojo
-   universe P&L scoring matches the former 0DTE matrix_universe behavior.
-5. Land 0DTE `integrations/spy_der/dashboard_reader.py` per
+   `sequential_dojo.py` / `adaptive_learning/` / `zerodte-dojo-*` via an 0DTE PR
+   (this agent cannot push there).
+4. Land 0DTE thin adapters: market/outcome publishers + dashboard reader per
    `docs/ops/0DTE_DASHBOARD_ADAPTER.md`.
+5. VPS: `disable --now zerodte-dojo-*.timer`; `enable --now spy-der-agent` +
+   `spy-der-dojo-*.timer`; move state under `/var/lib/spy-der`.
 
 Research phases 0–17 remain COMPLETE for the in-repo parity scaffold.
 Live trading authority remains excluded.

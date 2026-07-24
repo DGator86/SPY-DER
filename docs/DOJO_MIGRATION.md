@@ -102,7 +102,7 @@ or queries the SPY-DER HTTP service. It must not know provider, model IDs as
 internals, prompts, Dojo training logic, or promotion mechanics beyond the
 dashboard contract fields.
 
-## Status in this PR
+## Status
 
 | Item | Status |
 |---|---|
@@ -113,5 +113,12 @@ dashboard contract fields.
 | Learning staging scaffold | Done |
 | HTTP `/v1/decision` service | Done |
 | `spy-der-dojo-*` deploy units | Done |
-| Full port of 0DTE `dojo.py` behavior | Deferred — needs Phase-4 providers |
+| CandidateEvaluator wired (champion / challenger / baseline) | Done (Phase 4) |
+| Recorded-tape AI scoring | Done (Phase 4) |
+| Synthetic-universe P&L / win-rate / dir-hit | Done (Phase 4) |
+| Sequential blind-day decision → FT → retention | Done (Phase 4) |
+| Lessons + failure-episode persistence | Done (Phase 4) |
+| Staging only after complete gates | Done (Phase 4) |
+| Full port of every 0DTE `dojo.py` backtest quirk | Partial — uses OutcomeMatchingEvaluator; optional 0DTE backtest adapter still pluggable |
 | 0DTE repo deletions / thin adapter land | Deferred — requires 0DTE PR (this agent cannot push there) |
+| VPS cutover to `spy-der-dojo-*` timers | Deferred — after 0DTE cleanup PR |
