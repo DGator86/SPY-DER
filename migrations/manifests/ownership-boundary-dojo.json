@@ -60,7 +60,11 @@
     "tests/unit/test_dojo_ownership.py",
     "tests/unit/test_decision_service.py"
   ],
-  "tests": [],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy on new ownership-boundary modules", "result": "pass"},
+    {"name": "pytest (253 tests)", "result": "pass"}
+  ],
   "known_gaps": [
     "0DTE still hosts the original dojo.py until an 0DTE PR lands.",
     "Universe robustness P&L matrix remains null until CandidateEvaluator is wired."

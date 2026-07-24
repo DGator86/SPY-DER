@@ -17,7 +17,7 @@ be overridden here.
 
 ## Current Phase
 
-**Ownership-boundary Dojo migration — Phase 1 IN PROGRESS / scaffold landed.**
+**Ownership-boundary Dojo migration — Phase 1 COMPLETE (scaffold + contracts).**
 
 Owner correction: SPY-DER is **not** a shared 0DTE training system owner for
 market/forecast pipelines. The Dojo belongs to SPY-DER; 0DTE keeps market
