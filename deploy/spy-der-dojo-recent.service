@@ -1,0 +1,37 @@
+[Unit]
+# Mon/Wed/Fri: last 10 recorded sessions + medium universe sparring.
+# Never auto-promotes.
+Description=SPY-DER dojo — recent-10-day review
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=spy-der
+Group=spy-der
+WorkingDirectory=/opt/spy-der
+EnvironmentFile=-/etc/spy-der/spy-der.env
+EnvironmentFile=-/etc/zerodte/zerodte.env
+StateDirectory=spy-der
+Environment=SPY_DER_STATE_ROOT=%S/spy-der
+ExecStart=/opt/spy-der/venv/bin/spy-der dojo \
+    --reports-dir /var/lib/spy-der/reports/dojo \
+    --configs-dir /var/lib/spy-der/configs \
+    --experience-dir /var/lib/spy-der/inbox/experience \
+    --recent-days 10 \
+    --days 10 \
+    --universes 8 \
+    --generations 2 \
+    --trials 15
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/spy-der
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spy-der-dojo-recent
+
+SuccessExitStatus=0

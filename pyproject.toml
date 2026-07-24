@@ -28,6 +28,8 @@ dev = [
 spy-der = "spy_der.cli:main"
 spy-der-vps-runner = "spy_der.runtime.runner:main"
 spy-der-ai-check = "spy_der.runtime.ai_check:main"
+spy-der-decision-service = "spy_der.runtime.decision_service:main"
+spy-der-dojo = "spy_der.runtime.dojo_runner:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

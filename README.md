@@ -1,23 +1,18 @@
-# System B Foundation
+# SPY-DER
 
-This repository contains the initial architecture scaffold for **System B**, a typed, deterministic, testable reorganization of the existing 0DTE options research stack.
+SPY-DER owns **decision intelligence** for the SPY 0DTE stack: AI agents, Dojo
+training, adaptive learning, promotion governance, and the local decision
+service consumed by `DGator86/0DTE`.
 
-## Included in this PR
+See `docs/OWNERSHIP_BOUNDARY.md` for the repository boundary.
 
-- Python 3.12 `src/` package layout (`system_b`)
-- Immutable canonical contracts and schema versions
-- Interfaces/protocols for core subsystems
-- Deterministic serialization and replay scaffolding
-- Safety checks for vetoes, risk envelopes, and state transitions
-- Unit tests for required invariants
-- CI for ruff, mypy (strict), and pytest+coverage
+## Package highlights
 
-## Intentionally not included
-
-- No live brokerage integration
-- No order submission capability
-- No fabricated predictive models
-- No autonomous trading authority
+- `spy_der.agents` / `spy_der.decisions` — provider-neutral decision agents
+- `spy_der.dojo` — protocol-driven Dojo (no 0DTE internal imports)
+- `spy_der.learning` — diagnose / optimize / stage `pending_review`
+- `spy_der.contracts.integration` — versioned 0DTE ↔ SPY-DER packets
+- `spy_der.runtime.decision_service` — `POST /v1/decision` on localhost:8787
 
 ## Local checks
 
@@ -27,3 +22,9 @@ python -m ruff check .
 python -m mypy src
 python -m pytest
 ```
+
+## Intentionally not included
+
+- No live brokerage integration
+- No autonomous promotion (human ack required)
+- No in-process ownership of 0DTE market/forecast pipelines

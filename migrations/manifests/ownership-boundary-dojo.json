@@ -1,0 +1,76 @@
+{
+  "phase": "ownership-boundary-dojo",
+  "phase_name": "Correct ownership boundary + Dojo migration Phase 1",
+  "spec_reference": "docs/OWNERSHIP_BOUNDARY.md, docs/DOJO_MIGRATION.md",
+  "source_repository": "DGator86/0DTE",
+  "target_repository": "DGator86/SPY-DER",
+  "generated_at": "2026-07-24T22:40:00Z",
+  "files_inspected": [
+    "0DTE:dojo.py",
+    "0DTE:sequential_dojo.py",
+    "0DTE:spy_der_bridge.py",
+    "0DTE:deploy/zerodte-dojo-*",
+    "0DTE:adaptive_learning/*",
+    "SPY-DER:integrations/zerodte/provider.py"
+  ],
+  "files_migrated": [
+    "NEW docs/OWNERSHIP_BOUNDARY.md",
+    "NEW docs/DOJO_MIGRATION.md",
+    "NEW docs/ops/dojo.md",
+    "NEW docs/ops/0DTE_DASHBOARD_ADAPTER.md",
+    "NEW src/spy_der/contracts/integration.py",
+    "NEW src/spy_der/dojo/*",
+    "NEW src/spy_der/learning/*",
+    "NEW src/spy_der/decisions/__init__.py",
+    "NEW src/spy_der/integrations/zerodte/contracts.py",
+    "NEW src/spy_der/integrations/zerodte/client.py",
+    "NEW src/spy_der/integrations/zerodte/recorded_feed.py",
+    "NEW src/spy_der/integrations/zerodte/result_publisher.py",
+    "NEW src/spy_der/runtime/decision_service.py",
+    "NEW src/spy_der/runtime/dojo_runner.py",
+    "NEW deploy/spy-der-agent.service",
+    "NEW deploy/spy-der-dojo-{daily,recent,weekly}.{service,timer}",
+    "EXTEND spy_der.cli + pyproject scripts",
+    "EXTEND contracts/__init__.py + integrations/zerodte/__init__.py"
+  ],
+  "files_deferred": [
+    "Full behavioral port of 0DTE dojo.py universe P&L scoring (needs CandidateEvaluator adapter)",
+    "0DTE deletion of dojo.py / zerodte-dojo-* and thin dashboard adapter land (cannot push to 0DTE)",
+    "SyntheticUniverseProvider backed by 0DTE matrix_universe",
+    "Complete adaptive_learning/* feature_lab / stability port"
+  ],
+  "behavior_preserved": [
+    "Dojo never auto-promotes; stages pending_review only.",
+    "Live trading remains disabled.",
+    "In-process decide_shadow_tick retained for migration compatibility."
+  ],
+  "intentional_changes": [
+    "Dojo ownership moved to SPY-DER package with experience-provider protocols.",
+    "Preferred 0DTE integration is local HTTP POST /v1/decision.",
+    "State paths retargeted to /var/lib/spy-der."
+  ],
+  "deliverables": [
+    "docs/OWNERSHIP_BOUNDARY.md",
+    "src/spy_der/contracts/integration.py",
+    "src/spy_der/dojo/",
+    "src/spy_der/learning/",
+    "src/spy_der/runtime/decision_service.py",
+    "deploy/spy-der-dojo-*.service",
+    "tests/unit/test_integration_contracts.py",
+    "tests/unit/test_dojo_ownership.py",
+    "tests/unit/test_decision_service.py"
+  ],
+  "tests": [
+    {"name": "ruff check .", "result": "pass"},
+    {"name": "mypy on new ownership-boundary modules", "result": "pass"},
+    {"name": "pytest (253 tests)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "0DTE still hosts the original dojo.py until an 0DTE PR lands.",
+    "Universe robustness P&L matrix remains null until CandidateEvaluator is wired."
+  ],
+  "rollback": [
+    "Revert this branch. Prior Phase 0-17 research scaffold is unaffected."
+  ],
+  "next_phase": "Phase 2/3: cut 0DTE over to HTTP decision client; delete 0DTE Dojo units after VPS dual-run."
+}
