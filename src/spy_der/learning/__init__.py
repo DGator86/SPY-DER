@@ -1,6 +1,6 @@
 """SPY-DER adaptive learning — diagnoses, staging, human-gated promotion."""
 
-from spy_der.learning.learner import run_learning_cycle
+from spy_der.learning.learner import run_learning_cycle, staging_gates_pass
 from spy_der.learning.promotion import (
     list_pending,
     promote_pending,
@@ -14,4 +14,5 @@ __all__ = [
     "reject_pending",
     "run_learning_cycle",
     "stage_pending_review",
+    "staging_gates_pass",
 ]

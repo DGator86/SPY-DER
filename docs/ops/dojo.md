@@ -5,9 +5,10 @@
 
 The Dojo compresses market experience into one run:
 
-1. **recorded** — walk `MarketExperienceProvider` snapshots / outcomes
-2. **learner** — diagnose → hypothesize → optimize (holdout) → stage `pending_review`
-3. **universe** — spar against `SyntheticUniverseProvider` packets
+1. **recorded** — walk `MarketExperienceProvider`; score champion / challenger / baseline via `CandidateEvaluator`
+2. **sequential** — leak-free blind-day forward transfer + retention panel
+3. **learner** — diagnose → hypothesize → optimize (holdout) → stage `pending_review` only if gates pass
+4. **universe** — spar against `SyntheticUniverseProvider` packets with the same AI scoring path
 
 It never writes `champion.json`. Promotion is human-gated.
 

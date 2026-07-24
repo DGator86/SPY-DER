@@ -16,6 +16,7 @@ from spy_der.contracts.integration import MarketPacket, OutcomePacket
 
 __all__ = [
     "CandidateEvaluator",
+    "DecisionAuthority",
     "DecisionRecord",
     "EvaluationReport",
     "MarketExperienceProvider",
@@ -35,9 +36,14 @@ class UniverseSpec(Protocol):
 
 
 class DecisionRecord(Protocol):
-    snapshot_id: str
-    action: str
-    candidate_id: str | None
+    @property
+    def snapshot_id(self) -> str: ...
+
+    @property
+    def action(self) -> str: ...
+
+    @property
+    def candidate_id(self) -> str | None: ...
 
 
 class EvaluationReport(Protocol):
@@ -63,6 +69,15 @@ class SyntheticUniverseProvider(Protocol):
     """Synthetic market snapshots owned/exposed by 0DTE."""
 
     def generate(self, specification: UniverseSpec) -> Iterable[MarketPacket]: ...
+
+
+class DecisionAuthority(Protocol):
+    """SPY-DER decision maker used by recorded / universe / sequential phases."""
+
+    @property
+    def name(self) -> str: ...
+
+    def decide(self, market: MarketPacket) -> DecisionRecord: ...
 
 
 class CandidateEvaluator(Protocol):
