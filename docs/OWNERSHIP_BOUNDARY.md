@@ -1,8 +1,9 @@
 # Ownership Boundary — 0DTE ↔ SPY-DER
 
 This document corrects the repository ownership boundary. It supersedes any
-reading of `SPY_DER_MASTER_SPEC.md` that treats SPY-DER as the sole owner of
-market-data ingestion, forecasting, candidate generation, or the Dojo.
+reading of `SPY_DER_MASTER_SPEC.md` that treats SPY-DER as the owner of
+market-data ingestion, forecasting, or candidate generation, and confirms that
+SPY-DER is the sole owner of the Dojo and all AI decision intelligence.
 
 SPY-DER owns **decision intelligence**. 0DTE owns **market infrastructure** and
 the existing Vercel dashboard. Integration is only through versioned contracts.

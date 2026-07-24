@@ -1,0 +1,40 @@
+{
+  "phase": "dojo-phase4-evaluator",
+  "phase_name": "Wire CandidateEvaluator and complete functional Dojo scoring",
+  "spec_reference": "docs/OWNERSHIP_BOUNDARY.md, docs/DOJO_MIGRATION.md Phase 4",
+  "source_repository": "DGator86/0DTE",
+  "target_repository": "DGator86/SPY-DER",
+  "generated_at": "2026-07-24T23:30:00Z",
+  "files_migrated": [
+    "NEW src/spy_der/dojo/decisions.py",
+    "NEW src/spy_der/dojo/evaluator.py",
+    "EXTEND src/spy_der/dojo/evaluation.py",
+    "EXTEND src/spy_der/dojo/recorded.py",
+    "EXTEND src/spy_der/dojo/universe.py",
+    "EXTEND src/spy_der/dojo/sequential.py",
+    "EXTEND src/spy_der/dojo/runner.py",
+    "EXTEND src/spy_der/learning/learner.py",
+    "EXTEND src/spy_der/learning/memories.py",
+    "EXTEND src/spy_der/learning/optimization.py",
+    "FIX docs/OWNERSHIP_BOUNDARY.md Dojo ownership sentence",
+    "EXTEND docs/DOJO_MIGRATION.md status",
+    "NEW tests/unit/test_dojo_phase4_evaluator.py"
+  ],
+  "behavior_preserved": [
+    "Dojo never auto-promotes; stages pending_review only after gates.",
+    "Live trading remains disabled.",
+    "No 0DTE internal imports from spy_der.dojo."
+  ],
+  "intentional_changes": [
+    "CandidateEvaluator is used instead of being discarded.",
+    "Champion / challenger / baseline lanes score recorded and synthetic packets.",
+    "Sequential Dojo runs blind-day decisions and computes forward transfer.",
+    "Universe archetype matrix fills real P&L, win rate, and directional accuracy."
+  ],
+  "known_gaps": [
+    "0DTE still hosts original dojo.py until an 0DTE cleanup PR lands.",
+    "Optional 0DTE strategy-backtest CandidateEvaluator adapter not yet provided by 0DTE.",
+    "VPS timer cutover still requires disabling zerodte-dojo-* after dual-run."
+  ],
+  "next_phase": "0DTE PR: delete AI/Dojo ownership; thin market/outcome publishers + HTTP decision client; then VPS cutover."
+}

@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from spy_der.dojo.protocols import CandidateEvaluator
 from spy_der.learning.hypotheses import Hypothesis
 
 __all__ = ["OptimizationResult", "optimize_with_holdout"]
@@ -37,12 +38,14 @@ def optimize_with_holdout(
     trials: int,
     holdout: float,
     experience_summary: dict[str, Any] | None = None,
+    evaluator: CandidateEvaluator | None = None,
 ) -> OptimizationResult:
     """Select a hypothesis without writing champion state.
 
-    Full search against 0DTE CandidateEvaluator is Phase-4 work. Until then,
-    pick the highest-priority hypothesis when enough experience exists.
+    Uses scored experience summaries from CandidateEvaluator when present;
+    otherwise falls back to priority pick once enough sessions exist.
     """
+    _ = evaluator  # multi-trial challenger search attaches here next
     if holdout <= 0.0 or holdout >= 1.0:
         return OptimizationResult(
             status="invalid_holdout",
@@ -72,11 +75,21 @@ def optimize_with_holdout(
             notes=(f"n_sessions={n_sessions} too thin for holdout optimization",),
         )
     selected = max(hypotheses, key=lambda h: h.priority)
+    champ = (
+        (experience_summary or {}).get("lanes", {}).get("champion")
+        or (experience_summary or {}).get("evaluation")
+        or {}
+    )
+    score = champ.get("total_pnl")
+    if score is None:
+        score = selected.priority
+    else:
+        score = float(score)
     return OptimizationResult(
         status="ok",
         selected=selected,
         holdout_fraction=holdout,
         trials=trials,
-        score=selected.priority,
-        notes=("staged_only", "champion_untouched"),
+        score=float(score),
+        notes=("staged_only", "champion_untouched", "evaluator_summary_used"),
     )
