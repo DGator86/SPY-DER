@@ -18,6 +18,7 @@ import time
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from spy_der.decisions.shadow import ai_context
 from spy_der.dojo.authority import default_authorities
 from spy_der.dojo.config import DEFAULT_CONFIGS_DIR, DEFAULT_REPORTS_DIR, DojoConfig
 from spy_der.dojo.evaluation import OutcomeCandidateEvaluator
@@ -200,7 +201,36 @@ def run_dojo(
     skip_sequential: bool = False,
     challenger_changes: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run recorded / sequential / learner / universe with CandidateEvaluator wired."""
+    """Run recorded / sequential / learner / universe with CandidateEvaluator wired.
+
+    Runs inside :func:`ai_context` so the market-hours gate on the live decision
+    path does not apply. The Dojo's timers fire at 06:30 ET, three hours before
+    the open, and sparring against recorded and synthetic tape is exactly when
+    the model should run — gating it would silently downgrade every Dojo run to
+    the deterministic agent and change what the Dojo measures.
+    """
+    with ai_context("dojo"):
+        return _run_dojo_phases(
+            cfg,
+            experience=experience,
+            synthetic=synthetic,
+            evaluator=evaluator,
+            authorities=authorities,
+            skip_sequential=skip_sequential,
+            challenger_changes=challenger_changes,
+        )
+
+
+def _run_dojo_phases(
+    cfg: DojoConfig | None = None,
+    *,
+    experience: MarketExperienceProvider | None = None,
+    synthetic: SyntheticUniverseProvider | None = None,
+    evaluator: CandidateEvaluator | None = None,
+    authorities: dict[str, DecisionAuthority] | None = None,
+    skip_sequential: bool = False,
+    challenger_changes: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     cfg = cfg or DojoConfig()
     report_date = cfg.report_date or dt.datetime.now(ET).date().isoformat()
     cfg.report_date = report_date

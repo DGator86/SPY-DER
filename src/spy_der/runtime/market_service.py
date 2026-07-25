@@ -35,7 +35,12 @@ __all__ = ["MarketService", "MarketServiceConfig", "build_arg_parser", "main"]
 
 log = logging.getLogger("spy_der.market")
 
-_DEFAULT_PROVIDERS = ("massive",)
+#: Ordered failover. Tradier leads because a brokerage account returns real-time
+#: option NBBO with greeks, where the Massive snapshot plan routinely has no
+#: `last_quote` and falls back to `day.close` — a chain the execution guard will
+#: refuse to trade on anyway. Unconfigured providers are skipped, not fatal, so a
+#: host holding either key alone still runs.
+_DEFAULT_PROVIDERS = ("tradier", "massive")
 
 
 @dataclass(frozen=True, slots=True)

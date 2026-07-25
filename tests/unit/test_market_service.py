@@ -87,7 +87,22 @@ def test_no_credential_exits_nonzero(
 
 
 def test_unported_provider_exits_nonzero(tmp_path: Path) -> None:
-    assert main(["--provider", "tradier", "--state-root", str(tmp_path)]) == 2
+    """Naming an adapter that does not exist fails loudly, not silently.
+
+    Was `tradier`, which is now ported — `tastytrade` is still pending. Exit 2
+    (unknown adapter) stays distinct from exit 3 (adapter exists, no credential),
+    because the operator fix differs: one is a config typo, the other a key.
+    """
+    assert main(["--provider", "tastytrade", "--state-root", str(tmp_path)]) == 2
+
+
+def test_tradier_without_a_credential_exits_three_not_two(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Ported-but-unconfigured is a different failure from unported."""
+    monkeypatch.delenv("TRADIER_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("TRADIER_API_KEY", raising=False)
+    assert main(["--provider", "tradier", "--state-root", str(tmp_path)]) == 3
 
 
 def test_unknown_provider_exits_nonzero(tmp_path: Path) -> None:

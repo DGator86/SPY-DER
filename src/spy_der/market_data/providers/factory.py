@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from spy_der.market_data.providers._http import HttpConfig
 from spy_der.market_data.providers.base import MarketDataProvider
 from spy_der.market_data.providers.massive import MassiveProvider
+from spy_der.market_data.providers.tradier import TradierProvider
 
 __all__ = [
     "AVAILABLE_PROVIDERS",
@@ -32,11 +33,11 @@ __all__ = [
 ]
 
 #: Adapters that exist today.
-AVAILABLE_PROVIDERS: frozenset[str] = frozenset({"massive"})
+AVAILABLE_PROVIDERS: frozenset[str] = frozenset({"massive", "tradier"})
 
 #: Named in docs/config but not yet ported. Listed explicitly so requesting one
 #: produces a clear message instead of "unknown provider".
-PENDING_PROVIDERS: frozenset[str] = frozenset({"tradier", "tastytrade", "yahoo"})
+PENDING_PROVIDERS: frozenset[str] = frozenset({"tastytrade", "yahoo"})
 
 
 class UnknownProviderError(ValueError):
@@ -67,6 +68,8 @@ def _build_one(
 ) -> MarketDataProvider:
     if name == "massive":
         return MassiveProvider(symbol=symbol, http=http)
+    if name == "tradier":
+        return TradierProvider(symbol=symbol, http=http)
     if name in PENDING_PROVIDERS:
         msg = (
             f"provider {name!r} is not ported yet; "
