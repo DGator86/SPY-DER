@@ -11,7 +11,14 @@ from spy_der.market_data.freshness import (
     classify_status,
 )
 from spy_der.market_data.legacy_adapter import SystemASnapshotAdapter
-from spy_der.market_data.providers import MarketDataProvider, RawTick, StaticProvider
+from spy_der.market_data.providers import (
+    MarketDataProvider,
+    MassiveProvider,
+    ProviderChain,
+    RawTick,
+    StaticProvider,
+    build_provider_chain,
+)
 from spy_der.market_data.recording import SnapshotRecorder, build_record
 from spy_der.market_data.replay import CorruptRecordingError, ReplayFeed
 
@@ -21,6 +28,8 @@ __all__ = [
     "CorruptRecordingError",
     "MarketCalendar",
     "MarketDataProvider",
+    "MassiveProvider",
+    "ProviderChain",
     "RawTick",
     "ReplayFeed",
     "SnapshotRecorder",
@@ -28,6 +37,7 @@ __all__ = [
     "SystemASnapshotAdapter",
     "age_seconds",
     "build_observation",
+    "build_provider_chain",
     "build_record",
     "classify_status",
 ]
