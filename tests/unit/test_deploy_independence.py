@@ -204,27 +204,47 @@ def _cli_commands() -> set[str]:
     return commands
 
 
-def _exec_start_subcommand(text: str) -> str | None:
-    """The `spy-der <subcommand>` a unit runs, across line continuations."""
+#: The console script every runtime unit invokes.
+_SPY_DER_BIN = "/opt/spy-der/venv/bin/spy-der"
+
+
+def _exec_start_tokens(text: str) -> list[str]:
+    """ExecStart's argv, joined across line continuations."""
     joined = text.replace("\\\n", " ")
     for line in joined.splitlines():
         stripped = line.strip()
-        if not stripped.startswith("ExecStart="):
-            continue
-        tokens = stripped.removeprefix("ExecStart=").split()
-        if not tokens:
-            return None
-        # tokens[0] is the venv binary; the subcommand is the first bare word.
-        for token in tokens[1:]:
-            if not token.startswith("-"):
-                return token
+        if stripped.startswith("ExecStart="):
+            return stripped.removeprefix("ExecStart=").split()
+    return []
+
+
+def _exec_start_subcommand(text: str) -> str | None:
+    """The `spy-der <subcommand>` a unit runs, or None if it runs something else.
+
+    Returning None for a non-`spy-der` ExecStart matters: `spy-der-update.service`
+    legitimately runs a shell script, and treating its first bare word (`bash`)
+    as a CLI subcommand would fail the audit for a unit that is entirely correct.
+    Those units are covered by `test_units_that_run_a_script_ship_that_script`
+    instead, so nothing goes unchecked.
+    """
+    tokens = _exec_start_tokens(text)
+    if not tokens or tokens[0] != _SPY_DER_BIN:
         return None
+    for token in tokens[1:]:
+        if not token.startswith("-"):
+            return token
     return None
 
 
-@pytest.mark.parametrize(
-    "unit", sorted(p.name for p in _DEPLOY.glob("*.service"))
-)
+def _units_invoking_the_cli() -> list[str]:
+    return sorted(
+        p.name
+        for p in _DEPLOY.glob("*.service")
+        if _exec_start_tokens(p.read_text(encoding="utf-8"))[:1] == [_SPY_DER_BIN]
+    )
+
+
+@pytest.mark.parametrize("unit", _units_invoking_the_cli())
 def test_every_shipped_unit_invokes_a_real_cli_command(unit: str) -> None:
     """A unit whose ExecStart names a nonexistent command cannot ever run.
 
@@ -243,12 +263,151 @@ def test_every_shipped_unit_invokes_a_real_cli_command(unit: str) -> None:
     )
 
 
+def test_every_runtime_unit_is_audited_by_the_cli_check() -> None:
+    """Guard the guard: only the self-update unit may sidestep the CLI audit.
+
+    If a future unit invokes a different binary, this fails and forces a
+    decision rather than letting it slip past the audit unnoticed.
+    """
+    audited = set(_units_invoking_the_cli())
+    everything = {p.name for p in _DEPLOY.glob("*.service")}
+    assert everything - audited == {"spy-der-update.service"}
+
+
+@pytest.mark.parametrize(
+    "unit",
+    sorted(
+        p.name
+        for p in _DEPLOY.glob("*.service")
+        if _exec_start_tokens(p.read_text(encoding="utf-8"))[:1] != [_SPY_DER_BIN]
+    ),
+)
+def test_units_that_run_a_script_ship_that_script(unit: str) -> None:
+    """A unit pointing at a deploy script must point at one that exists.
+
+    The same class of defect as the missing `dashboard-api` command: a unit
+    referencing a path the repo does not contain fails on every start.
+    """
+    tokens = _exec_start_tokens((_DEPLOY / unit).read_text(encoding="utf-8"))
+    scripts = [t for t in tokens if t.endswith(".sh")]
+    assert scripts, f"{unit} runs neither the CLI nor a shipped script"
+    for script in scripts:
+        name = Path(script).name
+        assert (_DEPLOY / name).is_file(), f"{unit} runs {script}, not shipped in deploy/"
+
+
 def test_pending_command_list_is_accurate() -> None:
     """A command that has landed must be removed from the pending list."""
     implemented = _cli_commands() & PENDING_CLI_COMMANDS
     assert not implemented, (
         f"{sorted(implemented)} are implemented — drop them from PENDING_CLI_COMMANDS"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The deploy path ships the code it claims to                                 #
+# --------------------------------------------------------------------------- #
+def _remote_deploy() -> str:
+    return (_DEPLOY / "remote-deploy.sh").read_text(encoding="utf-8")
+
+
+def test_deploy_scripts_are_shipped_and_executable() -> None:
+    for name in ("remote-deploy.sh", "self-update.sh"):
+        path = _DEPLOY / name
+        assert path.is_file(), name
+        assert path.stat().st_mode & 0o111, f"{name} is not executable"
+
+
+def test_remote_deploy_installs_every_required_unit() -> None:
+    """A unit absent from the deploy script never reaches systemd.
+
+    Every `spy-der-*.service` and timer in this repo used to be installed by
+    nothing at all — they existed in `deploy/` and were never copied to
+    `/etc/systemd/system`, so they could not run however correct they were.
+    """
+    text = _remote_deploy()
+    for unit in REQUIRED_UNITS:
+        stem = unit.removesuffix(".service").removesuffix(".timer")
+        assert stem in text, f"{unit} is never installed by remote-deploy.sh"
+
+
+def test_remote_deploy_installs_the_package_into_the_venv() -> None:
+    """The step whose absence stranded `spy-der dashboard-api` after it existed.
+
+    A `git reset --hard` alone moves source but never creates new console-script
+    entry points or installs new dependencies.
+    """
+    text = _remote_deploy()
+    assert "pip" in text and "install" in text
+    assert "venv/bin/pip" in text
+
+
+def test_remote_deploy_creates_every_declared_state_directory() -> None:
+    text = _remote_deploy()
+    for name in REQUIRED_STATE_DIRS:
+        assert name in text, f"state directory {name} is never created"
+
+
+def test_remote_deploy_owns_state_as_the_service_user() -> None:
+    """Ownership must match `StateDirectory=spy-der`, or the two flap.
+
+    systemd resets `/var/lib/spy-der` to the unit's user on start, so a deploy
+    that chowns it to anyone else just loses the next time a unit starts.
+    """
+    text = _remote_deploy()
+    assert 'SVC_USER=spy-der' in text
+    assert 'chown -R "$SVC_USER:$SVC_USER" "$STATE_DIR"' in text
+
+
+def test_remote_deploy_leaves_state_directories_traversable() -> None:
+    """Published reports are read by other local users; 0700 would hide them."""
+    assert "chmod 0755" in _remote_deploy()
+
+
+def test_remote_deploy_never_starts_units_without_the_secrets_file() -> None:
+    text = _remote_deploy()
+    assert "/etc/spy-der/spy-der.env" in text
+    assert "not found" in text
+
+
+def test_remote_deploy_does_not_write_the_secrets_file() -> None:
+    """A deploy that can overwrite the env file can destroy a key."""
+    for line in _remote_deploy().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if "ENV_FILE" in stripped and ("install " in stripped or "cp " in stripped):
+            raise AssertionError(f"deploy writes the secrets file: {stripped}")
+
+
+def test_self_update_runs_the_fetched_deploy_script_not_the_stale_one() -> None:
+    """Unit-file and dependency changes must ship with the code needing them."""
+    text = (_DEPLOY / "self-update.sh").read_text(encoding="utf-8")
+    assert "git -C \"$APP_DIR\" show" in text
+    assert "deploy/remote-deploy.sh" in text
+
+
+def test_self_update_is_a_noop_when_already_current() -> None:
+    """A 2-minute timer must stay silent, or it floods the journal."""
+    text = (_DEPLOY / "self-update.sh").read_text(encoding="utf-8")
+    assert 'if [ "$local_sha" = "$remote_sha" ]' in text
+
+
+def test_update_timer_polls_on_a_bounded_interval() -> None:
+    text = (_DEPLOY / "spy-der-update.timer").read_text(encoding="utf-8")
+    assert "OnUnitActiveSec=" in text
+    assert "OnBootSec=" in text
+
+
+def test_remote_deploy_enables_the_self_update_timer() -> None:
+    """Otherwise the first deploy is also the last automatic one."""
+    text = _remote_deploy()
+    assert "enable --now spy-der-update.timer" in text
+
+
+def test_deploy_targets_this_repo() -> None:
+    text = _remote_deploy()
+    assert "SPY-DER.git" in text
 
 
 # --------------------------------------------------------------------------- #
