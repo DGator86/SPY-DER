@@ -52,6 +52,7 @@ from spy_der.evaluation.settlement import settle_session
 from spy_der.journal.store import SqliteJournalStore
 from spy_der.market_data.replay import CorruptRecordingError, ReplayFeed
 from spy_der.runtime.artifacts import StageArtifactStore
+from spy_der.runtime.heartbeat import write_heartbeat
 
 __all__ = ["SettlementConfig", "SettlementService", "build_arg_parser", "main"]
 
@@ -150,6 +151,13 @@ class SettlementService:
                 if self._settle(journal, artifacts, session):
                     settled += 1
             passes += 1
+            write_heartbeat(
+                cfg.state_root,
+                "settlement",
+                interval_seconds=cfg.interval_seconds,
+                detail=f"pass {passes}: {settled} session(s) settled",
+                extra={"passes": passes, "sessions_settled": sorted(self._settled)},
+            )
             if settled:
                 log.info("pass %d settled %d session(s)", passes, settled)
             if cfg.max_passes and passes >= cfg.max_passes:

@@ -45,6 +45,7 @@ from spy_der.contracts.market_parse import SnapshotParseError, snapshot_from_dic
 from spy_der.journal.store import SqliteJournalStore
 from spy_der.market_data.replay import CorruptRecordingError, ReplayFeed
 from spy_der.runtime.artifacts import StageArtifactStore
+from spy_der.runtime.heartbeat import write_heartbeat
 
 __all__ = ["EngineConfig", "EngineService", "build_arg_parser", "main"]
 
@@ -150,6 +151,13 @@ class EngineService:
         while not self._stop:
             processed = self._pass(journal, artifacts, stages)
             passes += 1
+            write_heartbeat(
+                cfg.state_root,
+                "engine",
+                interval_seconds=cfg.interval_seconds,
+                detail=f"pass {passes}: {processed} snapshot(s)",
+                extra={"passes": passes, "stages": stages},
+            )
             if processed:
                 log.info("pass %d processed %d snapshot(s)", passes, processed)
             if cfg.max_passes and passes >= cfg.max_passes:

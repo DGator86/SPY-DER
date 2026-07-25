@@ -10,6 +10,7 @@ never writes. The unit enforces that with ``ReadOnlyPaths=/var/lib/spy-der``.
 
 Routes:
     GET /health                    liveness
+    GET /v1/system                 services, feed, AI gate, deploy — one view
     GET /v1/state                  live_state.json (spyder.dashboard.v1)
     GET /v1/dojo/latest            newest Dojo report
     GET /v1/dojo/reports           index of stamped Dojo reports (newest first)
@@ -139,6 +140,10 @@ def handle_get(state: DashboardApiState, path: str, query: str = "") -> tuple[in
                 "detail": "no Dojo run has completed, or its report is unreadable",
             }
         return 200, body
+    if path in {"/v1/system", "/v1/status"}:
+        from spy_der.runtime.system_status import build_system_status
+
+        return 200, build_system_status(state.state_root)
     if path in {"/v1/validation/latest", "/v1/validation"}:
         body = state.latest_validation_report()
         if body is None:

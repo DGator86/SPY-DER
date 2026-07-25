@@ -30,6 +30,7 @@ from spy_der.market_data.providers.factory import (
     build_provider_chain,
 )
 from spy_der.market_data.recording import build_record
+from spy_der.runtime.heartbeat import write_heartbeat
 
 __all__ = ["MarketService", "MarketServiceConfig", "build_arg_parser", "main"]
 
@@ -101,6 +102,13 @@ class MarketService:
         while not self._stop:
             self._tick(feed)
             ticks += 1
+            write_heartbeat(
+                cfg.state_root,
+                "market",
+                interval_seconds=cfg.interval_seconds,
+                detail=f"{ticks} tick(s) this run",
+                extra={"providers": chain.describe(), "ticks": ticks},
+            )
             if cfg.max_ticks and ticks >= cfg.max_ticks:
                 break
             if self._stop:
