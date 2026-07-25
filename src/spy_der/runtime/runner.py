@@ -1,16 +1,20 @@
 """VPS shadow runner — publishes SPY-DER parallel-track state for the dashboard.
 
-When embedded in 0DTE's `shadow_runner`, prefer the in-process bridge
-(`spy_der.integrations.zerodte`). This module is the standalone process that
-writes `/var/lib/zerodte/spy_der_state.json` (or a configured path) so the
-0DTE dashboard can merge SPY-DER into the parallel panel even if the
-in-process provider is temporarily unavailable.
+Writes ``$SPY_DER_STATE_ROOT/live_state.json`` (default
+``/var/lib/spy-der/live_state.json``) so the dashboard API can serve SPY-DER
+state. The state file is SPY-DER-owned and lives under SPY-DER's state root:
+during migration a 0DTE dashboard may *read* it, but nothing here writes into
+0DTE's state tree.
+
+Overriding ``--live-state`` to a path outside the state root is supported for
+the interim parallel panel and is the caller's responsibility.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import time
 from dataclasses import dataclass
@@ -18,13 +22,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from spy_der.decisions.shadow import (
+    PARALLEL_TRACK_ID,
+    PARALLEL_TRACK_LABEL,
+)
 from spy_der.deployment.cutover import (
     CutoverApproval,
     activate_controlled_cutover,
-)
-from spy_der.integrations.zerodte.provider import (
-    PARALLEL_TRACK_ID,
-    PARALLEL_TRACK_LABEL,
 )
 from spy_der.runtime.state_writer import write_live_state_file
 
@@ -33,9 +37,15 @@ __all__ = ["RunnerConfig", "SpyDerVpsRunner", "build_arg_parser", "main"]
 log = logging.getLogger("spy_der.runner")
 
 
+#: SPY-DER's own state root. Overridable so a test or a parallel-track panel can
+#: redirect output without patching the module.
+DEFAULT_STATE_ROOT = os.environ.get("SPY_DER_STATE_ROOT", "/var/lib/spy-der")
+DEFAULT_LIVE_STATE = str(Path(DEFAULT_STATE_ROOT) / "live_state.json")
+
+
 @dataclass(frozen=True, slots=True)
 class RunnerConfig:
-    live_state_path: str = "/var/lib/zerodte/spy_der_state.json"
+    live_state_path: str = DEFAULT_LIVE_STATE
     interval_seconds: float = 60.0
     account_id: str = "system_b_grok"
     approved_by: str = "repository-owner"
@@ -108,8 +118,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="SPY-DER VPS parallel-track runner")
     p.add_argument(
         "--live-state",
-        default="/var/lib/zerodte/spy_der_state.json",
-        help="Output JSON path merged/read by 0DTE dashboard",
+        default=DEFAULT_LIVE_STATE,
+        help="Output JSON path for SPY-DER live state (default: under the state root)",
     )
     p.add_argument("--interval", type=float, default=60.0)
     p.add_argument("--account-id", default="system_b_grok")

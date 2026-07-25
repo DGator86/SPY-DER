@@ -87,14 +87,8 @@ def _build_flags(
                 "detail": str(learner.get("note", "promotion gates failed")),
             }
         )
-    if universe.get("status") == "insufficient_data":
-        flags.append(
-            {
-                "severity": "info",
-                "flag": "universe_provider_missing",
-                "detail": str(universe.get("note", "")),
-            }
-        )
+    # `universe_provider_missing` is gone: synthetic-universe production is
+    # SPY-DER's own (spy_der.synthetic), so the phase always has a provider.
     if universe.get("status") == "ok":
         for arch, metrics in (universe.get("archetype_matrix") or {}).items():
             mean = metrics.get("mean_session_pnl")

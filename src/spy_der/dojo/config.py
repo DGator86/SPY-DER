@@ -45,3 +45,10 @@ class DojoConfig:
     full_lattice: bool = False
     universe_days: int = 8
     catalog_seed: int = 20260723
+    #: Minutes between synthetic snapshots. Universe sparring now generates real
+    #: worlds and runs the real candidate factory (see spy_der.synthetic), so
+    #: this is the main throughput dial: stride 15 over the defaults above is
+    #: ~2.5k scored snapshots, sized for the nightly timer rather than a unit
+    #: test. Tests should bound universes_per_gen / universe_days instead of
+    #: raising the stride, so they still exercise real geometry.
+    universe_snapshot_stride: int = 15

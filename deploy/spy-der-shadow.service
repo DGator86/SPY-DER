@@ -5,22 +5,27 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=zerodte
-Group=zerodte
+User=spy-der
+Group=spy-der
 WorkingDirectory=/opt/spy-der
-EnvironmentFile=-/etc/zerodte/zerodte.env
-# systemd creates /var/lib/zerodte owned by the service user before start, so
+EnvironmentFile=-/etc/spy-der/spy-der.env
+# systemd creates /var/lib/spy-der owned by the service user before start, so
 # the runner can write the state file without root-owned /var/lib blocking the
 # first-run mkdir.
-StateDirectory=zerodte
-ExecStart=/opt/zerodte/venv/bin/spy-der vps-runner \
-    --live-state %S/zerodte/spy_der_state.json \
+StateDirectory=spy-der
+Environment=SPY_DER_STATE_ROOT=%S/spy-der
+ExecStart=/opt/spy-der/venv/bin/spy-der vps-runner \
+    --live-state %S/spy-der/live_state.json \
     --interval 60
 Restart=always
 RestartSec=5
 
 # Live trading is forbidden. This unit only publishes observation state.
 NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/spy-der
 
 [Install]
 WantedBy=multi-user.target

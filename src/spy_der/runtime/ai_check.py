@@ -20,7 +20,7 @@ from spy_der.agents.grok import GrokConfig, GrokDecisionAgent
 from spy_der.agents.mock import MockDecisionAgent
 from spy_der.agents.protocols import DecisionAgent
 from spy_der.contracts.agents import AgentEntryAction
-from spy_der.integrations.zerodte.provider import (
+from spy_der.decisions.shadow import (
     ShadowCandidateView,
     SpyDerShadowDecision,
     decide_shadow_tick,

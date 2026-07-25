@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+from spy_der.decisions.shadow import reset_shadow_tick_cache
 from spy_der.dojo.evaluation import (
     OutcomeCandidateEvaluator,
     forward_transfer,
@@ -18,7 +19,6 @@ from spy_der.dojo.protocols import (
     MarketExperienceProvider,
 )
 from spy_der.dojo.retention import check_retention
-from spy_der.integrations.zerodte.provider import reset_shadow_tick_cache
 
 __all__ = ["SequentialDojoConfig", "run_sequential_dojo"]
 

@@ -16,6 +16,8 @@ from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from spy_der.contracts import to_canonical_json
 from spy_der.contracts.market import OptionContract, OptionQuote, OptionType
 from spy_der.features import StructuralStateService
@@ -79,10 +81,41 @@ def _state() -> object:
     return StructuralStateService().build(snapshot, session_open_price=Decimal("498"))
 
 
+#: Relative tolerance for float leaves, per docs/CUTOVER_PLAN.md
+#: ("feature values: +/- 1e-9 relative"). Exact float equality against a stored
+#: golden is not portable: numpy's reduction order varies with platform and
+#: build, and `wall_concentration` drifted in the last digit
+#: (0.23787117295408164 vs ...158) purely from that. Strings, ints, bools and
+#: structure are still compared exactly — only float leaves get the tolerance.
+_FLOAT_RTOL = 1e-9
+
+
+def _assert_matches_golden(produced: object, expected: object, path: str = "") -> None:
+    """Structural equality, with a relative tolerance on float leaves only."""
+    if isinstance(expected, dict):
+        assert isinstance(produced, dict), path
+        assert set(produced) == set(expected), path
+        for key in expected:
+            _assert_matches_golden(produced[key], expected[key], f"{path}.{key}")
+        return
+    if isinstance(expected, list):
+        assert isinstance(produced, list), path
+        assert len(produced) == len(expected), path
+        for i, item in enumerate(expected):
+            _assert_matches_golden(produced[i], item, f"{path}[{i}]")
+        return
+    if isinstance(expected, float) and isinstance(produced, (int, float)):
+        assert produced == pytest.approx(expected, rel=_FLOAT_RTOL), path
+        return
+    # Decimals are serialized as strings and must match exactly — there is no
+    # rounding to permit in a maximum-loss or capital figure.
+    assert produced == expected, path
+
+
 def test_structural_state_matches_golden() -> None:
     produced = json.loads(to_canonical_json(_state()))
     expected = json.loads(_EXPECTED.read_text())
-    assert produced == expected
+    _assert_matches_golden(produced, expected)
 
 
 def test_structural_state_id_is_frozen() -> None:

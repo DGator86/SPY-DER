@@ -1,77 +1,66 @@
-# Ownership Boundary — 0DTE ↔ SPY-DER
+# Ownership Boundary — SUPERSEDED
 
-This document corrects the repository ownership boundary. It supersedes any
-reading of `SPY_DER_MASTER_SPEC.md` that treats SPY-DER as the owner of
-market-data ingestion, forecasting or candidate generation, and confirms that
-SPY-DER is the sole owner of the Dojo and all AI decision intelligence.
+> **This document is superseded by [`TARGET_ARCHITECTURE.md`](TARGET_ARCHITECTURE.md).**
+>
+> It described an interim architecture in which 0DTE remained the production
+> market engine and SPY-DER owned only decision intelligence. That is no longer
+> the target. **SPY-DER becomes the complete production system; 0DTE is absorbed
+> and retired.**
+>
+> It is kept because the interim split is still the *current* runtime state
+> during migration, and because the contract table below is the surface the
+> temporary bridge speaks. Do not use it to justify leaving a capability in
+> 0DTE.
 
-SPY-DER owns **decision intelligence**. 0DTE owns **market infrastructure** and
-the existing Vercel dashboard. Integration is only through versioned contracts.
+## Why it changed
 
-## Immediate rule
+The old rule was:
 
-If code chooses, interprets, learns, reviews, remembers, routes models, or
-promotes AI behavior, it belongs in **SPY-DER**.
+> If code collects market information, computes deterministic market features,
+> generates candidates, records outcomes, or renders the existing dashboard, it
+> belongs in 0DTE.
 
-If code collects market information, computes deterministic market features,
-generates candidates, records outcomes, or renders the existing dashboard, it
-belongs in **0DTE**.
+That rule made SPY-DER permanently dependent on packets published by the system
+it was meant to replace. Two consequences forced the change:
 
-The Dojo unequivocally falls into the first category.
+1. **The AI could not be validated against its own inputs.** SPY-DER could not
+   reproduce a market snapshot, so parity was only ever assertable at the packet
+   boundary — not at the feature, forecast or candidate level where the
+   interesting divergences live.
+2. **Synthetic sparring was hollow.** 0DTE's synthetic provider emitted
+   placeholder candidates, so the Dojo's universe phase scored decisions over
+   geometry that did not exist. That is now fixed by SPY-DER owning
+   `spy_der.synthetic` outright.
 
-## Correct repository boundary
+## On 0DTE PR #150
 
-### `DGator86/0DTE` owns
+PR #150 is a useful interim decoupling step and has been merged. It removed
+duplicate AI ownership from 0DTE, established the contracts, let SPY-DER operate
+while migration continues, and reduced dangerous in-process coupling.
 
-- Market-data ingestion
-- Options-chain storage
-- Technical feature generation
-- Forecasting and candidate generation
-- Deterministic risk and strategy calculations
-- Shadow execution records
-- The current dashboard
-- A thin SPY-DER dashboard adapter
+It is **not** the final architecture:
 
-### `DGator86/0DTE` must not own
+> 0DTE remains a temporary upstream market provider during full-stack migration.
+> The final target is an independently operating SPY-DER system with no runtime
+> dependency on 0DTE.
 
-- Dojo / Sequential Dojo
-- AI agents, Grok adapters, prompts, review logic
-- AI memories, lessons, promotion workflows
-- AI usage metering, model routing, training schedules
+## Interim rule (still in force during migration)
 
-### `DGator86/SPY-DER` owns
+The Dojo, AI agents, prompts, review logic, memories, lessons, promotion
+workflows, usage metering and model routing belong in **SPY-DER**. That part of
+the old boundary was correct and is unchanged — it is now simply a subset of a
+larger claim.
 
-- Grok trader / reviewer and provider-neutral model interfaces
-- Decision packets, entry / position decisions, authority policies
-- AI prompts, parsing, usage and cost tracking
-- Dojo, Sequential Dojo, adaptive learning
-- Agent lessons and episodic memory
-- Champion/challenger governance and promotion review
-- Synthetic-universe AI evaluation
-- Model routing / escalation
-- AI-specific VPS services and timers
+What changed is the other half: market ingestion, chain storage, features,
+forecasting, candidate generation, deterministic risk, journal, settlement and
+dashboard data services are **also** SPY-DER's, on the schedule in
+`docs/CUTOVER_PLAN.md`.
 
-## Narrow integration
+## Contract schemas (the temporary bridge)
 
-```
-0DTE
-  produces market state, forecasts, candidates and outcomes
-                         ↓
-              versioned data contract
-                         ↓
-SPY-DER
-  decides, learns, reviews and publishes its state
-                         ↓
-              versioned result contract
-                         ↓
-0DTE dashboard adapter
-  displays SPY-DER status and decisions
-```
-
-- 0DTE must not import SPY-DER’s internal agents or training code.
-- SPY-DER must consume 0DTE through contracts, files, a database view, or an API.
-
-## Contract schemas
+These remain valid until cutover step 10, after which `MarketPacket` is an
+internal boundary or external API schema rather than a cross-repository
+dependency.
 
 | Direction | Schema | Module |
 |---|---|---|
@@ -80,30 +69,18 @@ SPY-DER
 | SPY-DER → 0DTE | `spyder.dashboard.v1` | `spy_der.contracts.integration.DashboardPacket` |
 | 0DTE ↔ SPY-DER | `spyder.decision.request.v1` / `spyder.decision.response.v1` | HTTP `/v1/decision` |
 
-## Runtime layout (target)
+Synthetic universes are **no longer** part of this surface: the Dojo calls
+`spy_der.synthetic.SyntheticUniverseProvider` natively.
+
+## Interim runtime layout
 
 ```
-/opt/zerodte          0DTE source + venv
+/opt/zerodte          0DTE source + venv          (removed at cutover)
 /opt/spy-der          SPY-DER source + venv
-/var/lib/zerodte      ticks, chains, forecasts, candidates, settlements, shadow.db
-/var/lib/spy-der      live_state.json, decisions/, reports/dojo/, memories/,
-                      lessons/, usage/, configs/, challengers/, pending_review/
+/var/lib/zerodte      0DTE state                  (removed at cutover)
+/var/lib/spy-der      SPY-DER state — see docs/TARGET_ARCHITECTURE.md
 ```
 
-Services:
-
-- `zerodte-market.service`
-- `zerodte-dashboard.service`
-- `spy-der-agent.service`
-- `spy-der-dojo-daily.timer`
-- `spy-der-dojo-recent.timer`
-- `spy-der-dojo-weekly.timer`
-
-## Relation to existing System B modules
-
-Phases 0–17 built a full research/parity scaffold inside `src/spy_der/`
-(including market_data, forecasting, candidates). That scaffold remains for
-parity and offline research. **Production ownership** of those capabilities
-stays with 0DTE. New Dojo / live-agent work must not deepen in-process coupling
-to 0DTE internals; it must go through `spy_der.contracts.integration` and
-`spy_der.dojo` experience-provider protocols.
+The target layout, services and timers are in `docs/CUTOVER_PLAN.md`. After final
+cutover there is no runtime reference to `/opt/zerodte`, `/var/lib/zerodte` or
+`/etc/zerodte`.

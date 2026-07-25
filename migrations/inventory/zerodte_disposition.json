@@ -1,0 +1,560 @@
+{
+  "schema": "spyder.migration.disposition.v1",
+  "source_repository": "DGator86/0DTE",
+  "source_commit": "6393cd110913b9327f57bff176bf3797d03a8c39",
+  "source_head_subject": "Merge pull request #150 from DGator86/cursor/phase5-ai-ownership-removal-afc2",
+  "tree_manifest": "migrations/inventory/zerodte_tree.txt",
+  "tracked_paths": 328,
+  "note": "Disposition ledger for the full-stack migration. Every tracked path in the tree manifest must match exactly one rule; tests/unit/test_migration_inventory.py enforces that no path is ambiguous and no rule is dead. Rules are evaluated in order and the FIRST match wins, so narrower rules precede broader ones.",
+  "dispositions": {
+    "move": "Code relocated into SPY-DER with behavior preserved; the mathematics is not rewritten. Parity is proven against the 0DTE golden before the 0DTE copy is retired.",
+    "reimplement": "Capability rebuilt behind a SPY-DER-owned interface because the 0DTE implementation is coupled to flat-module imports (unified_loop, gate_scorer) that cannot cross the boundary intact. Behavior is held to the same parity gate.",
+    "replace": "SPY-DER already owns a working implementation of this capability. The 0DTE module is superseded once parity passes; no code moves.",
+    "archive": "Retained read-only for provenance (baselines, handoff docs, historical reports). Not carried into the SPY-DER runtime.",
+    "delete": "Removed outright. Either a temporary migration bridge whose purpose ends at cutover, or dead/duplicated code with no SPY-DER counterpart needed."
+  },
+  "rules": [
+    {
+      "match": "massive_feed.py",
+      "capability": "Market feed — Massive/Polygon-compatible options snapshot",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.market_data.providers.massive",
+      "status": "pending",
+      "parity_gate": "raw_market_snapshots",
+      "notes": "HTTP client and field mappings port directly; the module's imports of spy0dte/resample/gate_scorer/unified_loop do not, so the provider is rebuilt against MarketDataProvider/RawTick."
+    },
+    {
+      "match": "tradier_feed.py",
+      "capability": "Market feed — Tradier",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.market_data.providers.tradier",
+      "status": "pending",
+      "parity_gate": "raw_market_snapshots"
+    },
+    {
+      "match": "tastytrade_feed.py",
+      "capability": "Market feed — Tastytrade",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.market_data.providers.tastytrade",
+      "status": "pending",
+      "parity_gate": "raw_market_snapshots"
+    },
+    {
+      "match": "yahoo_feed.py",
+      "capability": "Market feed — Yahoo (underlying/settlement backstop)",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.market_data.providers.yahoo",
+      "status": "pending",
+      "parity_gate": "raw_market_snapshots"
+    },
+    {
+      "match": "composite_feed.py",
+      "capability": "Ordered provider failover",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.market_data.composite",
+      "status": "done",
+      "parity_gate": "raw_market_snapshots"
+    },
+    {
+      "match": "live_feed_adapter.py",
+      "capability": "Live feed assembly and staleness handling",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.market_data.assembler + spy_der.market_data.freshness",
+      "status": "done",
+      "parity_gate": "raw_market_snapshots"
+    },
+    {
+      "match": "market_calendar.py",
+      "capability": "Market calendar / session management",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.market_data.calendar",
+      "status": "done",
+      "parity_gate": "raw_market_snapshots"
+    },
+    {
+      "match": "chain_store.py",
+      "capability": "Options-chain and tick persistence, recorded replay",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.market_data.recording + spy_der.market_data.replay",
+      "status": "partial",
+      "parity_gate": "recorded_session_replay",
+      "notes": "SPY-DER owns recording/replay of canonical snapshots. Raw chain persistence at 0DTE's retention granularity is not yet ported."
+    },
+    {
+      "match": "resample.py",
+      "capability": "Incremental bars, timeframe resampling, bar technicals",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.features.mtf",
+      "status": "partial",
+      "parity_gate": "feature_values"
+    },
+    {
+      "match": "gex_window.py",
+      "capability": "Rolling GEX rank window",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.features.gex",
+      "status": "partial",
+      "parity_gate": "feature_values"
+    },
+    {
+      "match": "spy0dte.py",
+      "capability": "OptionRow model and gamma map construction",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.contracts.market + spy_der.features.gex",
+      "status": "partial",
+      "parity_gate": "feature_values"
+    },
+    {
+      "match": "gex/**",
+      "capability": "Gamma exposure — OI, volume proxy, hybrid, weekly",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.features.gex",
+      "status": "partial",
+      "parity_gate": "feature_values"
+    },
+    {
+      "match": "mtf_matrix.py",
+      "capability": "Multi-timeframe feature matrix",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.features.mtf",
+      "status": "done",
+      "parity_gate": "feature_values"
+    },
+    {
+      "match": "rnd_extractor.py",
+      "capability": "Risk-neutral density extraction, volatility structure",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.features.rnd",
+      "status": "done",
+      "parity_gate": "feature_values"
+    },
+    {
+      "match": "volatility_channel_features.py",
+      "capability": "Volatility channel features",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.features.volatility",
+      "status": "done",
+      "parity_gate": "feature_values"
+    },
+    {
+      "match": "market_dynamics.py",
+      "capability": "Structural market dynamics",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.features.structural",
+      "status": "partial",
+      "parity_gate": "feature_values"
+    },
+    {
+      "match": "pin_regime.py",
+      "capability": "Pin-regime detection",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.forecasting.regime_labels",
+      "status": "done",
+      "parity_gate": "regime_labels"
+    },
+    {
+      "match": "regime_classifier.py",
+      "capability": "Regime classification",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.forecasting.regime_labels",
+      "status": "done",
+      "parity_gate": "regime_labels"
+    },
+    {
+      "match": "regime_alignment.py",
+      "capability": "Cross-timeframe regime alignment",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.features.structural",
+      "status": "partial",
+      "parity_gate": "regime_labels"
+    },
+    {
+      "match": "regime_calibration.py",
+      "capability": "Empirical regime/archetype transition calibration",
+      "disposition": "move",
+      "spy_der_owner": "spy_der.synthetic.calibration",
+      "status": "done",
+      "parity_gate": "synthetic_world_parity"
+    },
+    {
+      "match": "matrix_universe.py",
+      "capability": "Markov world generation, archetype catalog, coverage matrix",
+      "disposition": "move",
+      "spy_der_owner": "spy_der.synthetic.archetypes + .chains + .world + .universe",
+      "status": "done",
+      "parity_gate": "synthetic_world_parity",
+      "notes": "Generative constants preserved verbatim; simulator_config_hash fingerprints them."
+    },
+    {
+      "match": "synthetic_world.py",
+      "capability": "Coupled synthetic market with per-tick chain repricing",
+      "disposition": "move",
+      "spy_der_owner": "spy_der.synthetic.world + spy_der.synthetic.pricing",
+      "status": "done",
+      "parity_gate": "synthetic_world_parity"
+    },
+    {
+      "match": "mc.py",
+      "capability": "Monte-Carlo path simulation",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.forecasting.path_model",
+      "status": "done",
+      "parity_gate": "forecast_outputs"
+    },
+    {
+      "match": "forecast_stabilizer.py",
+      "capability": "Forecast stabilization / cone anchoring",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.forecasting.uncertainty",
+      "status": "partial",
+      "parity_gate": "forecast_outputs"
+    },
+    {
+      "match": "prediction/**",
+      "capability": "Prediction engine — models, training, calibration, registry, storage",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.forecasting + spy_der.training + spy_der.evaluation",
+      "status": "partial",
+      "parity_gate": "forecast_outputs",
+      "notes": "Largest single block (57 modules, ~18k LOC). SPY-DER's System B implementations exist with parity fixtures for phases 5-9; the remaining work is validating each against the 0DTE golden, not writing new code."
+    },
+    {
+      "match": "spread_selector.py",
+      "capability": "Spread construction and candidate geometry",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.candidates.geometry + spy_der.candidates.factory",
+      "status": "done",
+      "parity_gate": "candidate_sets"
+    },
+    {
+      "match": "gate_scorer.py",
+      "capability": "Gate scoring, utility ranking, hard vetoes",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.candidate_value + spy_der.risk.firewall",
+      "status": "done",
+      "parity_gate": "candidate_sets"
+    },
+    {
+      "match": "execution_cost.py",
+      "capability": "Execution cost, fill probability, concession models",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.economics",
+      "status": "done",
+      "parity_gate": "risk_values"
+    },
+    {
+      "match": "execution/**",
+      "capability": "Fill records and execution estimates",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.execution",
+      "status": "done",
+      "parity_gate": "risk_values"
+    },
+    {
+      "match": "risk_manager.py",
+      "capability": "Capital requirements, maximum loss, position sizing",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.risk",
+      "status": "done",
+      "parity_gate": "risk_values"
+    },
+    {
+      "match": "decision_matrix.py",
+      "capability": "Legacy decision matrix",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.policies",
+      "status": "done",
+      "parity_gate": "vetoes"
+    },
+    {
+      "match": "decision_engine.py",
+      "capability": "Decision engine",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.decisions",
+      "status": "done",
+      "parity_gate": "vetoes"
+    },
+    {
+      "match": "policy/**",
+      "capability": "Policy routing and legacy matrix",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.policies",
+      "status": "done",
+      "parity_gate": "vetoes"
+    },
+    {
+      "match": "paper_broker.py",
+      "capability": "Paper broker / shadow fills / position lifecycle",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.execution.simulator + spy_der.positions",
+      "status": "partial",
+      "parity_gate": "settlement"
+    },
+    {
+      "match": "journal.py",
+      "capability": "Trade journal, settlement records, outcome labeling",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.journal + spy_der.evaluation.settlement",
+      "status": "partial",
+      "parity_gate": "journal_output",
+      "notes": "SPY-DER's journal is an append-only hash-chained event store keyed by snapshot_id; 0DTE's is a wide-row SQLite trade log. Behavior is equivalent, the schema deliberately is not."
+    },
+    {
+      "match": "journal_insights.py",
+      "capability": "Journal analytics and lesson extraction",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.evaluation.reports + spy_der.learning",
+      "status": "partial",
+      "parity_gate": "journal_output"
+    },
+    {
+      "match": "optimizer.py",
+      "capability": "Parameter optimization",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.learning.optimization",
+      "status": "partial",
+      "parity_gate": "none"
+    },
+    {
+      "match": "walk_forward.py",
+      "capability": "Walk-forward validation",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.training.folds",
+      "status": "partial",
+      "parity_gate": "none"
+    },
+    {
+      "match": "validation_pipeline.py",
+      "capability": "Validation pipeline",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.evaluation + spy_der.runtime.parity",
+      "status": "partial",
+      "parity_gate": "none"
+    },
+    {
+      "match": "validation/**",
+      "capability": "Bootstrap and session-fold validation",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.training.folds",
+      "status": "done",
+      "parity_gate": "none"
+    },
+    {
+      "match": "backtest.py",
+      "capability": "Backtest harness",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.replay",
+      "status": "partial",
+      "parity_gate": "recorded_session_replay"
+    },
+    {
+      "match": "acceptance.py",
+      "capability": "Acceptance checks",
+      "disposition": "replace",
+      "spy_der_owner": "tests/",
+      "status": "done",
+      "parity_gate": "none"
+    },
+    {
+      "match": "unified_loop.py",
+      "capability": "The 0DTE god-module: tick loop, snapshot assembly, orchestration",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.runtime.runner + spy_der.runtime.ai_loop + spy_der.market_data",
+      "status": "partial",
+      "parity_gate": "live_shadow_parity",
+      "notes": "2051 lines and the reason most 0DTE modules cannot be moved intact — nearly everything imports it. Decomposed rather than ported."
+    },
+    {
+      "match": "orchestrator.py",
+      "capability": "Process orchestration",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.runtime.runner",
+      "status": "done",
+      "parity_gate": "none"
+    },
+    {
+      "match": "shadow_runner.py",
+      "capability": "Shadow runtime loop",
+      "disposition": "replace",
+      "spy_der_owner": "spy_der.runtime.ai_loop + spy_der.runtime.runner",
+      "status": "done",
+      "parity_gate": "live_shadow_parity"
+    },
+    {
+      "match": "notifier.py",
+      "capability": "Operational notifications",
+      "disposition": "move",
+      "spy_der_owner": "spy_der.deployment.notifications",
+      "status": "partial",
+      "parity_gate": "none"
+    },
+    {
+      "match": "config_loader.py",
+      "capability": "Configuration loading",
+      "disposition": "reimplement",
+      "spy_der_owner": "spy_der.deployment.manifest",
+      "status": "partial",
+      "parity_gate": "none"
+    },
+    {
+      "match": "configs/**",
+      "capability": "Runtime configuration files",
+      "disposition": "reimplement",
+      "spy_der_owner": "/etc/spy-der/config.yaml",
+      "status": "pending",
+      "parity_gate": "none"
+    },
+    {
+      "match": "zerodte/**",
+      "capability": "PR #150 contract bridge (contracts, runtime pipeline, agent shim)",
+      "disposition": "delete",
+      "spy_der_owner": null,
+      "status": "pending",
+      "parity_gate": "none",
+      "notes": "Temporary decoupling bridge. Its whole purpose ends at cutover; nothing here is carried forward."
+    },
+    {
+      "match": "integrations/**",
+      "capability": "PR #150 SPY-DER integration adapters (market/outcome publishers, decision client, synthetic bridge)",
+      "disposition": "delete",
+      "spy_der_owner": null,
+      "status": "pending",
+      "parity_gate": "none",
+      "notes": "integrations/spy_der/synthetic.py is already superseded: the Dojo calls spy_der.synthetic natively."
+    },
+    {
+      "match": "dashboard/static/**",
+      "capability": "Dashboard frontend assets",
+      "disposition": "move",
+      "spy_der_owner": "apps/dashboard",
+      "status": "pending",
+      "parity_gate": "dashboard_compatibility"
+    },
+    {
+      "match": "dashboard/**",
+      "capability": "Dashboard backend — queries, live schema, state, auth, server",
+      "disposition": "reimplement",
+      "spy_der_owner": "services/dashboard_api",
+      "status": "pending",
+      "parity_gate": "dashboard_compatibility",
+      "notes": "Reads move to the SPY-DER API; the response schema is held compatible so the Vercel frontend needs no change at cutover."
+    },
+    {
+      "match": "api/**",
+      "capability": "Vercel serverless proxy",
+      "disposition": "move",
+      "spy_der_owner": "apps/dashboard",
+      "status": "pending",
+      "parity_gate": "dashboard_compatibility"
+    },
+    {
+      "match": "vercel.json",
+      "capability": "Vercel deployment config",
+      "disposition": "move",
+      "spy_der_owner": "apps/dashboard",
+      "status": "pending",
+      "parity_gate": "dashboard_compatibility"
+    },
+    {
+      "match": ".vercelignore",
+      "capability": "Vercel deployment config",
+      "disposition": "move",
+      "spy_der_owner": "apps/dashboard",
+      "status": "pending",
+      "parity_gate": "dashboard_compatibility"
+    },
+    {
+      "match": ".env.vercel.example",
+      "capability": "Vercel environment template",
+      "disposition": "move",
+      "spy_der_owner": "apps/dashboard",
+      "status": "pending",
+      "parity_gate": "dashboard_compatibility"
+    },
+    {
+      "match": "package.json",
+      "capability": "Frontend package manifest",
+      "disposition": "move",
+      "spy_der_owner": "apps/dashboard",
+      "status": "pending",
+      "parity_gate": "dashboard_compatibility"
+    },
+    {
+      "match": "deploy/**",
+      "capability": "0DTE systemd units, timers, env templates, deploy scripts",
+      "disposition": "replace",
+      "spy_der_owner": "deploy/ (spy-der-*.service, spy-der-*.timer)",
+      "status": "partial",
+      "parity_gate": "none",
+      "notes": "Every zerodte-*.service/timer is superseded by a spy-der-* unit. /opt/zerodte, /var/lib/zerodte and /etc/zerodte have no runtime references after cutover."
+    },
+    {
+      "match": "scripts/**",
+      "capability": "Ad-hoc research scripts (feature impact, replay, turn-lag study)",
+      "disposition": "archive",
+      "spy_der_owner": null,
+      "status": "pending",
+      "parity_gate": "none",
+      "notes": "One-off studies. Their conclusions are captured in docs; the scripts themselves are not runtime code."
+    },
+    {
+      "match": "tests/**",
+      "capability": "0DTE test suite",
+      "disposition": "archive",
+      "spy_der_owner": "tests/ (SPY-DER)",
+      "status": "partial",
+      "parity_gate": "none",
+      "notes": "Tests covering migrated mathematics move with their subject and become SPY-DER parity fixtures; tests of deleted bridge code are dropped."
+    },
+    {
+      "match": "docs/**",
+      "capability": "0DTE design and handoff documentation",
+      "disposition": "archive",
+      "spy_der_owner": null,
+      "status": "pending",
+      "parity_gate": "none"
+    },
+    {
+      "match": ".github/**",
+      "capability": "0DTE CI/deploy workflows",
+      "disposition": "delete",
+      "spy_der_owner": ".github/workflows/ci.yml (SPY-DER)",
+      "status": "pending",
+      "parity_gate": "none",
+      "notes": "Disabled when the repository is archived read-only."
+    },
+    {
+      "match": "AGENTS.md",
+      "capability": "Agent instructions",
+      "disposition": "archive",
+      "spy_der_owner": ".github/copilot-instructions.md (SPY-DER)",
+      "status": "pending",
+      "parity_gate": "none"
+    },
+    {
+      "match": "HANDOFF.md",
+      "capability": "Handoff state document",
+      "disposition": "archive",
+      "spy_der_owner": "docs/CODEX_HANDOFF_STATE.md (SPY-DER)",
+      "status": "pending",
+      "parity_gate": "none"
+    },
+    {
+      "match": "requirements.txt",
+      "capability": "Python dependency pins",
+      "disposition": "archive",
+      "spy_der_owner": "pyproject.toml (SPY-DER)",
+      "status": "done",
+      "parity_gate": "none",
+      "notes": "Already captured verbatim at baseline/manifests/system_a_requirements.txt."
+    },
+    {
+      "match": ".gitignore",
+      "capability": "Repository hygiene",
+      "disposition": "archive",
+      "spy_der_owner": null,
+      "status": "done",
+      "parity_gate": "none"
+    }
+  ]
+}

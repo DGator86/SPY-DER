@@ -124,10 +124,24 @@ def _seed_experience(
     return FileMarketExperienceProvider(root)
 
 
-def test_ownership_boundary_doc_confirms_dojo_owned_by_spy_der() -> None:
+def test_target_architecture_doc_gives_spy_der_the_dojo() -> None:
+    """Dojo ownership is asserted by the *authoritative* architecture doc.
+
+    `OWNERSHIP_BOUNDARY.md` described the interim split and is superseded; the
+    Dojo claim it made is now a subset of SPY-DER owning the whole stack.
+    """
+    text = Path("docs/TARGET_ARCHITECTURE.md").read_text(encoding="utf-8")
+    assert "| Dojo and learning | SPY-DER |" in text
+    assert "| 0DTE | Archived |" in text
+
+
+def test_superseded_ownership_doc_points_at_the_target() -> None:
+    """The old doc must not be readable as still-current guidance."""
     text = Path("docs/OWNERSHIP_BOUNDARY.md").read_text(encoding="utf-8")
-    assert "sole owner of the Dojo" in text
-    assert "or the Dojo" not in text.split("Immediate rule")[0]
+    assert "SUPERSEDED" in text.splitlines()[0]
+    assert "TARGET_ARCHITECTURE.md" in text
+    # It must not be usable to argue a capability stays in 0DTE.
+    assert "Do not use it to justify leaving a capability in" in text
 
 
 def test_outcome_from_market_labels() -> None:

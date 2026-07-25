@@ -1,4 +1,11 @@
-"""Universe-sparring phase — SyntheticUniverseProvider only, no 0DTE imports."""
+"""Universe-sparring phase over SPY-DER-owned synthetic universes.
+
+Synthetic-universe production is SPY-DER's own (:mod:`spy_der.synthetic`), so
+this phase no longer degrades to ``insufficient_data`` when 0DTE is absent — it
+builds a native provider and the real archetype lattice. A caller may still
+inject any ``SyntheticUniverseProvider`` implementation (recorded worlds,
+alternative simulators) through the ``provider`` argument.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from spy_der.contracts.integration import MarketPacket, OutcomePacket
+from spy_der.decisions.shadow import reset_shadow_tick_cache
 from spy_der.dojo.config import DojoConfig
 from spy_der.dojo.evaluation import OutcomeCandidateEvaluator, forward_transfer
 from spy_der.dojo.outcomes import outcomes_from_packets
@@ -16,55 +24,62 @@ from spy_der.dojo.protocols import (
     SyntheticUniverseProvider,
     UniverseSpec,
 )
-from spy_der.integrations.zerodte.provider import reset_shadow_tick_cache
+from spy_der.synthetic.archetypes import ARCHETYPES, REGIMES, simulator_config_hash
+from spy_der.synthetic.evolution import (
+    next_generation_weights,
+    scores_from_archetype_matrix,
+)
+from spy_der.synthetic.provider import (
+    SyntheticUniverseProvider as NativeSyntheticUniverseProvider,
+)
+from spy_der.synthetic.universe import UniverseCatalog, merge_coverage
+from spy_der.synthetic.universe import UniverseSpec as SyntheticUniverseSpec
 
-__all__ = ["StaticUniverseSpec", "run_universe_phase"]
+__all__ = [
+    "StaticUniverseSpec",
+    "default_catalog",
+    "default_provider",
+    "run_universe_phase",
+]
 
 
 @dataclass(frozen=True, slots=True)
 class StaticUniverseSpec:
+    """Legacy string-coordinate spec.
+
+    Superseded by :class:`spy_der.synthetic.UniverseSpec`, whose archetype names
+    are the real ones the simulator generates. Retained so existing callers and
+    fixtures keep importing; new code should use the synthetic spec.
+    """
+
     universe_id: str
     archetype: str
     tilt: str = "neutral"
     vol: str = "mid"
 
 
-def _default_catalog(cfg: DojoConfig) -> list[StaticUniverseSpec]:
-    archetypes = (
-        "trend_up",
-        "trend_down",
-        "mean_revert",
-        "chop",
-        "breakout",
-        "pin",
+def _catalog_for(cfg: DojoConfig, generation: int) -> UniverseCatalog:
+    return UniverseCatalog(
+        seed=cfg.catalog_seed,
+        days=max(1, cfg.universe_days),
+        generation=generation,
     )
+
+
+def default_catalog(
+    cfg: DojoConfig, generation: int = 0
+) -> list[SyntheticUniverseSpec]:
+    """The generation's universe specs: full lattice or a weighted sample."""
+    catalog = _catalog_for(cfg, generation)
     if cfg.full_lattice:
-        tilts = ("bull", "neutral", "bear")
-        vols = ("low", "mid", "high", "spike")
-        specs: list[StaticUniverseSpec] = []
-        idx = 0
-        for arch in archetypes:
-            for tilt in tilts:
-                for vol in vols:
-                    specs.append(
-                        StaticUniverseSpec(
-                            universe_id=f"u{cfg.catalog_seed}-{idx}",
-                            archetype=arch,
-                            tilt=tilt,
-                            vol=vol,
-                        )
-                    )
-                    idx += 1
-        return specs
-    # Weighted shallow sample — deterministic from seed.
-    n = max(1, cfg.universes_per_gen)
-    return [
-        StaticUniverseSpec(
-            universe_id=f"u{cfg.catalog_seed}-{i}",
-            archetype=archetypes[i % len(archetypes)],
-        )
-        for i in range(n)
-    ]
+        return catalog.full_lattice()
+    return catalog.sample(max(1, cfg.universes_per_gen))
+
+
+def default_provider(cfg: DojoConfig | None = None) -> NativeSyntheticUniverseProvider:
+    """SPY-DER's native synthetic-universe provider, tuned by ``cfg``."""
+    stride = cfg.universe_snapshot_stride if cfg is not None else 15
+    return NativeSyntheticUniverseProvider(snapshot_stride=max(1, stride))
 
 
 def _empty_bucket() -> dict[str, Any]:
@@ -95,34 +110,61 @@ def _score_packets(
     return scored
 
 
+def _generate(
+    provider: SyntheticUniverseProvider,
+    spec: Any,
+) -> tuple[list[MarketPacket], dict[str, dict[str, int]]]:
+    """Generate a universe, capturing coverage when the provider reports it.
+
+    The native provider exposes ``generate_result`` with the world's
+    ``(archetype, regime)`` minute occupancy; a third-party provider satisfying
+    only the protocol yields packets alone, and coverage stays empty.
+    """
+    result_fn = getattr(provider, "generate_result", None)
+    if callable(result_fn):
+        result = result_fn(spec)
+        return list(result.packets), dict(result.coverage)
+    return list(provider.generate(spec)), {}
+
+
+def _merge_coverage_into(
+    target: dict[str, dict[str, int]],
+    source: dict[str, dict[str, int]],
+) -> None:
+    for archetype, rows in source.items():
+        bucket = target.setdefault(archetype, {})
+        for regime, minutes in rows.items():
+            bucket[regime] = bucket.get(regime, 0) + int(minutes)
+
+
 def run_universe_phase(
     cfg: DojoConfig,
-    provider: SyntheticUniverseProvider | None,
+    provider: SyntheticUniverseProvider | None = None,
     *,
     authorities: dict[str, DecisionAuthority] | None = None,
     evaluator: CandidateEvaluator | None = None,
 ) -> dict[str, Any]:
     if cfg.skip_universe:
         return {"status": "skipped", "note": "skip_universe"}
-    if provider is None:
-        return {
-            "status": "insufficient_data",
-            "note": (
-                "no SyntheticUniverseProvider — 0DTE must expose synthetic "
-                "market snapshots via the integration contract"
-            ),
-        }
 
-    catalog = _default_catalog(cfg)
+    active: SyntheticUniverseProvider = provider or default_provider(cfg)
     scorer: CandidateEvaluator = evaluator or OutcomeCandidateEvaluator()
     per_archetype: dict[str, dict[str, Any]] = {}
     authority_totals: dict[str, dict[str, Any]] = {}
+    coverage: dict[str, dict[str, int]] = {}
     n_packets = 0
     n_scored_universes = 0
+    n_catalog_specs = 0
 
     for generation in range(max(1, cfg.generations)):
+        # Each generation gets its own catalog: the generation index advances the
+        # Dirichlet transition jitter, so later generations explore nearby
+        # dynamics rather than replaying identical worlds.
+        catalog = default_catalog(cfg, generation)
+        n_catalog_specs += len(catalog)
         for spec in catalog:
-            packets: list[MarketPacket] = list(provider.generate(spec))
+            packets, world_coverage = _generate(active, spec)
+            _merge_coverage_into(coverage, world_coverage)
             n_packets += len(packets)
             bucket = per_archetype.setdefault(spec.archetype, _empty_bucket())
             bucket["n_universes"] += 1
@@ -182,18 +224,39 @@ def run_universe_phase(
             "total_pnl": round(float(vals["total_pnl"]), 6),
         }
 
+    # Real (archetype x regime) minute occupancy, not a lattice-cell count. The
+    # previous 6*3*4 figure counted catalog coordinates, which says nothing
+    # about which market states were actually visited.
+    coverage_matrix = merge_coverage([coverage]) if coverage else None
+
     result: dict[str, Any] = {
         "status": "ok",
-        "n_universes": len(catalog) * max(1, cfg.generations),
+        "n_universes": n_catalog_specs,
         "n_snapshots": n_packets,
         "n_scored_universes": n_scored_universes,
         "generations": cfg.generations,
         "full_lattice": cfg.full_lattice,
         "universe_days": cfg.universe_days,
+        "simulator_config_hash": simulator_config_hash(),
         "archetype_matrix": matrix,
-        "coverage_cells_visited": len(matrix),
-        "coverage_cells_total": 6 * 3 * 4 if cfg.full_lattice else len(matrix),
     }
+    if coverage_matrix is not None:
+        result["coverage"] = coverage_matrix.to_dict()
+        result["coverage_cells_visited"] = coverage_matrix.visited_cells
+        result["coverage_cells_total"] = coverage_matrix.total_cells
+        # Where the next generation should spend its draws.
+        result["evolution"] = next_generation_weights(
+            scores_from_archetype_matrix(matrix),
+            coverage_matrix,
+            generation=max(1, cfg.generations),
+        ).to_dict()
+    else:
+        result["coverage_cells_visited"] = 0
+        result["coverage_cells_total"] = len(ARCHETYPES) * len(REGIMES)
+        result["coverage_note"] = (
+            "injected provider does not report world coverage; "
+            "use spy_der.synthetic for the (archetype x regime) matrix"
+        )
     if authority_totals:
         result["authorities"] = authority_totals
         champ_tot = authority_totals.get("champion")

@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from spy_der.agents.grok import GrokConfig, GrokDecisionAgent
-from spy_der.integrations.zerodte.provider import (
+from spy_der.decisions.shadow import (
     ShadowCandidateView,
     decide_shadow_tick,
     reset_shadow_tick_cache,

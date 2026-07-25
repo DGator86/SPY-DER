@@ -1,0 +1,130 @@
+# SPY-DER configuration — install to /etc/spy-der/config.yaml.
+#
+# Non-secret runtime configuration only. Every credential belongs in
+# /etc/spy-der/spy-der.env; this file is safe to read and to commit as a template.
+
+schema_version: spyder.config.v1
+
+state:
+  root: /var/lib/spy-der
+  # Subdirectories the runtime creates and owns. Kept explicit so an operator can
+  # see exactly what the service set writes.
+  directories:
+    - market        # raw provider ticks
+    - chains        # options-chain snapshots
+    - bars          # incremental 1m bars
+    - forecasts
+    - candidates
+    - decisions
+    - positions
+    - settlements
+    - journal       # append-only, hash-chained
+    - reports       # dojo/, validation/
+    - memories      # agent episodic memory
+    - lessons
+    - configs       # champion.json, challengers/, pending_review/
+    - usage         # model usage and cost metering
+
+market_data:
+  symbol: SPY
+  interval_seconds: 60
+  # Ordered failover. The first provider to return a tick wins; the settlement
+  # provider is a dedicated source, not a failover member.
+  providers:
+    - massive
+    - tradier
+    - tastytrade
+  settlement_provider: yahoo
+  freshness_limit_seconds: 60
+  # Data-quality gate. Below this, the deterministic layers refuse to trade
+  # rather than acting on a degraded snapshot.
+  min_data_quality: 0.75
+  retry:
+    attempts: 3
+    backoff_seconds: [2, 4, 8]
+  persist:
+    raw_ticks: true
+    chains: true
+    bars: true
+
+engine:
+  # Deterministic stage. No AI, no network.
+  features: [gex, mtf, rnd, volatility, structural]
+  regime_classifier: spy_der.forecasting.regime_labels
+  forecast_ensemble: spy_der.forecasting.ensemble
+  candidate_factory:
+    spread_widths: [1, 2, 3, 5]
+    short_min_otm: 0.0015
+    short_max_otm: 0.030
+    long_min_otm: -0.005
+    long_max_otm: 0.015
+    apply_dominance: true
+
+risk:
+  # Deterministic eligibility, applied before the AI ever sees a candidate.
+  decision_ttl_seconds: 30
+  max_spot_age_seconds: 5
+  max_bar_age_seconds: 120
+  max_quote_age_seconds: 5
+
+decisions:
+  # The AI selects among eligible candidates and can do nothing else.
+  provider: grok
+  fallback: deterministic
+  dual_review: true
+
+execution:
+  # Deterministic guard limits. See spy_der.execution.guard — these are re-derived
+  # from the candidate and account state, never read off the decision.
+  mode: shadow
+  allow_live: false
+  session_open: "09:40"
+  session_close: "15:45"
+  limits:
+    max_loss_per_trade: 500
+    max_capital_per_trade: 2500
+    max_size_scalar: 1.0
+    max_contracts: 10
+    max_open_positions: 3
+    max_positions_per_family: 1
+    min_fill_probability: 0.35
+
+dojo:
+  # Universe sparring generates real worlds and runs the real candidate factory,
+  # so snapshot_stride is the throughput dial. See spy_der.dojo.config.
+  universes_per_gen: 6
+  generations: 2
+  universe_days: 8
+  universe_snapshot_stride: 15
+  full_lattice: false
+  catalog_seed: 20260723
+  # Promotion is human-gated. The Dojo stages candidates into
+  # configs/pending_review/ and never writes champion.json.
+  auto_promote: false
+
+validation:
+  reports_dir: /var/lib/spy-der/reports/validation
+  # Parity tolerances. Anything absent here must match exactly.
+  tolerances:
+    capital_required_abs: 0.01
+    size_scalar_abs: 1.0e-9
+    forecast_probability_abs: 1.0e-6
+    forecast_cone_rel: 1.0e-6
+    feature_value_rel: 1.0e-9
+  exact:
+    - candidate_ids
+    - geometry_hash
+    - maximum_loss
+    - hard_vetoes
+    - position_sizing
+    - settlement
+    - regime_labels
+    - journal_payload_hash
+
+dashboard_api:
+  host: 127.0.0.1
+  port: 8788
+  read_only: true
+  # Response schema held compatible with the existing Vercel frontend so the
+  # cutover needs no frontend change.
+  schema_version: spyder.dashboard.v1

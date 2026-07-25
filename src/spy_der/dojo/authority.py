@@ -14,12 +14,12 @@ from typing import Any
 from spy_der.agents.deterministic import DeterministicDecisionAgent
 from spy_der.agents.protocols import DecisionAgent
 from spy_der.contracts.integration import MarketPacket
-from spy_der.dojo.decisions import DojoDecision
-from spy_der.dojo.protocols import DecisionAuthority, DecisionRecord
-from spy_der.integrations.zerodte.provider import (
+from spy_der.decisions.shadow import (
     ShadowCandidateView,
     decide_shadow_tick,
 )
+from spy_der.dojo.decisions import DojoDecision
+from spy_der.dojo.protocols import DecisionAuthority, DecisionRecord
 
 __all__ = [
     "ActiveDecisionAuthority",

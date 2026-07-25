@@ -9,9 +9,9 @@ import pytest
 
 from spy_der.contracts import AgentEntryAction
 from spy_der.contracts.agents import AgentDecisionResponse
+from spy_der.decisions.shadow import _review_gate_passes
 from spy_der.integrations.zerodte import predict_shadow_tick
 from spy_der.integrations.zerodte.prediction import _reset_forecast_cache
-from spy_der.integrations.zerodte.provider import _review_gate_passes
 
 
 def _market(**kw: float) -> SimpleNamespace:

@@ -1,0 +1,33 @@
+[Unit]
+# Settlement and outcome labeling: close out positions against realized
+# settlement, write outcomes into the journal under the originating snapshot_id.
+Description=SPY-DER settlement and outcome labeling
+After=spy-der-market.service
+Wants=spy-der-market.service
+
+[Service]
+Type=simple
+User=spy-der
+Group=spy-der
+WorkingDirectory=/opt/spy-der
+EnvironmentFile=-/etc/spy-der/spy-der.env
+StateDirectory=spy-der
+Environment=SPY_DER_STATE_ROOT=%S/spy-der
+ExecStart=/opt/spy-der/venv/bin/spy-der settlement \
+    --config /etc/spy-der/config.yaml \
+    --state-root %S/spy-der
+Restart=always
+RestartSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/spy-der
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spy-der-settlement
+
+[Install]
+WantedBy=multi-user.target

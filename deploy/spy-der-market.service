@@ -1,0 +1,35 @@
+[Unit]
+# Market runtime: provider integrations -> canonical MarketSnapshot -> recorded
+# ticks, chains and bars. This is the front of the pipeline and owns the only
+# outbound network access in the service set.
+Description=SPY-DER market-data ingestion (canonical snapshots + chain persistence)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=spy-der
+Group=spy-der
+WorkingDirectory=/opt/spy-der
+EnvironmentFile=-/etc/spy-der/spy-der.env
+StateDirectory=spy-der
+Environment=SPY_DER_STATE_ROOT=%S/spy-der
+ExecStart=/opt/spy-der/venv/bin/spy-der market \
+    --config /etc/spy-der/config.yaml \
+    --state-root %S/spy-der \
+    --interval 60
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/spy-der
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spy-der-market
+
+[Install]
+WantedBy=multi-user.target
