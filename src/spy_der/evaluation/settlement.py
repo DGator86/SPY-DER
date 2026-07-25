@@ -17,7 +17,7 @@ from spy_der.contracts.outcomes import (
     SettlementSource,
     SettlementStatus,
 )
-from spy_der.journal.store import InMemoryJournalStore
+from spy_der.journal.store import AppendOnlyJournal, InMemoryJournalStore
 
 __all__ = [
     "SettlementBatch",
@@ -53,7 +53,7 @@ def settle_session(
     settlement_price: Decimal,
     traded: Sequence[tuple[Candidate, Decimal, int, str]] = (),
     blocked: Sequence[tuple[Candidate, Decimal, str, str]] = (),
-    journal: InMemoryJournalStore | None = None,
+    journal: AppendOnlyJournal | None = None,
     account_id: str = "system_b_ensemble",
     deployment_id: str = "phase13",
     now: datetime | None = None,
