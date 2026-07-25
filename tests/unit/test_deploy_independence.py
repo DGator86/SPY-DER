@@ -131,6 +131,14 @@ def test_every_service_is_hardened_and_state_scoped(unit: str) -> None:
     assert "SPY_DER_STATE_ROOT=%S/spy-der" in text, unit
 
 
+def test_dashboard_api_serves_the_dojo_report_the_timers_write() -> None:
+    """The reports directory the dojo units write must be the one the API reads."""
+    dojo = (_DEPLOY / "spy-der-dojo-daily.service").read_text(encoding="utf-8")
+    assert "--reports-dir /var/lib/spy-der/reports/dojo" in dojo
+    api = (_DEPLOY / "spy-der-dashboard-api.service").read_text(encoding="utf-8")
+    assert "--state-root %S/spy-der" in api
+
+
 def test_dashboard_api_cannot_mutate_state() -> None:
     """A read-only data service must not be able to write runtime state."""
     text = (_DEPLOY / "spy-der-dashboard-api.service").read_text(encoding="utf-8")
@@ -155,6 +163,90 @@ def test_no_unit_enables_live_trading() -> None:
         text = path.read_text(encoding="utf-8")
         assert "SPY_DER_ALLOW_LIVE=1" not in text, path.name
         assert "--live-trading" not in text, path.name
+
+
+# --------------------------------------------------------------------------- #
+# Shipped units invoke commands that actually exist                           #
+# --------------------------------------------------------------------------- #
+#: Subcommands named by a shipped unit that the CLI does not implement yet.
+#: `spy-der <cmd>` exits 2 for these, so the unit fails on every start — a
+#: oneshot dies immediately and a `Restart=always` service crash-loops. Keeping
+#: them here makes the gap visible instead of silent; delete a name when the
+#: command lands. `dashboard-api` was on this list until it was implemented, and
+#: its absence is why a completed Dojo run never surfaced a report.
+PENDING_CLI_COMMANDS = frozenset({"engine", "settlement", "validate"})
+
+
+def _cli_commands() -> set[str]:
+    """Command names `spy_der.cli.main` dispatches, read from its source.
+
+    Parsed rather than executed: importing is cheap but dispatch lives in
+    `if cmd in {...}` branches, and the branch bodies import heavy runtime
+    modules. The set literals are the authoritative list.
+    """
+    source = (_SRC / "cli.py").read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(_SRC / "cli.py"))
+    commands: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        if not any(isinstance(op, ast.In) for op in node.ops):
+            continue
+        if not (isinstance(node.left, ast.Name) and node.left.id == "cmd"):
+            continue
+        for comparator in node.comparators:
+            if isinstance(comparator, ast.Set):
+                for element in comparator.elts:
+                    if isinstance(element, ast.Constant) and isinstance(element.value, str):
+                        commands.add(element.value)
+    return commands
+
+
+def _exec_start_subcommand(text: str) -> str | None:
+    """The `spy-der <subcommand>` a unit runs, across line continuations."""
+    joined = text.replace("\\\n", " ")
+    for line in joined.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("ExecStart="):
+            continue
+        tokens = stripped.removeprefix("ExecStart=").split()
+        if not tokens:
+            return None
+        # tokens[0] is the venv binary; the subcommand is the first bare word.
+        for token in tokens[1:]:
+            if not token.startswith("-"):
+                return token
+        return None
+    return None
+
+
+@pytest.mark.parametrize(
+    "unit", sorted(p.name for p in _DEPLOY.glob("*.service"))
+)
+def test_every_shipped_unit_invokes_a_real_cli_command(unit: str) -> None:
+    """A unit whose ExecStart names a nonexistent command cannot ever run.
+
+    `spy-der-dashboard-api.service` shipped pointing at a `dashboard-api`
+    command that did not exist, so nothing ever served the Dojo reports the
+    timers were faithfully writing.
+    """
+    path = _DEPLOY / unit
+    subcommand = _exec_start_subcommand(path.read_text(encoding="utf-8"))
+    assert subcommand, f"{unit} has no parseable ExecStart subcommand"
+    if subcommand in PENDING_CLI_COMMANDS:
+        pytest.xfail(f"{subcommand} is a known-pending CLI command")
+    assert subcommand in _cli_commands(), (
+        f"{unit} runs `spy-der {subcommand}`, which spy_der.cli.main does not "
+        f"dispatch — the unit will exit 2 on every start"
+    )
+
+
+def test_pending_command_list_is_accurate() -> None:
+    """A command that has landed must be removed from the pending list."""
+    implemented = _cli_commands() & PENDING_CLI_COMMANDS
+    assert not implemented, (
+        f"{sorted(implemented)} are implemented — drop them from PENDING_CLI_COMMANDS"
+    )
 
 
 # --------------------------------------------------------------------------- #

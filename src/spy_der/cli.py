@@ -15,6 +15,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  vps-runner         Run VPS parallel-track state publisher")
         print("  ai-check           Verify the live AI decision maker end-to-end")
         print("  decision-service   Local HTTP /v1/decision boundary for 0DTE")
+        print("  dashboard-api      Read-only HTTP API for Dojo reports + live state")
         print("  dojo               Run protocol-driven Dojo training cycle")
         return 0
     cmd, *rest = argv
@@ -34,6 +35,10 @@ def main(argv: list[str] | None = None) -> int:
         from spy_der.runtime.decision_service import main as decision_main
 
         return decision_main(rest)
+    if cmd in {"dashboard-api", "dashboard_api", "dashboard"}:
+        from spy_der.runtime.dashboard_api import main as dashboard_main
+
+        return dashboard_main(rest)
     if cmd in {"dojo", "dojo-runner"}:
         from spy_der.runtime.dojo_runner import main as dojo_main
 
