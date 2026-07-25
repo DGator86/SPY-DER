@@ -18,6 +18,8 @@ temporary compatibility surface and is deleted at cutover — see
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -168,6 +170,79 @@ def _ai_enabled() -> bool:
         if raw in {"0", "false", "off", "no"}:
             return False
     return True
+
+
+#: Nesting depth of an explicit AI context (see :func:`ai_context`). Non-zero
+#: means a caller has declared this work is not a live market tick.
+_AI_CONTEXT_DEPTH = 0
+_AI_CONTEXT_REASON = ""
+
+
+@contextmanager
+def ai_context(reason: str) -> Iterator[None]:
+    """Declare work that may use the AI regardless of market hours.
+
+    The Dojo is the reason this exists. Its timers fire at 06:30 ET — three
+    hours before the open — and sparring against recorded and synthetic tape is
+    exactly when the model *should* run. A market-hours gate with no exemption
+    would silently downgrade every Dojo run to the deterministic agent and
+    quietly change what the Dojo measures.
+
+    Re-entrant, and always restores the previous depth, so a raising inner call
+    cannot leave the process permanently exempt.
+    """
+    global _AI_CONTEXT_DEPTH, _AI_CONTEXT_REASON
+    previous_reason = _AI_CONTEXT_REASON
+    _AI_CONTEXT_DEPTH += 1
+    _AI_CONTEXT_REASON = reason or previous_reason
+    try:
+        yield
+    finally:
+        _AI_CONTEXT_DEPTH -= 1
+        if _AI_CONTEXT_DEPTH <= 0:
+            _AI_CONTEXT_DEPTH = 0
+            _AI_CONTEXT_REASON = ""
+        else:
+            _AI_CONTEXT_REASON = previous_reason
+
+
+def _market_hours_only() -> bool:
+    """Whether the market-hours gate applies. `SPY_DER_AI_MARKET_HOURS_ONLY=0` lifts it."""
+    raw = os.environ.get("SPY_DER_AI_MARKET_HOURS_ONLY", "").strip().lower()
+    return raw not in {"0", "false", "off", "no"}
+
+
+def _market_is_open(now: datetime) -> bool:
+    """True when the regular session is open. Unknown calendar → treated as open.
+
+    Failing *open* is deliberate and is the conservative choice for this gate
+    specifically: the gate exists to avoid paying for model calls on a dead
+    tape, not to enforce safety. Every real safety limit lives in
+    :mod:`spy_der.execution.guard`, which is unaffected by this. A calendar
+    import failure must not silently downgrade a live trading session to the
+    deterministic agent.
+    """
+    try:
+        from spy_der.market_data.calendar import MarketCalendar
+    except ImportError:
+        return True
+    try:
+        return MarketCalendar().is_open(now)
+    except Exception:
+        return True
+
+
+def _ai_allowed_now(now: datetime) -> tuple[bool, str]:
+    """``(allowed, reason)`` for using the paid model on this tick."""
+    if not _ai_enabled():
+        return False, "killswitch"
+    if _AI_CONTEXT_DEPTH > 0:
+        return True, f"context:{_AI_CONTEXT_REASON or 'declared'}"
+    if not _market_hours_only():
+        return True, "gate_disabled"
+    if _market_is_open(now):
+        return True, "market_open"
+    return False, "market_closed"
 
 
 def _top_k() -> int | None:
@@ -333,7 +408,7 @@ def decide_shadow_tick(
         now = now.replace(tzinfo=UTC)
 
     selected = _select_candidates(tuple(candidates))
-    agent = agent or _default_trader_agent()
+    agent = agent or _default_trader_agent(now)
 
     # Empty universe: no edge, and no reason to pay for a model call.
     if not selected:
@@ -493,9 +568,19 @@ def parallel_track_payload(decision: SpyDerShadowDecision) -> dict[str, Any]:
     return decision.as_dict()
 
 
-def _default_trader_agent() -> DecisionAgent:
-    # Prefer Grok when an API key is present AND the runtime AI killswitch is on.
-    if _ai_enabled() and os.environ.get("XAI_API_KEY"):
+def _default_trader_agent(now: datetime | None = None) -> DecisionAgent:
+    """Grok when the model is allowed to run, deterministic otherwise.
+
+    The market-hours gate lands here rather than in the units because the
+    decision service is an HTTP boundary another process calls: stopping the
+    unit out of hours would turn every caller's request into a connection
+    error, where returning a deterministic decision degrades cleanly and costs
+    nothing. Dojo runs declare themselves via :func:`ai_context` and are exempt.
+    """
+    if not os.environ.get("XAI_API_KEY"):
+        return DeterministicDecisionAgent()
+    allowed, _reason = _ai_allowed_now(now or datetime.now(tz=UTC))
+    if allowed:
         return GrokDecisionAgent(
             cfg=GrokConfig(model_id=DEFAULT_TRADER_MODEL_ID, auto_http=True)
         )

@@ -30,10 +30,14 @@ market_data:
   interval_seconds: 60
   # Ordered failover. The first provider to return a tick wins; the settlement
   # provider is a dedicated source, not a failover member.
+  # Tradier leads: a brokerage account returns real-time option NBBO with greeks,
+  # where the Massive snapshot plan often has no last_quote and falls back to
+  # day.close. Listing a provider with no credential is not an error — it is
+  # skipped with a note, so this list is safe on a host holding either key.
+  # tastytrade and yahoo adapters are not ported yet; naming one here fails loudly.
   providers:
-    - massive
     - tradier
-    - tastytrade
+    - massive
   settlement_provider: yahoo
   freshness_limit_seconds: 60
   # Data-quality gate. Below this, the deterministic layers refuse to trade
