@@ -83,7 +83,13 @@ def test_no_credential_exits_nonzero(
 ) -> None:
     """A unit that starts clean and records nothing is worse than one that fails."""
     monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    monkeypatch.delenv("TRADIER_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("TRADIER_API_KEY", raising=False)
     assert main(["--state-root", str(tmp_path), "--max-ticks", "1"]) == 3
+    heartbeat = json.loads((tmp_path / "health" / "market.json").read_text(encoding="utf-8"))
+    assert heartbeat["health"] == "failed"
+    assert heartbeat["error"] == "no_credential"
+    assert "TRADIER_ACCESS_TOKEN" in heartbeat["detail"]
 
 
 def test_unported_provider_exits_nonzero(tmp_path: Path) -> None:
@@ -94,6 +100,9 @@ def test_unported_provider_exits_nonzero(tmp_path: Path) -> None:
     because the operator fix differs: one is a config typo, the other a key.
     """
     assert main(["--provider", "tastytrade", "--state-root", str(tmp_path)]) == 2
+    heartbeat = json.loads((tmp_path / "health" / "market.json").read_text(encoding="utf-8"))
+    assert heartbeat["health"] == "failed"
+    assert heartbeat["error"] == "unknown_provider"
 
 
 def test_tradier_without_a_credential_exits_three_not_two(

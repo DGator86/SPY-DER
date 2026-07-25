@@ -204,7 +204,7 @@ def _reports(state_root: Path, now: datetime) -> dict[str, Any]:
 def _overall(services: list[dict[str, Any]], feed: dict[str, Any]) -> str:
     """Worst-of, so a green banner cannot hide a stopped service."""
     states = {str(s.get("state")) for s in services}
-    if states & {"stale", "never_seen"}:
+    if states & {"stale", "never_seen", "failed"}:
         return "degraded"
     if feed.get("state") in {"unreadable"}:
         return "degraded"

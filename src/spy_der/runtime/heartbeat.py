@@ -120,7 +120,12 @@ def read_heartbeats(
         interval = float(body.get("interval_seconds") or 0.0)
         age = _age_seconds(body.get("updated_at"), stamp)
         entry["age_seconds"] = age
-        entry["state"] = classify_age(age, interval)
+        # Terminal start failures publish health=failed so a crash-looping unit
+        # is not mistaken for "never installed" (never_seen) or a live loop.
+        if body.get("health") == "failed":
+            entry["state"] = "failed"
+        else:
+            entry["state"] = classify_age(age, interval)
         out.append(entry)
     return out
 

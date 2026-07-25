@@ -158,7 +158,7 @@ Code is deployed, but the runtime needs credentials first. One-time setup:
 
     sudo install -D -m 640 -o root -g $SVC_USER \\
          $APP_DIR/deploy/spy-der.env.example $ENV_FILE
-    sudo nano $ENV_FILE          # set MASSIVE_API_KEY (and XAI_API_KEY for the agent)
+    sudo nano $ENV_FILE          # TRADIER_ACCESS_TOKEN and/or MASSIVE_API_KEY; XAI_API_KEY for the agent
 
 The next self-update run will start them.
 EOF
