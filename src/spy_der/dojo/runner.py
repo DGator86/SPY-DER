@@ -88,9 +88,32 @@ def _build_flags(
                 "detail": str(learner.get("note", "promotion gates failed")),
             }
         )
-    # `universe_provider_missing` is gone: synthetic-universe production is
-    # SPY-DER's own (spy_der.synthetic), so the phase always has a provider.
-    if universe.get("status") == "ok":
+    if universe.get("status") == "skipped" and universe.get("reason") == "no_recorded_tape":
+        flags.append(
+            {
+                "severity": "warn",
+                "flag": "universe_skipped_no_tape",
+                "detail": str(
+                    universe.get("note")
+                    or "universe lattice refused — no recorded sessions"
+                ),
+            }
+        )
+    if universe.get("status") in {"ok", "unscored"}:
+        if int(universe.get("n_scored_universes") or 0) == 0 and int(
+            universe.get("n_universes") or 0
+        ) > 0:
+            flags.append(
+                {
+                    "severity": "alert",
+                    "flag": "universe_unscored",
+                    "detail": (
+                        f"generated {universe.get('n_universes')} universes / "
+                        f"{universe.get('n_snapshots')} snapshots but scored 0 — "
+                        "outcomes were not attached; lattice work was wasted"
+                    ),
+                }
+            )
         for arch, metrics in (universe.get("archetype_matrix") or {}).items():
             mean = metrics.get("mean_session_pnl")
             if (
@@ -290,12 +313,33 @@ def _run_dojo_phases(
         if staged_changes
         else authority_set
     )
-    universe = run_universe_phase(
-        cfg,
-        synthetic,
-        authorities=universe_authorities,
-        evaluator=scorer,
-    )
+    # Refuse the expensive lattice when there is nothing to train against.
+    # Saturday's weekly full-lattice job previously burned ~74 minutes generating
+    # ~40k synthetic snapshots, scored zero of them, and wrote an empty report.
+    if (
+        not cfg.skip_universe
+        and not cfg.force_universe
+        and recorded.get("status") == "insufficient_data"
+    ):
+        universe = {
+            "status": "skipped",
+            "reason": "no_recorded_tape",
+            "note": (
+                "no recorded tape — refusing universe lattice "
+                f"({recorded.get('note', 'insufficient_data')}); "
+                "pass force_universe to override"
+            ),
+            "n_universes": 0,
+            "n_snapshots": 0,
+            "n_scored_universes": 0,
+        }
+    else:
+        universe = run_universe_phase(
+            cfg,
+            synthetic,
+            authorities=universe_authorities,
+            evaluator=scorer,
+        )
 
     from pathlib import Path
 
@@ -354,6 +398,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skip-recorded", action="store_true")
     ap.add_argument("--skip-learner", action="store_true")
     ap.add_argument("--skip-universe", action="store_true")
+    ap.add_argument(
+        "--force-universe",
+        action="store_true",
+        help=(
+            "Run the universe lattice even when recorded tape is insufficient. "
+            "Default is to refuse — a full lattice with zero sessions is a no-op."
+        ),
+    )
     ap.add_argument("--skip-sequential", action="store_true")
     ap.add_argument("--folds", type=int, default=3)
     ap.add_argument("--trials", type=int, default=15)
@@ -380,6 +432,7 @@ def main(argv: list[str] | None = None) -> int:
         skip_recorded=args.skip_recorded,
         skip_learner=args.skip_learner,
         skip_universe=args.skip_universe,
+        force_universe=args.force_universe,
         wf_folds=args.folds,
         learn_trials=args.trials,
         universes_per_gen=args.universes,

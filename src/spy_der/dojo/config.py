@@ -31,6 +31,11 @@ class DojoConfig:
     skip_recorded: bool = False
     skip_learner: bool = False
     skip_universe: bool = False
+    #: When True (default), refuse the universe lattice if recorded tape is
+    #: insufficient. A full-lattice weekend run with zero sessions is a
+    #: multi-hour no-op — generate nothing until there is tape to train against.
+    #: Set force_universe=True to override (tests / explicit synthetic-only runs).
+    force_universe: bool = False
     # recorded-phase
     wf_folds: int = 3
     min_ticks: int = 100

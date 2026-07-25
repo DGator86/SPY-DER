@@ -113,18 +113,25 @@ def _score_packets(
 def _generate(
     provider: SyntheticUniverseProvider,
     spec: Any,
-) -> tuple[list[MarketPacket], dict[str, dict[str, int]]]:
-    """Generate a universe, capturing coverage when the provider reports it.
+) -> tuple[list[MarketPacket], list[OutcomePacket], dict[str, dict[str, int]]]:
+    """Generate a universe, keeping outcomes + coverage when the provider has them.
 
-    The native provider exposes ``generate_result`` with the world's
-    ``(archetype, regime)`` minute occupancy; a third-party provider satisfying
-    only the protocol yields packets alone, and coverage stays empty.
+    The native provider's ``generate_result`` returns packets, ground-truth
+    outcomes, and ``(archetype, regime)`` occupancy together. Discarding the
+    outcomes (the previous bug) meant the lattice generated tens of thousands of
+    snapshots and then scored none of them.
     """
     result_fn = getattr(provider, "generate_result", None)
     if callable(result_fn):
         result = result_fn(spec)
-        return list(result.packets), dict(result.coverage)
-    return list(provider.generate(spec)), {}
+        packets = list(result.packets)
+        outcomes = list(getattr(result, "outcomes", ()) or ())
+        coverage = dict(getattr(result, "coverage", {}) or {})
+        if not outcomes:
+            outcomes = outcomes_from_packets(packets)
+        return packets, outcomes, coverage
+    packets = list(provider.generate(spec))
+    return packets, outcomes_from_packets(packets), {}
 
 
 def _merge_coverage_into(
@@ -163,7 +170,7 @@ def run_universe_phase(
         catalog = default_catalog(cfg, generation)
         n_catalog_specs += len(catalog)
         for spec in catalog:
-            packets, world_coverage = _generate(active, spec)
+            packets, outcomes, world_coverage = _generate(active, spec)
             _merge_coverage_into(coverage, world_coverage)
             n_packets += len(packets)
             bucket = per_archetype.setdefault(spec.archetype, _empty_bucket())
@@ -173,8 +180,6 @@ def run_universe_phase(
 
             if not authorities or not packets:
                 continue
-
-            outcomes = outcomes_from_packets(packets)
             if not outcomes:
                 continue
 
@@ -268,6 +273,12 @@ def run_universe_phase(
             )
         result["note"] = (
             "universe packets scored via DecisionAuthority + CandidateEvaluator"
+        )
+    elif n_catalog_specs > 0 and n_scored_universes == 0:
+        result["status"] = "unscored"
+        result["note"] = (
+            f"generated {n_catalog_specs} universes / {n_packets} snapshots but "
+            "scored 0 — provider outcomes missing realized_pnl labels"
         )
     else:
         result["note"] = (
