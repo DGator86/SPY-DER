@@ -113,6 +113,20 @@ find "$STATE_DIR" -type d -exec chmod 0755 {} +
 find "$STATE_DIR/reports" -type f -name '*.json' -exec chmod 0644 {} + 2>/dev/null || true
 [ -f "$STATE_DIR/live_state.json" ] && chmod 0644 "$STATE_DIR/live_state.json"
 
+# Publish what is deployed so the dashboard can answer "did my change land?"
+# without anyone opening an SSH session.
+cat > "$STATE_DIR/deploy.json" <<JSON
+{
+  "commit": "$(git -C "$APP_DIR" rev-parse HEAD)",
+  "commit_short": "$(git -C "$APP_DIR" rev-parse --short HEAD)",
+  "subject": "$(git -C "$APP_DIR" log -1 --pretty=%s | tr -d '"\\\\')",
+  "committed_at": "$(git -C "$APP_DIR" log -1 --pretty=%cI)",
+  "ref": "$DEPLOY_REF",
+  "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+JSON
+chmod 0644 "$STATE_DIR/deploy.json"
+
 if [ -f "$CONFIG_FILE" ]; then
     echo "config: $CONFIG_FILE"
 else
