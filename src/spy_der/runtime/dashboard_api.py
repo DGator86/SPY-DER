@@ -9,10 +9,12 @@ The service is deliberately read-only: it opens files under the state root and
 never writes. The unit enforces that with ``ReadOnlyPaths=/var/lib/spy-der``.
 
 Routes:
-    GET /health              liveness
-    GET /v1/state            live_state.json (spyder.dashboard.v1)
-    GET /v1/dojo/latest      newest Dojo report
-    GET /v1/dojo/reports     index of stamped Dojo reports (newest first)
+    GET /health                    liveness
+    GET /v1/state                  live_state.json (spyder.dashboard.v1)
+    GET /v1/dojo/latest            newest Dojo report
+    GET /v1/dojo/reports           index of stamped Dojo reports (newest first)
+    GET /v1/validation/latest      newest parity-validation report
+    GET /v1/validation/reports     index of stamped validation reports
 """
 
 from __future__ import annotations
@@ -50,6 +52,7 @@ class DashboardApiState:
     def __init__(self, state_root: str | Path = DEFAULT_STATE_ROOT) -> None:
         self.state_root = Path(state_root)
         self.reports_dir = self.state_root / "reports" / "dojo"
+        self.validation_dir = self.state_root / "reports" / "validation"
         self.live_state_path = self.state_root / "live_state.json"
 
     def live_state(self) -> dict[str, Any] | None:
@@ -62,12 +65,28 @@ class DashboardApiState:
     def latest_dojo_report(self) -> dict[str, Any] | None:
         return read_latest_dojo_report(self.reports_dir)
 
+    def latest_validation_report(self) -> dict[str, Any] | None:
+        latest = self.validation_dir / "latest.json"
+        if not latest.is_file():
+            return None
+        with open(latest, encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else None
+
     def dojo_report_index(self, limit: int = 20) -> list[dict[str, Any]]:
+        return self._report_index(self.reports_dir, "dojo_", limit)
+
+    def validation_report_index(self, limit: int = 20) -> list[dict[str, Any]]:
+        return self._report_index(self.validation_dir, "validation_", limit)
+
+    def _report_index(
+        self, directory: Path, prefix: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
         """Stamped reports newest first. Names sort chronologically by design."""
-        if not self.reports_dir.is_dir():
+        if not directory.is_dir():
             return []
         stamped = sorted(
-            self.reports_dir.glob("dojo_*.json"),
+            directory.glob(f"{prefix}*.json"),
             key=lambda p: p.name,
             reverse=True,
         )
@@ -86,7 +105,13 @@ class DashboardApiState:
                 entry["report_date"] = body.get("report_date")
                 entry["generated_at"] = body.get("generated_at")
                 entry["summary"] = body.get("summary")
-                entry["flags"] = len(body.get("flags") or [])
+                # Dojo reports carry flags; validation reports carry gates and a
+                # top-level verdict. Index whichever this report actually has.
+                if "flags" in body:
+                    entry["flags"] = len(body.get("flags") or [])
+                if "gates" in body:
+                    entry["gates"] = len(body.get("gates") or [])
+                    entry["ok"] = body.get("ok")
             index.append(entry)
         return index
 
@@ -114,13 +139,27 @@ def handle_get(state: DashboardApiState, path: str, query: str = "") -> tuple[in
                 "detail": "no Dojo run has completed, or its report is unreadable",
             }
         return 200, body
-    if path == "/v1/dojo/reports":
+    if path in {"/v1/validation/latest", "/v1/validation"}:
+        body = state.latest_validation_report()
+        if body is None:
+            return 404, {
+                "error": "no_validation_report",
+                "path": str(state.validation_dir / "latest.json"),
+                "detail": "no validation run has completed, or its report is unreadable",
+            }
+        return 200, body
+    if path in {"/v1/dojo/reports", "/v1/validation/reports"}:
         raw = (params.get("limit") or ["20"])[0]
         try:
             limit = int(raw)
         except ValueError:
             return 400, {"error": "invalid_limit", "got": raw}
-        return 200, {"reports": state.dojo_report_index(limit)}
+        index = (
+            state.dojo_report_index(limit)
+            if path == "/v1/dojo/reports"
+            else state.validation_report_index(limit)
+        )
+        return 200, {"reports": index}
     return 404, {"error": "not_found", "path": path}
 
 

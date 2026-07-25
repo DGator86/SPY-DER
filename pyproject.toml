@@ -30,6 +30,7 @@ spy-der-vps-runner = "spy_der.runtime.runner:main"
 spy-der-ai-check = "spy_der.runtime.ai_check:main"
 spy-der-decision-service = "spy_der.runtime.decision_service:main"
 spy-der-dashboard-api = "spy_der.runtime.dashboard_api:main"
+spy-der-validate = "spy_der.runtime.validation:main"
 spy-der-dojo = "spy_der.runtime.dojo_runner:main"
 spy-der-market = "spy_der.runtime.market_service:main"
 

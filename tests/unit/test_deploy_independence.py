@@ -172,9 +172,16 @@ def test_no_unit_enables_live_trading() -> None:
 #: `spy-der <cmd>` exits 2 for these, so the unit fails on every start — a
 #: oneshot dies immediately and a `Restart=always` service crash-loops. Keeping
 #: them here makes the gap visible instead of silent; delete a name when the
-#: command lands. `dashboard-api` was on this list until it was implemented, and
-#: its absence is why a completed Dojo run never surfaced a report.
-PENDING_CLI_COMMANDS = frozenset({"engine", "settlement", "validate"})
+#: command lands. `dashboard-api` and `validate` were both on this list until
+#: they were implemented; `dashboard-api`'s absence is why a completed Dojo run
+#: never surfaced a report.
+#:
+#: `engine` and `settlement` remain blocked on a persistence layer that does not
+#: exist: `deploy/config.yaml.example` declares `forecasts/`, `candidates/`,
+#: `decisions/`, `positions/` and `settlements/` under the state root, and no
+#: module writes or reads any of them (the journal stores are in-memory and
+#: SQLite only). Implementing either would mean inventing that on-disk format.
+PENDING_CLI_COMMANDS = frozenset({"engine", "settlement"})
 
 
 def _cli_commands() -> set[str]:

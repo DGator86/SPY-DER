@@ -70,6 +70,8 @@ sudo systemctl enable --now spy-der-dashboard-api.service
 | `GET /health` | liveness + resolved state root |
 | `GET /v1/dojo/latest` | newest Dojo report |
 | `GET /v1/dojo/reports?limit=N` | index of stamped reports, newest first |
+| `GET /v1/validation/latest` | newest parity-validation report |
+| `GET /v1/validation/reports?limit=N` | index of stamped validation reports |
 | `GET /v1/state` | `live_state.json` (`spyder.dashboard.v1`) |
 
 ```bash

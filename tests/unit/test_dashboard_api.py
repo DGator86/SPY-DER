@@ -110,6 +110,59 @@ def test_report_index_is_empty_before_any_run(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Validation reports                                                          #
+# --------------------------------------------------------------------------- #
+def _write_validation(tmp_path: Path, *, ok: bool = True) -> None:
+    directory = tmp_path / "reports" / "validation"
+    directory.mkdir(parents=True, exist_ok=True)
+    body = {
+        "report_date": "2026-07-24",
+        "summary": "window=recent days=5 · 3 pass, 0 fail, 13 pending",
+        "ok": ok,
+        "gates": [{"gate": "stale_feed", "verdict": "pass", "detail": "clean"}],
+    }
+    for name in ("validation_20260724_060000.json", "latest.json"):
+        (directory / name).write_text(json.dumps(body), encoding="utf-8")
+
+
+def test_latest_validation_report_is_served(tmp_path: Path) -> None:
+    _write_validation(tmp_path)
+    code, body = handle_get(_state(tmp_path), "/v1/validation/latest")
+    assert code == 200
+    assert body["ok"] is True
+    assert body["gates"][0]["gate"] == "stale_feed"
+
+
+def test_missing_validation_report_explains_itself(tmp_path: Path) -> None:
+    code, body = handle_get(_state(tmp_path), "/v1/validation/latest")
+    assert code == 404
+    assert body["error"] == "no_validation_report"
+    assert body["path"].endswith("reports/validation/latest.json")
+
+
+def test_validation_index_carries_the_verdict(tmp_path: Path) -> None:
+    """A validation report has gates and an `ok`, not dojo-style flags."""
+    _write_validation(tmp_path, ok=False)
+    code, body = handle_get(_state(tmp_path), "/v1/validation/reports")
+    assert code == 200
+    entry = body["reports"][0]
+    assert entry["name"] == "validation_20260724_060000.json"
+    assert entry["gates"] == 1
+    assert entry["ok"] is False
+    assert "flags" not in entry
+
+
+def test_dojo_and_validation_indexes_do_not_bleed(tmp_path: Path) -> None:
+    """Each index reads its own directory and prefix."""
+    _write_report(tmp_path)
+    _write_validation(tmp_path)
+    _, dojo = handle_get(_state(tmp_path), "/v1/dojo/reports")
+    _, validation = handle_get(_state(tmp_path), "/v1/validation/reports")
+    assert all(r["name"].startswith("dojo_") for r in dojo["reports"])
+    assert all(r["name"].startswith("validation_") for r in validation["reports"])
+
+
+# --------------------------------------------------------------------------- #
 # Live state                                                                  #
 # --------------------------------------------------------------------------- #
 def test_live_state_is_served_when_present(tmp_path: Path) -> None:
