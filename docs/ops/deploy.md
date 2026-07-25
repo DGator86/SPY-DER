@@ -27,7 +27,9 @@ tells you what to do next, because the secrets file does not exist yet:
 ```bash
 sudo install -D -m 640 -o root -g spy-der \
      /opt/spy-der/deploy/spy-der.env.example /etc/spy-der/spy-der.env
-sudo nano /etc/spy-der/spy-der.env      # MASSIVE_API_KEY, XAI_API_KEY
+sudo nano /etc/spy-der/spy-der.env
+# Set at least one market provider: TRADIER_ACCESS_TOKEN and/or MASSIVE_API_KEY.
+# Also set XAI_API_KEY for the agent.
 ```
 
 The next self-update run (within two minutes) starts the units. Nothing else is

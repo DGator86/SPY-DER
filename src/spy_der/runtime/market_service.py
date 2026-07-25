@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from spy_der.market_data.calendar import MarketCalendar
 from spy_der.market_data.composite import CompositeFeed
@@ -78,15 +79,29 @@ class MarketService:
             chain = build_provider_chain(list(cfg.providers), symbol=cfg.symbol)
         except UnknownProviderError as exc:
             log.error("provider configuration error: %s", exc)
+            self._publish_failure(
+                detail=f"provider configuration error: {exc}",
+                extra={"error": "unknown_provider", "providers": str(exc)},
+            )
             return 2
 
         if chain.is_empty:
             # A unit that starts cleanly and records nothing is worse than one
             # that fails: the dashboard would look alive with no data behind it.
-            log.error(
-                "no configured market-data provider (%s) — set a credential in "
-                "/etc/spy-der/spy-der.env",
-                chain.describe(),
+            # Publish a failed heartbeat so /v1/system shows the credential miss
+            # instead of the ambiguous never_seen state.
+            detail = (
+                "no configured market-data provider "
+                f"({chain.describe()}) — set TRADIER_ACCESS_TOKEN and/or "
+                "MASSIVE_API_KEY in /etc/spy-der/spy-der.env"
+            )
+            log.error("%s", detail)
+            self._publish_failure(
+                detail=detail,
+                extra={
+                    "error": "no_credential",
+                    "providers": chain.describe(),
+                },
             )
             return 3
 
@@ -117,6 +132,23 @@ class MarketService:
 
         log.info("market runtime stopped after %d tick(s)", ticks)
         return 0
+
+    def _publish_failure(self, *, detail: str, extra: dict[str, Any] | None = None) -> None:
+        """Surface a start failure on the dashboard before exiting.
+
+        Without this, Restart=always crash-loops leave market as never_seen —
+        indistinguishable from a unit that was never installed.
+        """
+        payload = {"health": "failed"}
+        if extra:
+            payload.update(extra)
+        write_heartbeat(
+            self.config.state_root,
+            "market",
+            interval_seconds=self.config.interval_seconds,
+            detail=detail,
+            extra=payload,
+        )
 
     def _tick(self, feed: CompositeFeed) -> None:
         now = datetime.now(tz=UTC)

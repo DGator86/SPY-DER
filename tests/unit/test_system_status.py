@@ -136,6 +136,21 @@ def test_one_stale_service_degrades_the_banner(tmp_path: Path) -> None:
     assert _status(tmp_path)["overall"] == "degraded"
 
 
+def test_failed_start_heartbeat_is_failed_not_stale(tmp_path: Path) -> None:
+    """Credential crash-loops must surface as failed, not never_seen/stale."""
+    write_heartbeat(
+        tmp_path,
+        "market",
+        interval_seconds=60,
+        detail="no configured market-data provider",
+        extra={"health": "failed", "error": "no_credential"},
+        now=NOW - timedelta(hours=2),
+    )
+    names = {s["service"]: s for s in _status(tmp_path)["services"]}
+    assert names["market"]["state"] == "failed"
+    assert _status(tmp_path)["overall"] == "degraded"
+
+
 def test_a_late_service_warns(tmp_path: Path) -> None:
     _healthy(tmp_path)
     write_heartbeat(tmp_path, "engine", interval_seconds=30, now=NOW - timedelta(seconds=75))
