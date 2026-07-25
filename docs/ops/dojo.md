@@ -27,6 +27,20 @@ venv/bin/spy-der dojo \
     --trials 10
 ```
 
+## Preconditions
+
+If recorded tape is below `min_sessions`, the **universe lattice is refused**
+(`status=skipped`, flag `universe_skipped_no_tape`). A full-lattice weekend run
+with zero sessions previously burned ~an hour generating snapshots and scored
+none of them. Override only when you explicitly want synthetic-only sparring:
+
+```bash
+venv/bin/spy-der dojo --force-universe --full-lattice ...
+```
+
+Native synthetic outcomes now carry per-candidate terminal P&L against the
+world's settlement, so when the lattice *does* run it is scored.
+
 ## Timers
 
 | Timer | When (ET) | Window |

@@ -49,13 +49,11 @@ def test_dojo_package_does_not_import_zerodte_internals() -> None:
 
 
 def test_run_dojo_without_providers(tmp_path: Path) -> None:
-    """No experience provider still produces a report — and real universes.
+    """No experience provider still produces a report — but refuses the lattice.
 
-    Universe sparring no longer needs an injected provider: it generates
-    SPY-DER-owned synthetic worlds. The universe knobs are bounded here only to
-    keep the unit test quick; the phase runs its real code path (world
-    generation, chain repricing, the candidate factory), just over one 1-day
-    world per generation instead of the nightly twelve 8-day ones.
+    A full-lattice (or even a small sample) with zero recorded sessions is a
+    CPU burn that scores nothing. Default is to skip universe until tape exists;
+    ``force_universe`` opts back into synthetic-only runs.
     """
     cfg = DojoConfig(
         reports_dir=str(tmp_path / "reports"),
@@ -70,12 +68,32 @@ def test_run_dojo_without_providers(tmp_path: Path) -> None:
     assert out["report_date"] == "2026-07-24"
     assert (tmp_path / "reports" / "latest.json").is_file()
     assert any(f["flag"] == "no_recorded_tape" for f in out["flags"])
-    # Synthetic universes are native, so the phase must actually run.
+    universe = out["metrics"]["phases"]["universe"]
+    assert universe["status"] == "skipped"
+    assert universe["reason"] == "no_recorded_tape"
+    assert universe["n_universes"] == 0
+    assert any(f["flag"] == "universe_skipped_no_tape" for f in out["flags"])
+
+
+def test_force_universe_runs_without_tape_and_scores(tmp_path: Path) -> None:
+    """force_universe opts into synthetic-only sparring — and must score it."""
+    cfg = DojoConfig(
+        reports_dir=str(tmp_path / "reports"),
+        configs_dir=str(tmp_path / "configs"),
+        report_date="2026-07-24",
+        universes_per_gen=1,
+        generations=1,
+        universe_days=1,
+        universe_snapshot_stride=120,
+        force_universe=True,
+    )
+    out = run_dojo(cfg)
     universe = out["metrics"]["phases"]["universe"]
     assert universe["status"] == "ok"
     assert universe["n_snapshots"] > 0
-    assert universe["coverage_cells_total"] == 40  # 8 archetypes x 5 regimes
-    assert not any(f["flag"] == "universe_provider_missing" for f in out["flags"])
+    assert universe["n_scored_universes"] > 0
+    assert "authorities" in universe
+    assert not any(f["flag"] == "universe_unscored" for f in out["flags"])
 
 
 def test_run_dojo_with_file_experience(tmp_path: Path) -> None:

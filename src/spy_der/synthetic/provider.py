@@ -32,6 +32,7 @@ from typing import Any
 
 from spy_der.candidates.factory import generate_candidate_universe
 from spy_der.candidates.geometry import FactoryConfig
+from spy_der.candidates.payoff import terminal_payoff
 from spy_der.contracts.candidates import Candidate
 from spy_der.contracts.integration import (
     MARKET_PACKET_SCHEMA,
@@ -216,11 +217,13 @@ class SyntheticUniverseProvider:
             snapshot = feed.snapshot(tick.timestamp)
             if snapshot is None:
                 continue
-            packet = self._packet(spec, world, tick, snapshot, index)
+            packet, candidates = self._packet_with_candidates(
+                spec, world, tick, snapshot, index
+            )
             packets.append(packet)
             settle = world.settlement(tick.session)
             if settle is not None:
-                outcomes.append(self._outcome(packet, tick, settle))
+                outcomes.append(self._outcome(packet, tick, settle, candidates))
 
         return SyntheticUniverseResult(
             spec=spec,
@@ -249,13 +252,25 @@ class SyntheticUniverseProvider:
         snapshot: CanonicalMarketSnapshot,
         index: int,
     ) -> MarketPacket:
-        universe = generate_candidate_universe(snapshot, cfg=self._factory_config)
-        views = tuple(
-            self._candidate_view(c) for c in universe.candidates[: self.max_candidates]
+        packet, _candidates = self._packet_with_candidates(
+            spec, world, tick, snapshot, index
         )
+        return packet
+
+    def _packet_with_candidates(
+        self,
+        spec: UniverseSpec,
+        world: MarkovWorld,
+        tick: WorldTick,
+        snapshot: CanonicalMarketSnapshot,
+        index: int,
+    ) -> tuple[MarketPacket, tuple[Candidate, ...]]:
+        universe = generate_candidate_universe(snapshot, cfg=self._factory_config)
+        candidates = tuple(universe.candidates[: self.max_candidates])
+        views = tuple(self._candidate_view(c) for c in candidates)
         session = tick.timestamp.date()
         snapshot_id = f"{spec.universe_id}-{session.isoformat()}-{index:05d}"
-        return MarketPacket(
+        packet = MarketPacket(
             schema_version=MARKET_PACKET_SCHEMA,
             snapshot_id=snapshot_id,
             session_date=session,
@@ -270,6 +285,7 @@ class SyntheticUniverseProvider:
             generated_at=tick.timestamp,
             risk_max_size_scalar=1.0,
         )
+        return packet, candidates
 
     @staticmethod
     def _candidate_view(candidate: Candidate) -> MarketCandidateView:
@@ -331,26 +347,57 @@ class SyntheticUniverseProvider:
         }
 
     @staticmethod
-    def _outcome(packet: MarketPacket, tick: WorldTick, settlement: float) -> OutcomePacket:
-        """Ground-truth outcome: the world's realized close for the session."""
+    def _outcome(
+        packet: MarketPacket,
+        tick: WorldTick,
+        settlement: float,
+        candidates: tuple[Candidate, ...] = (),
+    ) -> OutcomePacket:
+        """Ground-truth outcome: settlement + per-candidate terminal P&L.
+
+        Earlier builds shipped ``realized_pnl=None`` and dropped the candidate
+        map, so the Dojo's evaluator matched zero trades after spending the
+        whole lattice generating packets. Terminal P&L is computed here from
+        the real candidate legs against the world's realized close.
+        """
         move = settlement - tick.spot
+        settle_px = Decimal(str(settlement))
+        by_candidate: dict[str, str] = {}
+        for candidate in candidates:
+            pnl = terminal_payoff(
+                candidate.legs,
+                entry_credit=candidate.entry_credit,
+                spot=settle_px,
+            )
+            by_candidate[candidate.candidate_id] = str(pnl)
+        true_direction = (
+            "bullish" if move > 0 else ("bearish" if move < 0 else "flat")
+        )
+        # Prefer the first (dominance-ordered) candidate as the settlement pnl
+        # so evaluators that only read realized_pnl still get a number.
+        head_pnl = None
+        if by_candidate:
+            head_id = candidates[0].candidate_id
+            head_pnl = Decimal(by_candidate[head_id])
         return OutcomePacket(
             schema_version=OUTCOME_PACKET_SCHEMA,
             snapshot_id=packet.snapshot_id,
             session_date=packet.session_date,
             symbol=packet.symbol,
-            candidate_id=None,
+            candidate_id=candidates[0].candidate_id if candidates else None,
             action="settle",
-            realized_pnl=None,
+            realized_pnl=head_pnl,
             settled=True,
             labels={
                 "settlement": settlement,
                 "spot_at_snapshot": tick.spot,
                 "realized_move": move,
                 "direction": "up" if move > 0 else ("down" if move < 0 else "flat"),
+                "true_direction": true_direction,
                 "archetype": tick.archetype,
                 "regime": tick.regime,
                 "minutes_to_close": tick.minutes_to_close,
+                "realized_pnl_by_candidate": by_candidate,
             },
             settled_at=tick.timestamp,
         )
