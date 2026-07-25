@@ -28,11 +28,11 @@ from spy_der.contracts.integration import (
     MarketPacket,
     market_packet_from_dict,
 )
-from spy_der.dojo.config import DEFAULT_LIVE_STATE, DEFAULT_REPORTS_DIR
-from spy_der.integrations.zerodte.provider import (
+from spy_der.decisions.shadow import (
     ShadowCandidateView,
     decide_shadow_tick,
 )
+from spy_der.dojo.config import DEFAULT_LIVE_STATE, DEFAULT_REPORTS_DIR
 from spy_der.integrations.zerodte.result_publisher import (
     enrich_with_dojo_status,
     publish_dashboard_packet,

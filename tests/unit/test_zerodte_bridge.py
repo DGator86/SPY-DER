@@ -8,13 +8,13 @@ from pathlib import Path
 
 from spy_der.agents import DeterministicDecisionAgent, MockDecisionAgent
 from spy_der.contracts import AgentEntryAction
+from spy_der.decisions.shadow import reset_shadow_tick_cache
 from spy_der.integrations.zerodte import (
     PARALLEL_TRACK_ID,
     ShadowCandidateView,
     decide_shadow_tick,
     parallel_track_payload,
 )
-from spy_der.integrations.zerodte.provider import reset_shadow_tick_cache
 from spy_der.runtime import write_live_state_file
 from spy_der.runtime.runner import RunnerConfig, SpyDerVpsRunner
 

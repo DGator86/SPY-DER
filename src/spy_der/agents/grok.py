@@ -111,7 +111,7 @@ class GrokDecisionAgent:
         self._api_key = api_key
         self._transport = transport
         # Env overrides win over the config default so operators can bump the
-        # model id / endpoint via /etc/zerodte/zerodte.env with no redeploy.
+        # model id / endpoint via /etc/spy-der/spy-der.env with no redeploy.
         self._model_id = os.environ.get(self.cfg.model_id_env, "").strip() or self.cfg.model_id
         self._api_base = os.environ.get(self.cfg.api_base_env, "").strip() or self.cfg.api_base
         effort = os.environ.get(self.cfg.reasoning_effort_env, "").strip().lower()

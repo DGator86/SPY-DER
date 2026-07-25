@@ -1,8 +1,18 @@
-"""Decision provider for 0DTE parallel paper track + dashboard panel.
+"""SPY-DER shadow decision path — the AI decision authority.
 
-0DTE calls `decide_shadow_tick` each tick with read-only shadow candidates.
-SPY-DER AI (Grok by default, Deterministic fallback) selects among them.
-Live broker routing stays disabled — paper/shadow only.
+`decide_shadow_tick` is called once per tick with the candidate set for a
+snapshot; SPY-DER AI (Grok by default, Deterministic fallback) selects among
+them. Live broker routing stays disabled here — paper/shadow only. Enforcement
+of hard limits is *not* this module's job: see
+:mod:`spy_der.execution.guard`, which re-checks every decision deterministically
+before anything can reach an executor.
+
+This module previously lived at ``spy_der.integrations.zerodte.provider``, which
+put SPY-DER's own production decision path inside an integrations package named
+after the system being retired. It is SPY-DER-owned code and now lives under
+:mod:`spy_der.decisions`. ``spy_der.integrations.zerodte`` re-exports it as a
+temporary compatibility surface and is deleted at cutover — see
+``docs/TARGET_ARCHITECTURE.md``.
 """
 
 from __future__ import annotations

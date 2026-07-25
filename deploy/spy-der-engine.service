@@ -1,0 +1,35 @@
+[Unit]
+# Deterministic engine: features -> regime -> forecast -> candidates -> risk.
+# No network access and no AI: everything here is reproducible from a snapshot.
+Description=SPY-DER deterministic engine (features, forecasts, candidates, risk)
+After=spy-der-market.service
+Wants=spy-der-market.service
+
+[Service]
+Type=simple
+User=spy-der
+Group=spy-der
+WorkingDirectory=/opt/spy-der
+EnvironmentFile=-/etc/spy-der/spy-der.env
+StateDirectory=spy-der
+Environment=SPY_DER_STATE_ROOT=%S/spy-der
+ExecStart=/opt/spy-der/venv/bin/spy-der engine \
+    --config /etc/spy-der/config.yaml \
+    --state-root %S/spy-der
+Restart=always
+RestartSec=5
+
+# Deterministic stage: no outbound network is required or permitted.
+PrivateNetwork=true
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/spy-der
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spy-der-engine
+
+[Install]
+WantedBy=multi-user.target

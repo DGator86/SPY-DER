@@ -1,0 +1,31 @@
+[Unit]
+# Parity validation against the gates and tolerances in docs/CUTOVER_PLAN.md.
+# Reports only: validation never promotes and never trades.
+Description=SPY-DER weekly full parity validation
+After=spy-der-market.service
+
+[Service]
+Type=oneshot
+User=spy-der
+Group=spy-der
+WorkingDirectory=/opt/spy-der
+EnvironmentFile=-/etc/spy-der/spy-der.env
+StateDirectory=spy-der
+Environment=SPY_DER_STATE_ROOT=%S/spy-der
+ExecStart=/opt/spy-der/venv/bin/spy-der validate \
+    --config /etc/spy-der/config.yaml \
+    --state-root %S/spy-der \
+    --reports-dir %S/spy-der/reports/validation \
+    --window full --days 60
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/spy-der
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spy-der-validation-weekly
+
+SuccessExitStatus=0

@@ -1,0 +1,35 @@
+[Unit]
+# Dashboard data services. Binds loopback only: the Vercel frontend reaches it
+# through a reverse proxy, so the API is never directly internet-facing.
+Description=SPY-DER dashboard API (read-only state services)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=spy-der
+Group=spy-der
+WorkingDirectory=/opt/spy-der
+EnvironmentFile=-/etc/spy-der/spy-der.env
+StateDirectory=spy-der
+Environment=SPY_DER_STATE_ROOT=%S/spy-der
+ExecStart=/opt/spy-der/venv/bin/spy-der dashboard-api \
+    --host 127.0.0.1 \
+    --port 8788 \
+    --state-root %S/spy-der
+Restart=always
+RestartSec=5
+
+# Read-only service: it must never mutate runtime state.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/var/lib/spy-der
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spy-der-dashboard-api
+
+[Install]
+WantedBy=multi-user.target

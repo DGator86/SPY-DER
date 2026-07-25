@@ -13,8 +13,8 @@ from spy_der.contracts.integration import (
     MarketCandidateView,
     MarketPacket,
 )
+from spy_der.decisions.shadow import reset_shadow_tick_cache
 from spy_der.integrations.zerodte.client import HttpDecisionClient
-from spy_der.integrations.zerodte.provider import reset_shadow_tick_cache
 from spy_der.runtime.decision_service import handle_decision_request
 
 

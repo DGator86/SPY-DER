@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from spy_der.contracts.integration import MarketPacket, OutcomePacket
+from spy_der.decisions.shadow import reset_shadow_tick_cache
 from spy_der.dojo.config import DojoConfig
 from spy_der.dojo.evaluation import (
     OutcomeCandidateEvaluator,
@@ -19,7 +20,6 @@ from spy_der.dojo.protocols import (
     DecisionRecord,
     MarketExperienceProvider,
 )
-from spy_der.integrations.zerodte.provider import reset_shadow_tick_cache
 
 __all__ = ["RecordedDecision", "run_recorded_phase"]
 

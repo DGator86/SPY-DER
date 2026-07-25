@@ -11,7 +11,6 @@ User=spy-der
 Group=spy-der
 WorkingDirectory=/opt/spy-der
 EnvironmentFile=-/etc/spy-der/spy-der.env
-EnvironmentFile=-/etc/zerodte/zerodte.env
 StateDirectory=spy-der
 Environment=SPY_DER_STATE_ROOT=%S/spy-der
 ExecStart=/opt/spy-der/venv/bin/spy-der dojo \

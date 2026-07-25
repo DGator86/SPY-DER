@@ -14,7 +14,7 @@ from spy_der.contracts.agents import (
     AgentDecisionResponse,
     AgentEntryAction,
 )
-from spy_der.integrations.zerodte.provider import (
+from spy_der.decisions.shadow import (
     ShadowCandidateView,
     decide_shadow_tick,
     reset_shadow_tick_cache,
