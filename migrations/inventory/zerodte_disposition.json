@@ -16,16 +16,16 @@
   "rules": [
     {
       "match": "massive_feed.py",
-      "capability": "Market feed — Massive/Polygon-compatible options snapshot",
+      "capability": "Market feed \u2014 Massive/Polygon-compatible options snapshot",
       "disposition": "reimplement",
       "spy_der_owner": "spy_der.market_data.providers.massive",
-      "status": "pending",
+      "status": "done",
       "parity_gate": "raw_market_snapshots",
-      "notes": "HTTP client and field mappings port directly; the module's imports of spy0dte/resample/gate_scorer/unified_loop do not, so the provider is rebuilt against MarketDataProvider/RawTick."
+      "notes": "Ported to spy_der.market_data.providers.massive. HTTP client, field mappings, day-close fallback tagging, pagination cap and ATM put-call-parity spot recovery (including the high-bias fix) all preserved. Not yet verified against the live endpoint \u2014 tested against fixtures reproducing the feed's documented absences."
     },
     {
       "match": "tradier_feed.py",
-      "capability": "Market feed — Tradier",
+      "capability": "Market feed \u2014 Tradier",
       "disposition": "reimplement",
       "spy_der_owner": "spy_der.market_data.providers.tradier",
       "status": "pending",
@@ -33,7 +33,7 @@
     },
     {
       "match": "tastytrade_feed.py",
-      "capability": "Market feed — Tastytrade",
+      "capability": "Market feed \u2014 Tastytrade",
       "disposition": "reimplement",
       "spy_der_owner": "spy_der.market_data.providers.tastytrade",
       "status": "pending",
@@ -41,7 +41,7 @@
     },
     {
       "match": "yahoo_feed.py",
-      "capability": "Market feed — Yahoo (underlying/settlement backstop)",
+      "capability": "Market feed \u2014 Yahoo (underlying/settlement backstop)",
       "disposition": "reimplement",
       "spy_der_owner": "spy_der.market_data.providers.yahoo",
       "status": "pending",
@@ -106,7 +106,7 @@
     },
     {
       "match": "gex/**",
-      "capability": "Gamma exposure — OI, volume proxy, hybrid, weekly",
+      "capability": "Gamma exposure \u2014 OI, volume proxy, hybrid, weekly",
       "disposition": "replace",
       "spy_der_owner": "spy_der.features.gex",
       "status": "partial",
@@ -211,7 +211,7 @@
     },
     {
       "match": "prediction/**",
-      "capability": "Prediction engine — models, training, calibration, registry, storage",
+      "capability": "Prediction engine \u2014 models, training, calibration, registry, storage",
       "disposition": "replace",
       "spy_der_owner": "spy_der.forecasting + spy_der.training + spy_der.evaluation",
       "status": "partial",
@@ -362,7 +362,7 @@
       "spy_der_owner": "spy_der.runtime.runner + spy_der.runtime.ai_loop + spy_der.market_data",
       "status": "partial",
       "parity_gate": "live_shadow_parity",
-      "notes": "2051 lines and the reason most 0DTE modules cannot be moved intact — nearly everything imports it. Decomposed rather than ported."
+      "notes": "2051 lines and the reason most 0DTE modules cannot be moved intact \u2014 nearly everything imports it. Decomposed rather than ported."
     },
     {
       "match": "orchestrator.py",
@@ -432,7 +432,7 @@
     },
     {
       "match": "dashboard/**",
-      "capability": "Dashboard backend — queries, live schema, state, auth, server",
+      "capability": "Dashboard backend \u2014 queries, live schema, state, auth, server",
       "disposition": "reimplement",
       "spy_der_owner": "services/dashboard_api",
       "status": "pending",

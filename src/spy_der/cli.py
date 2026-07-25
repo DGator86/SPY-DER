@@ -11,12 +11,17 @@ def main(argv: list[str] | None = None) -> int:
         print("Usage: spy-der <command>")
         print()
         print("Commands:")
+        print("  market             Run market-data ingestion (providers -> recording)")
         print("  vps-runner         Run VPS parallel-track state publisher")
         print("  ai-check           Verify the live AI decision maker end-to-end")
         print("  decision-service   Local HTTP /v1/decision boundary for 0DTE")
         print("  dojo               Run protocol-driven Dojo training cycle")
         return 0
     cmd, *rest = argv
+    if cmd in {"market", "market-service"}:
+        from spy_der.runtime.market_service import main as market_main
+
+        return market_main(rest)
     if cmd in {"vps-runner", "runner"}:
         from spy_der.runtime.runner import main as runner_main
 
