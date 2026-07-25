@@ -104,6 +104,14 @@ done
 chown -R "$SVC_USER:$SVC_USER" "$STATE_DIR"
 chmod 0755 "$STATE_DIR"
 find "$STATE_DIR" -type d -exec chmod 0755 {} +
+# Repair the published surface. The runtime writes these 0644, but reports
+# produced before that fix landed are still 0600 — created by tempfile.mkstemp,
+# whose mode os.replace carried onto the target. Those files are unreadable by
+# any other local user, which is how a Dojo report that existed on disk showed
+# up on the dashboard as a Dojo that had never run. Nothing under here is a
+# secret; credentials live in /etc/spy-der/spy-der.env.
+find "$STATE_DIR/reports" -type f -name '*.json' -exec chmod 0644 {} + 2>/dev/null || true
+[ -f "$STATE_DIR/live_state.json" ] && chmod 0644 "$STATE_DIR/live_state.json"
 
 if [ -f "$CONFIG_FILE" ]; then
     echo "config: $CONFIG_FILE"

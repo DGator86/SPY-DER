@@ -364,6 +364,17 @@ def test_remote_deploy_leaves_state_directories_traversable() -> None:
     assert "chmod 0755" in _remote_deploy()
 
 
+def test_remote_deploy_repairs_legacy_unreadable_reports() -> None:
+    """Reports written before the 0644 fix stay 0600 until overwritten.
+
+    Without this the operator has to know to chmod them by hand, and until they
+    do, a report that exists on disk reads as a Dojo that never ran.
+    """
+    text = _remote_deploy()
+    assert "chmod 0644" in text
+    assert "reports" in text
+
+
 def test_remote_deploy_never_starts_units_without_the_secrets_file() -> None:
     text = _remote_deploy()
     assert "/etc/spy-der/spy-der.env" in text
