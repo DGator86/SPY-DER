@@ -1,0 +1,22 @@
+[Unit]
+# Pull-based deploy: checks the origin for a new commit on the deploy branch and,
+# when one lands, runs deploy/remote-deploy.sh. Requires only OUTBOUND https, so
+# deploys keep working when inbound SSH to the box is blocked or rate-limited.
+#
+# Runs as root by design: it installs systemd units and manages the service
+# user. It is the one unit here that is not confined to the spy-der user, which
+# is why it does nothing but fetch a signed-off ref and exec the repo's own
+# deploy script.
+Description=SPY-DER self-update (pull-based deploy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash /opt/spy-der/deploy/self-update.sh
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spy-der-update
+
+SuccessExitStatus=0
