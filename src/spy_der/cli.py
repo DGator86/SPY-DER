@@ -12,6 +12,8 @@ def main(argv: list[str] | None = None) -> int:
         print()
         print("Commands:")
         print("  market             Run market-data ingestion (providers -> recording)")
+        print("  engine             Run the deterministic engine over recorded snapshots")
+        print("  settlement         Settle closed sessions and label outcomes")
         print("  vps-runner         Run VPS parallel-track state publisher")
         print("  ai-check           Verify the live AI decision maker end-to-end")
         print("  decision-service   Local HTTP /v1/decision boundary for 0DTE")
@@ -24,6 +26,14 @@ def main(argv: list[str] | None = None) -> int:
         from spy_der.runtime.market_service import main as market_main
 
         return market_main(rest)
+    if cmd in {"engine", "engine-service"}:
+        from spy_der.runtime.engine import main as engine_main
+
+        return engine_main(rest)
+    if cmd in {"settlement", "settle"}:
+        from spy_der.runtime.settlement import main as settlement_main
+
+        return settlement_main(rest)
     if cmd in {"vps-runner", "runner"}:
         from spy_der.runtime.runner import main as runner_main
 

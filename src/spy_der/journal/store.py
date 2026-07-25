@@ -6,13 +6,25 @@ import sqlite3
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from spy_der.contracts.common import content_hash
 from spy_der.contracts.events import JournalEvent
 from spy_der.journal.hash_chain import compute_event_hash, verify_chain
 
-__all__ = ["InMemoryJournalStore", "SqliteJournalStore"]
+__all__ = ["AppendOnlyJournal", "InMemoryJournalStore", "SqliteJournalStore"]
+
+
+class AppendOnlyJournal(Protocol):
+    """What a writer needs from a journal store.
+
+    Narrower than `interfaces.JournalStore`, which returns `None`: callers that
+    chain events need the finalized event back, with its sequence number and
+    hash filled in. Both stores below satisfy this, so a writer can take either
+    without naming a concrete class.
+    """
+
+    def append(self, event: JournalEvent) -> JournalEvent: ...
 
 
 @dataclass
