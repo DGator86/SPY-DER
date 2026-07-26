@@ -431,3 +431,89 @@
   font-size: 11px;
   color: var(--sd-muted);
 }
+
+/* Dojo training room ----------------------------------------------------- */
+.spyder-tab__subhead {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sd-muted);
+}
+
+.spyder-tab__focus {
+  margin-top: 4px;
+  padding: 10px 12px;
+  background: var(--sd-panel-2);
+  border: 1px solid var(--sd-border);
+  border-radius: 6px;
+}
+
+.spyder-tab__focus .spyder-tab__subhead {
+  margin-top: 0;
+}
+
+.spyder-tab__focus-headline {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.spyder-tab__focus-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.spyder-tab__focus-item {
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--sd-warn);
+  background: transparent;
+}
+
+.spyder-tab__focus-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sd-warn);
+}
+
+.spyder-tab__focus-reason {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--sd-muted);
+}
+
+.spyder-tab__chain--dojo {
+  margin-top: 12px;
+}
+
+.spyder-tab__robustness {
+  margin-top: 4px;
+}
+
+.spyder-tab__matrix-row--weak td:first-child {
+  color: var(--sd-warn);
+  font-weight: 600;
+}
+
+.spyder-tab__parity {
+  margin-top: 8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--sd-border);
+}
+
+@media (max-width: 640px) {
+  .spyder-tab__chain--dojo .spyder-tab__stage {
+    flex: 1 1 100%;
+  }
+
+  .spyder-tab__bar-row {
+    grid-template-columns: 72px 1fr 72px;
+  }
+}

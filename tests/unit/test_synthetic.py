@@ -413,7 +413,7 @@ def test_evolution_weights_up_the_weak_archetypes() -> None:
         "crash": ArchetypeScore("crash", mean_session_pnl=-50.0, n_sessions=5),
         "calm_pin": ArchetypeScore("calm_pin", mean_session_pnl=+50.0, n_sessions=5),
     }
-    plan = next_generation_weights(scores)
+    plan = next_generation_weights(scores, inertia=0.0)
     assert plan.weights["crash"] > plan.weights["calm_pin"]
 
 
@@ -423,13 +423,13 @@ def test_evolution_never_abandons_a_strong_archetype() -> None:
         a: ArchetypeScore(a, mean_session_pnl=+500.0, session_win_rate=1.0, n_sessions=9)
         for a in ARCHETYPES
     }
-    plan = next_generation_weights(scores)
+    plan = next_generation_weights(scores, inertia=0.0)
     assert all(w > 0.0 for w in plan.weights.values())
 
 
 def test_unvisited_cells_pull_sampling_even_without_scores() -> None:
     coverage = merge_coverage([{"calm_pin": dict.fromkeys(REGIMES, 100)}])
-    plan = next_generation_weights({}, coverage)
+    plan = next_generation_weights({}, coverage, inertia=0.0)
     assert plan.weights["crash"] > plan.weights["calm_pin"]
 
 
@@ -438,10 +438,54 @@ def test_evolve_catalog_advances_generation_and_jitter() -> None:
     evolved, plan = evolve_catalog(
         catalog,
         {"crash": ArchetypeScore("crash", mean_session_pnl=-10.0, n_sessions=4)},
+        inertia=0.0,
     )
     assert evolved.generation == 1
     assert plan.generation == 1
     assert evolved.sample(1)[0].transition_jitter > 0.0
+
+
+def test_curriculum_inertia_blends_prior_into_new_plan() -> None:
+    from spy_der.synthetic.evolution import blend_weights
+
+    scores = {
+        "crash": ArchetypeScore("crash", mean_session_pnl=+50.0, n_sessions=5),
+        "calm_pin": ArchetypeScore("calm_pin", mean_session_pnl=+50.0, n_sessions=5),
+    }
+    # Fresh scores look fine everywhere, but prior still pushes crash.
+    prior = {a: 1.0 for a in ARCHETYPES}
+    prior["crash"] = 4.0
+    plan = next_generation_weights(scores, prior_weights=prior, inertia=0.5)
+    assert plan.blended_from_prior is True
+    assert plan.weights["crash"] > plan.proposed_weights["crash"]
+    blended = blend_weights(plan.proposed_weights, prior, inertia=0.5)
+    assert plan.weights["crash"] == pytest.approx(blended["crash"])
+
+
+def test_focus_from_plan_uses_evolution_ranking_and_reasons() -> None:
+    from spy_der.synthetic.evolution import focus_from_plan
+
+    scores = {
+        "gap_shock": ArchetypeScore(
+            "gap_shock",
+            mean_session_pnl=-20.0,
+            dir_hit=0.2,
+            n_sessions=4,
+        ),
+        "calm_pin": ArchetypeScore(
+            "calm_pin", mean_session_pnl=+10.0, dir_hit=0.8, n_sessions=4
+        ),
+    }
+    coverage = merge_coverage([{"calm_pin": dict.fromkeys(REGIMES, 100)}])
+    plan = next_generation_weights(scores, coverage, inertia=0.0)
+    focus = focus_from_plan(plan, scores, top_n=3)
+    assert focus
+    assert focus[0]["archetype"] in plan.weights
+    # Heaviest weight first.
+    assert focus[0]["weight"] == max(row["weight"] for row in focus)
+    gap = next(row for row in focus if row["archetype"] == "gap_shock")
+    assert "negative mean P&L" in gap["reasons"]
+    assert "low directional accuracy" in gap["reasons"]
 
 
 # --------------------------------------------------------------------------- #
