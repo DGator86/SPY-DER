@@ -361,6 +361,11 @@
   color: var(--sd-muted);
 }
 
+.spyder-tab__tags li[data-tone="ok"] {
+  border-color: var(--sd-ok);
+  color: var(--sd-ok);
+}
+
 .spyder-tab__tags li[data-tone="warn"] {
   border-color: var(--sd-warn);
   color: var(--sd-warn);

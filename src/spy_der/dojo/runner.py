@@ -3,10 +3,14 @@
 Phases:
   1. recorded   — MarketExperienceProvider + DecisionAuthority scoring
   2. sequential — leak-free blind-day forward transfer / retention
-  3. learner    — adaptive learning cycle (stages pending_review only)
+  3. learner    — adaptive learning cycle (stages a challenger)
   4. universe   — SyntheticUniverseProvider sparring with AI scoring
+  5. promotion  — re-run 1 and 2 with the staged change installed as the
+                  candidate champion; promote it when every gate passes
 
-Promotion never happens here. Reports land under /var/lib/spy-der/reports/dojo.
+Promotion is automatic and evidence-gated: a recommendation alone never moves
+``champion.json``, a validated re-run does. Reports land under
+/var/lib/spy-der/reports/dojo.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ import time
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from spy_der.decisions.champion import reset_champion_cache
 from spy_der.decisions.shadow import ai_context
 from spy_der.dojo.authority import default_authorities
 from spy_der.dojo.config import DEFAULT_CONFIGS_DIR, DEFAULT_REPORTS_DIR, DojoConfig
@@ -34,10 +39,85 @@ from spy_der.dojo.sequential import SequentialDojoConfig, run_sequential_dojo
 from spy_der.dojo.universe import run_universe_phase
 from spy_der.learning.learner import run_learning_cycle
 from spy_der.learning.memories import append_failure_episode, append_lesson
+from spy_der.learning.promotion import (
+    PromotionError,
+    auto_promote_pending,
+    current_champion,
+)
+from spy_der.learning.promotion_trial import run_promotion_trial
 
 __all__ = ["main", "run_dojo"]
 
 ET = ZoneInfo("America/New_York")
+
+
+def _run_promotion_phase(
+    cfg: DojoConfig,
+    *,
+    learner: dict[str, Any],
+    staged_changes: dict[str, Any] | None,
+    experience: MarketExperienceProvider | None,
+    evaluator: CandidateEvaluator,
+    universe_result: dict[str, Any],
+    incumbent: DecisionAuthority | None,
+) -> dict[str, Any]:
+    """Re-run under the staged change and promote it if the re-run validates.
+
+    Returns the trial report either way; ``enacted`` says whether
+    ``champion.json`` moved. Promotion failures are reported, never raised — a
+    Dojo run must still produce its report if the config write fails.
+    """
+    if not cfg.auto_promote:
+        return {
+            "status": "disabled",
+            "enacted": False,
+            "note": "auto_promote disabled (SPY_DER_DOJO_AUTO_PROMOTE=0)",
+        }
+    if learner.get("outcome") != "promotion_recommended" or not staged_changes:
+        return {
+            "status": "no_candidate",
+            "enacted": False,
+            "note": f"learner outcome {learner.get('outcome', 'skipped')!r}",
+        }
+
+    candidate_id = learner.get("staged_candidate_id")
+    trial = run_promotion_trial(
+        cfg,
+        changes=staged_changes,
+        candidate_id=str(candidate_id) if candidate_id else None,
+        experience=experience,
+        evaluator=evaluator,
+        universe_result=universe_result,
+        current_champion=current_champion(cfg.configs_dir),
+        thresholds=cfg.promotion_thresholds(),
+        incumbent_authority=incumbent,
+    )
+    report = trial.to_dict()
+    report["enacted"] = False
+
+    if not trial.validated or not candidate_id:
+        return report
+
+    try:
+        champion_path = auto_promote_pending(
+            cfg.configs_dir,
+            str(candidate_id),
+            validation=report,
+            knobs=staged_changes,
+        )
+    except (PromotionError, OSError) as exc:
+        report["status"] = "promotion_failed"
+        report["note"] = f"validated but not written: {type(exc).__name__}: {exc}"
+        return report
+
+    # The champion the next tick reads is the one just written, not the cached one.
+    reset_champion_cache()
+    report["enacted"] = True
+    report["champion_path"] = str(champion_path)
+    report["note"] = (
+        f"validated and promoted — champion.json now runs {sorted(staged_changes)}"
+    )
+    return report
 
 
 def _build_flags(
@@ -45,6 +125,7 @@ def _build_flags(
     sequential: dict[str, Any],
     learner: dict[str, Any],
     universe: dict[str, Any],
+    promotion: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     flags: list[dict[str, str]] = []
     if recorded.get("status") == "insufficient_data":
@@ -72,12 +153,39 @@ def _build_flags(
                 "detail": str(retention.get("detail", "")),
             }
         )
-    if learner.get("outcome") == "promotion_recommended":
+    promo = promotion or {}
+    if promo.get("enacted"):
         flags.append(
             {
                 "severity": "info",
-                "flag": "promotion_pending_review",
-                "detail": "learner staged a candidate — human promoter required",
+                "flag": "champion_promoted",
+                "detail": str(promo.get("note") or "promotion trial validated"),
+            }
+        )
+    elif promo.get("status") == "rejected":
+        flags.append(
+            {
+                "severity": "warn",
+                "flag": f"promotion_rejected:{promo.get('blocking_gate') or 'gate'}",
+                "detail": str(promo.get("note") or "promotion trial rejected"),
+            }
+        )
+    elif promo.get("status") == "promotion_failed":
+        flags.append(
+            {
+                "severity": "alert",
+                "flag": "promotion_write_failed",
+                "detail": str(promo.get("note") or "champion.json not written"),
+            }
+        )
+    elif learner.get("outcome") == "promotion_recommended":
+        flags.append(
+            {
+                "severity": "warn",
+                "flag": "promotion_untried",
+                "detail": str(
+                    promo.get("note") or "candidate staged but no trial ran"
+                ),
             }
         )
     if learner.get("outcome") == "gated":
@@ -138,10 +246,19 @@ def _summary_text(
     universe: dict[str, Any],
     flags: list[dict[str, str]],
 ) -> str:
+    promoted = any(f["flag"] == "champion_promoted" for f in flags)
+    rejected = next(
+        (f for f in flags if f["flag"].startswith("promotion_rejected")), None
+    )
+    learner_state = str(learner.get("outcome", learner.get("status")))
+    if promoted:
+        learner_state = "promoted"
+    elif rejected:
+        learner_state = f"{learner_state} → rejected ({rejected['flag'].split(':')[-1]})"
     parts = [
         f"recorded tape: {recorded.get('status')}",
         f"sequential: {sequential.get('status')}",
-        f"learner: {learner.get('outcome', learner.get('status'))}",
+        f"learner: {learner_state}",
     ]
     if universe.get("status") == "ok":
         weak = sum(1 for f in flags if f["flag"].startswith("weak_archetype"))
@@ -261,7 +378,8 @@ def _run_dojo_phases(
 
     scorer: CandidateEvaluator = evaluator or OutcomeCandidateEvaluator()
     authority_set = authorities or default_authorities(
-        challenger_changes=challenger_changes
+        challenger_changes=challenger_changes,
+        configs_dir=cfg.configs_dir,
     )
 
     recorded = run_recorded_phase(
@@ -300,16 +418,13 @@ def _run_dojo_phases(
     # If learner staged a challenger, re-score universe with those changes too.
     staged_changes: dict[str, Any] | None = None
     if learner.get("outcome") == "promotion_recommended":
-        optimization = learner.get("optimization")
-        selected = (
-            optimization.get("selected") if isinstance(optimization, dict) else None
-        )
-        if isinstance(selected, dict):
-            change = selected.get("change")
-            if isinstance(change, dict):
-                staged_changes = dict(change)
+        raw_changes = learner.get("staged_changes")
+        if isinstance(raw_changes, dict) and raw_changes:
+            staged_changes = dict(raw_changes)
     universe_authorities = (
-        default_authorities(challenger_changes=staged_changes)
+        default_authorities(
+            challenger_changes=staged_changes, configs_dir=cfg.configs_dir
+        )
         if staged_changes
         else authority_set
     )
@@ -341,12 +456,25 @@ def _run_dojo_phases(
             evaluator=scorer,
         )
 
+    # Phase 5 — the recommendation has to earn itself: re-run recorded tape and
+    # blind days with the staged change installed, and promote it only if the
+    # re-run beats the incumbent on every gate. No human in this loop.
+    promotion = _run_promotion_phase(
+        cfg,
+        learner=learner,
+        staged_changes=staged_changes,
+        experience=experience,
+        evaluator=scorer,
+        universe_result=universe,
+        incumbent=authority_set.get("champion"),
+    )
+
     from pathlib import Path
 
     state_root = str(Path(cfg.configs_dir).parent)
     lessons = _persist_lessons(state_root, recorded, sequential, universe)
 
-    flags = _build_flags(recorded, sequential, learner, universe)
+    flags = _build_flags(recorded, sequential, learner, universe, promotion)
     summary = _summary_text(recorded, sequential, learner, universe, flags)
     metrics = {
         "phases": {
@@ -354,6 +482,7 @@ def _run_dojo_phases(
             "sequential": sequential,
             "learner": learner,
             "universe": universe,
+            "promotion": promotion,
         },
         "lessons_written": lessons,
         "elapsed_s": round(time.time() - started, 1),
@@ -389,7 +518,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=(
             "SPY-DER Dojo — protocol-driven recorded / sequential / learner / "
-            "universe training. Never auto-promotes."
+            "universe training, then a promotion trial that enacts a validated "
+            "change automatically."
         )
     )
     ap.add_argument("--reports-dir", default=DEFAULT_REPORTS_DIR)
@@ -407,6 +537,26 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     ap.add_argument("--skip-sequential", action="store_true")
+    ap.add_argument(
+        "--no-auto-promote",
+        action="store_true",
+        help=(
+            "Stop at a staged candidate instead of re-running the system with it "
+            "and promoting a validated change (same as SPY_DER_DOJO_AUTO_PROMOTE=0)."
+        ),
+    )
+    ap.add_argument(
+        "--promote-min-trades",
+        type=int,
+        default=20,
+        help="Matched trades the candidate re-run needs before it may promote.",
+    )
+    ap.add_argument(
+        "--promote-cooldown-hours",
+        type=float,
+        default=6.0,
+        help="Hours between automatic promotions (three Dojo timers fire daily).",
+    )
     ap.add_argument("--folds", type=int, default=3)
     ap.add_argument("--trials", type=int, default=15)
     ap.add_argument("--universes", type=int, default=6)
@@ -441,12 +591,24 @@ def main(argv: list[str] | None = None) -> int:
         universe_days=args.days,
         catalog_seed=args.seed,
         recent_days=args.recent_days,
+        promote_min_trades=args.promote_min_trades,
+        promote_cooldown_hours=args.promote_cooldown_hours,
     )
+    if args.no_auto_promote:
+        cfg.auto_promote = False
     out = run_dojo(cfg, experience=experience, skip_sequential=args.skip_sequential)
     print(f"\n  dojo report ({out['report_date']})")
     print(f"  {out['summary']}")
     for flag in out["flags"]:
         print(f"    [{flag['severity'].upper():4}] {flag['flag']}: {flag['detail']}")
+    promotion = out["metrics"]["phases"].get("promotion") or {}
+    if promotion.get("status") not in {None, "no_candidate", "disabled"}:
+        print(f"\n  promotion trial: {promotion.get('status')}")
+        for gate in promotion.get("gates") or []:
+            mark = "PASS" if gate.get("passed") else "FAIL"
+            print(f"    [{mark}] {gate.get('name')}: {gate.get('detail')}")
+        if promotion.get("enacted"):
+            print(f"    champion: {promotion.get('champion_path')}")
     print(f"\n  JSON: {out['json_path']}")
     if args.json:
         print(json.dumps(out, indent=2, default=str))

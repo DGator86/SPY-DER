@@ -27,7 +27,8 @@ dependency.
 - `spy_der.synthetic` — SPY-DER-owned synthetic universes (Markov worlds,
   coupled chain repricing, coverage matrix, calibration, archetype evolution)
 - `spy_der.dojo` — protocol-driven Dojo over recorded and synthetic experience
-- `spy_der.learning` — diagnose / optimize / stage `pending_review`
+- `spy_der.learning` — diagnose / optimize / stage a challenger, then promote it
+  automatically when a re-run under that change beats the incumbent on every gate
 - `spy_der.evaluation.attribution` — shadow account: model quality vs execution
   quality, decomposed into a waterfall that reconciles exactly
 - `spy_der.runtime.mcp_server` — read-only MCP surface over published state

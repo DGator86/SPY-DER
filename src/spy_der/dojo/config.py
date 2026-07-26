@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from spy_der.learning.promotion_trial import PromotionThresholds
 
 __all__ = [
     "DEFAULT_CONFIGS_DIR",
@@ -17,6 +21,13 @@ DEFAULT_STATE_ROOT = os.environ.get("SPY_DER_STATE_ROOT", "/var/lib/spy-der")
 DEFAULT_REPORTS_DIR = os.path.join(DEFAULT_STATE_ROOT, "reports", "dojo")
 DEFAULT_CONFIGS_DIR = os.path.join(DEFAULT_STATE_ROOT, "configs")
 DEFAULT_LIVE_STATE = os.path.join(DEFAULT_STATE_ROOT, "live_state.json")
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
 @dataclass
@@ -57,3 +68,30 @@ class DojoConfig:
     #: test. Tests should bound universes_per_gen / universe_days instead of
     #: raising the stride, so they still exercise real geometry.
     universe_snapshot_stride: int = 15
+    # promotion phase
+    #: Re-run the system under a recommended change and promote it when the
+    #: re-run validates. Off means the Dojo stops at a staged candidate and
+    #: waits for a human — set ``SPY_DER_DOJO_AUTO_PROMOTE=0`` as a kill switch.
+    auto_promote: bool = _env_flag("SPY_DER_DOJO_AUTO_PROMOTE", True)
+    #: Bars the re-run must clear. See learning.promotion_trial.
+    promote_min_trades: int = 20
+    promote_min_sessions: int = 3
+    promote_min_pnl_edge: float = 0.0
+    promote_max_win_rate_drop: float = 0.05
+    promote_require_sequential: bool = True
+    promote_require_universe: bool = True
+    promote_cooldown_hours: float = 6.0
+
+    def promotion_thresholds(self) -> PromotionThresholds:
+        """Thresholds object for the promotion trial (import kept local)."""
+        from spy_der.learning.promotion_trial import PromotionThresholds
+
+        return PromotionThresholds(
+            min_trades=self.promote_min_trades,
+            min_sessions=self.promote_min_sessions,
+            min_pnl_edge=self.promote_min_pnl_edge,
+            max_win_rate_drop=self.promote_max_win_rate_drop,
+            require_sequential=self.promote_require_sequential,
+            require_universe=self.promote_require_universe,
+            cooldown_hours=self.promote_cooldown_hours,
+        )
