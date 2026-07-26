@@ -286,24 +286,24 @@ def _summary_text(
     remediation = universe.get("remediation") or {}
     headline = remediation.get("headline")
     if universe.get("status") == "ok":
-        weak = remediation.get("weak_archetypes") or []
-        if not isinstance(weak, list):
-            weak = []
+        focus_rows = remediation.get("focus") or []
+        if not isinstance(focus_rows, list):
+            focus_rows = []
         n_univ = int(universe.get("n_universes") or 0)
-        if weak:
+        if focus_rows:
             labels = [
                 str(row.get("label") or row.get("archetype") or "?").replace("_", " ")
-                for row in weak[:2]
+                for row in focus_rows[:2]
                 if isinstance(row, dict)
             ]
-            focus = ", ".join(labels) if labels else f"{len(weak)} market type(s)"
+            focus = ", ".join(labels) if labels else f"{len(focus_rows)} market type(s)"
             parts.append(
-                f"Sparring: {n_univ} worlds, weak on {focus} — next run will focus there"
+                f"Sparring: {n_univ} worlds, next focus {focus}"
             )
         elif headline:
             parts.append(f"Sparring: {n_univ} worlds — {headline.rstrip('.')}")
         else:
-            parts.append(f"Sparring: {n_univ} worlds, no weak market types")
+            parts.append(f"Sparring: {n_univ} worlds, no elevated sampling targets")
     elif universe.get("status") == "skipped":
         parts.append("Sparring skipped (no tape yet)")
     else:

@@ -11,10 +11,10 @@ from spy_der.agents.mock import MockDecisionAgent
 from spy_der.contracts.agents import AgentEntryAction
 from spy_der.contracts.integration import (
     MARKET_PACKET_SCHEMA,
+    OUTCOME_PACKET_SCHEMA,
     MarketCandidateView,
     MarketPacket,
     OutcomePacket,
-    OUTCOME_PACKET_SCHEMA,
 )
 from spy_der.dojo.authority import ActiveDecisionAuthority
 from spy_der.dojo.config import DojoConfig
@@ -145,6 +145,17 @@ def test_load_curriculum_weights_missing_file(tmp_path: Path) -> None:
     assert load_curriculum_weights(None) is None
 
 
+def _champion() -> ActiveDecisionAuthority:
+    return ActiveDecisionAuthority(
+        agent=MockDecisionAgent(
+            action=AgentEntryAction.SELECT_CANDIDATE,
+            candidate_id="c1",
+            size_scalar=1.0,
+        ),
+        authority_name="champion",
+    )
+
+
 def test_universe_phase_persists_and_reloads_weights(tmp_path: Path) -> None:
     # Full lattice guarantees every archetype (including crash) is scored once.
     cfg = DojoConfig(
@@ -157,14 +168,7 @@ def test_universe_phase_persists_and_reloads_weights(tmp_path: Path) -> None:
         skip_learner=True,
         force_universe=True,
     )
-    authority = ActiveDecisionAuthority(
-        agent=MockDecisionAgent(
-            action=AgentEntryAction.SELECT_CANDIDATE,
-            candidate_id="c1",
-            size_scalar=1.0,
-        ),
-        authority_name="champion",
-    )
+    authority = _champion()
     out = run_universe_phase(
         cfg,
         _ArchetypeAwareUniverse(),
@@ -180,9 +184,13 @@ def test_universe_phase_persists_and_reloads_weights(tmp_path: Path) -> None:
     assert evolution["weights"]["crash"] > evolution["weights"]["calm_pin"]
     weak_names = [w["archetype"] for w in out["remediation"]["weak_archetypes"]]
     assert "crash" in weak_names
-    assert "crash" in [f["archetype"] for f in out["remediation"]["focus"]]
+    focus = out["remediation"]["focus"]
+    assert focus
+    assert all("reasons" in row and row["reasons"] for row in focus)
+    # Focus ranking follows evolution weights, not merely negative P&L.
+    assert focus[0]["weight"] == max(row["weight"] for row in focus)
 
-    # Second run must seed from the persisted plan.
+    # Second run must seed from the persisted plan and actually sample with it.
     cfg2 = DojoConfig(
         configs_dir=str(tmp_path),
         universes_per_gen=8,
@@ -197,6 +205,41 @@ def test_universe_phase_persists_and_reloads_weights(tmp_path: Path) -> None:
         evaluator=OutcomeCandidateEvaluator(),
     )
     assert out2["seeded_from_prior_weights"] is True
+    assert out2["prior_influenced_sampling"] is True
+    assert out2["remediation"]["prior_influenced_sampling"] is True
+
+
+def test_full_lattice_blends_prior_even_when_gen0_ignores_sampling(
+    tmp_path: Path,
+) -> None:
+    """Weekly gen 0 is exhaustive, but prior curriculum still shapes the plan."""
+    prior = {a: 1.0 for a in ARCHETYPES}
+    prior["crash"] = 4.0
+    save_curriculum_weights(tmp_path, weights=prior, generation=3, weak_archetypes=["crash"])
+
+    cfg = DojoConfig(
+        configs_dir=str(tmp_path),
+        universes_per_gen=6,
+        generations=1,  # measurement only — no remediation sample this run
+        universe_days=1,
+        full_lattice=True,
+        force_universe=True,
+    )
+    out = run_universe_phase(
+        cfg,
+        _ArchetypeAwareUniverse(),
+        authorities={"champion": _champion()},
+        evaluator=OutcomeCandidateEvaluator(),
+    )
+    assert out["prior_influenced_sampling"] is False
+    assert out["prior_blended_into_plan"] is True
+    assert out["evolution"]["blended_from_prior"] is True
+    # Inertia must lift crash above the fresh proposed weight.
+    assert (
+        out["evolution"]["weights"]["crash"]
+        > out["evolution"]["proposed_weights"]["crash"]
+    )
+    assert "inertia" in (out["remediation"].get("prior_note") or "").lower()
 
 
 def test_multi_generation_evolves_catalog_weights(tmp_path: Path) -> None:
@@ -209,18 +252,10 @@ def test_multi_generation_evolves_catalog_weights(tmp_path: Path) -> None:
         force_universe=True,
         catalog_seed=99,
     )
-    authority = ActiveDecisionAuthority(
-        agent=MockDecisionAgent(
-            action=AgentEntryAction.SELECT_CANDIDATE,
-            candidate_id="c1",
-            size_scalar=1.0,
-        ),
-        authority_name="champion",
-    )
     out = run_universe_phase(
         cfg,
         _ArchetypeAwareUniverse(),
-        authorities={"champion": authority},
+        authorities={"champion": _champion()},
         evaluator=OutcomeCandidateEvaluator(),
     )
     assert len(out["generation_plans"]) == 2
@@ -244,20 +279,16 @@ def test_full_lattice_second_gen_is_weighted_sample(tmp_path: Path) -> None:
         full_lattice=True,
         force_universe=True,
     )
-    authority = ActiveDecisionAuthority(
-        agent=MockDecisionAgent(
-            action=AgentEntryAction.SELECT_CANDIDATE,
-            candidate_id="c1",
-            size_scalar=1.0,
-        ),
-        authority_name="champion",
-    )
     out = run_universe_phase(
         cfg,
         _ArchetypeAwareUniverse(),
-        authorities={"champion": authority},
+        authorities={"champion": _champion()},
         evaluator=OutcomeCandidateEvaluator(),
     )
     # lattice + sample(6), not 2 * lattice
     assert out["n_universes"] == lattice_size + 6
     assert out["evolution"]["weights"]["crash"] > out["evolution"]["weights"]["calm_pin"]
+    # Gen 0 → gen 1 plan exists so remediation sampling was driven by evolution.
+    assert out["generation_plans"][0]["weights"]["crash"] > out["generation_plans"][0][
+        "weights"
+    ]["calm_pin"]

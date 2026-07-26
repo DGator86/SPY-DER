@@ -7,9 +7,11 @@ inject any ``SyntheticUniverseProvider`` implementation (recorded worlds,
 alternative simulators) through the ``provider`` argument.
 
 Generations re-weight toward weak / unvisited archetypes via
-:mod:`spy_der.synthetic.evolution`, and the final plan is persisted under
-``configs/curriculum_weights.json`` so the next Dojo run starts where this one
-left off.
+:mod:`spy_der.synthetic.evolution`. Immediate next-draw weights come from
+**generation-local** scores; the cumulative matrix is kept for the robustness
+report. Curriculum inertia blends each new plan with the prior so a weekly
+full-lattice measurement cannot erase accumulated gap pressure. Final weights
+persist under ``configs/curriculum_weights.json``.
 """
 
 from __future__ import annotations
@@ -35,8 +37,10 @@ from spy_der.dojo.protocols import (
 )
 from spy_der.synthetic.archetypes import ARCHETYPES, REGIMES, simulator_config_hash
 from spy_der.synthetic.evolution import (
+    CURRICULUM_INERTIA,
     EvolutionPlan,
     evolve_catalog,
+    focus_from_plan,
     next_generation_weights,
     scores_from_archetype_matrix,
 )
@@ -219,12 +223,12 @@ def _specs_for_generation(
     return catalog.sample(max(1, cfg.universes_per_gen))
 
 
-def _weak_archetypes(
+def _losing_archetypes(
     matrix: dict[str, dict[str, Any]],
     *,
     min_sessions: int = 1,
 ) -> list[dict[str, Any]]:
-    """Archetypes losing money, sorted worst-first for remediation copy."""
+    """Negative-P&L rows for flags / lessons (not the evolution ranking)."""
     weak: list[dict[str, Any]] = []
     for arch, metrics in matrix.items():
         mean = metrics.get("mean_session_pnl")
@@ -245,56 +249,48 @@ def _weak_archetypes(
 
 
 def _remediation_block(
-    matrix: dict[str, dict[str, Any]],
     plan: EvolutionPlan | None,
     *,
-    seeded_from_prior: bool,
+    scores: dict[str, Any],
+    cumulative_matrix: dict[str, dict[str, Any]],
+    prior_weights: dict[str, float] | None,
+    prior_influenced_sampling: bool,
+    prior_blended_into_plan: bool,
 ) -> dict[str, Any]:
-    weak = _weak_archetypes(matrix, min_sessions=1)
-    focus: list[dict[str, Any]] = []
-    if weak:
-        for row in weak[:3]:
-            weight = None
-            if plan is not None and row["archetype"] in plan.weights:
-                weight = round(float(plan.weights[row["archetype"]]), 4)
-            focus.append(
-                {
-                    "archetype": row["archetype"],
-                    "label": row["label"],
-                    "weight": weight,
-                }
-            )
-    elif plan is not None and plan.weights:
-        mean = sum(plan.weights.values()) / max(len(plan.weights), 1)
-        for arch, weight in sorted(
-            plan.weights.items(), key=lambda item: item[1], reverse=True
-        ):
-            if mean > 0 and weight <= mean:
-                continue
-            focus.append(
-                {
-                    "archetype": arch,
-                    "label": _ARCHETYPE_LABELS.get(arch, arch.replace("_", " ")),
-                    "weight": round(float(weight), 4),
-                }
-            )
-            if len(focus) >= 3:
-                break
+    """Remediation copy mirrors the evolution plan ranking, with reasons."""
+    focus = focus_from_plan(plan, scores, top_n=3) if plan is not None else []
+    losing = _losing_archetypes(cumulative_matrix, min_sessions=1)
 
     labels = [row["label"] for row in focus]
     if labels:
         headline = f"Next sparring will focus on {', '.join(labels)}."
     else:
-        headline = "No losing market types in this panel."
+        headline = "No elevated sampling targets in this panel."
+
+    if prior_influenced_sampling:
+        prior_note = "This run sampled with last night's gap weights."
+    elif prior_blended_into_plan:
+        prior_note = (
+            "Full-lattice measurement ignores sampling weights; prior curriculum "
+            "was blended into the next-run plan (inertia)."
+        )
+    elif prior_weights is not None:
+        prior_note = "Prior curriculum weights were loaded."
+    else:
+        prior_note = None
 
     unvisited = list(plan.unvisited_cells) if plan is not None else []
     return {
         "headline": headline,
-        "weak_archetypes": weak,
         "focus": focus,
+        "weak_archetypes": losing,
         "unvisited_cells": [list(cell) for cell in unvisited[:12]],
         "unvisited_count": len(unvisited),
-        "seeded_from_prior": seeded_from_prior,
+        "seeded_from_prior": prior_weights is not None,
+        "prior_influenced_sampling": prior_influenced_sampling,
+        "prior_blended_into_plan": prior_blended_into_plan,
+        "prior_note": prior_note,
+        "inertia": plan.inertia if plan is not None else 0.0,
         "next_generation": plan.generation if plan is not None else None,
     }
 
@@ -311,6 +307,7 @@ def run_universe_phase(
 
     active: SyntheticUniverseProvider = provider or default_provider(cfg)
     scorer: CandidateEvaluator = evaluator or OutcomeCandidateEvaluator()
+    # Cumulative across the whole phase — robustness matrix / flags / lessons.
     per_archetype: dict[str, dict[str, Any]] = {}
     authority_totals: dict[str, dict[str, Any]] = {}
     coverage: dict[str, dict[str, int]] = {}
@@ -318,6 +315,8 @@ def run_universe_phase(
     n_scored_universes = 0
     n_catalog_specs = 0
     generation_plans: list[dict[str, Any]] = []
+    # Last generation-local scores — used so remediation reasons match the plan.
+    latest_gen_scores: dict[str, Any] = {}
 
     prior_weights = load_curriculum_weights(cfg.configs_dir)
     catalog = _catalog_for(
@@ -325,23 +324,35 @@ def run_universe_phase(
         generation=0,
         archetype_weights=prior_weights,
     )
-    seeded_from_prior = prior_weights is not None
     latest_plan: EvolutionPlan | None = None
+    prior_influenced_sampling = False
+    prior_blended_into_plan = False
 
     n_generations = max(1, cfg.generations)
     for generation in range(n_generations):
+        # Gen-local buckets: next-draw evolution must not be dominated by a
+        # large full-lattice gen 0 once remediation samples start landing.
+        gen_buckets: dict[str, dict[str, Any]] = {}
+
         # Gen 0 of a full-lattice run measures every cell; later generations
         # switch to a weighted sample so remediation concentrates on gaps.
         specs = _specs_for_generation(cfg, catalog, generation=generation)
+        if not (cfg.full_lattice and generation == 0) and prior_weights is not None:
+            # Sampling path used catalog weights seeded from disk or prior gen.
+            prior_influenced_sampling = True
         n_catalog_specs += len(specs)
         for spec in specs:
             packets, outcomes, world_coverage = _generate(active, spec)
             _merge_coverage_into(coverage, world_coverage)
             n_packets += len(packets)
-            bucket = per_archetype.setdefault(spec.archetype, _empty_bucket())
-            bucket["n_universes"] += 1
-            bucket["n_snapshots"] += len(packets)
-            bucket["generations"].add(generation)
+            cum_bucket = per_archetype.setdefault(spec.archetype, _empty_bucket())
+            gen_bucket = gen_buckets.setdefault(spec.archetype, _empty_bucket())
+            cum_bucket["n_universes"] += 1
+            cum_bucket["n_snapshots"] += len(packets)
+            cum_bucket["generations"].add(generation)
+            gen_bucket["n_universes"] += 1
+            gen_bucket["n_snapshots"] += len(packets)
+            gen_bucket["generations"].add(generation)
 
             if not authorities or not packets:
                 continue
@@ -353,13 +364,17 @@ def run_universe_phase(
             champ = scored.get("champion") or next(iter(scored.values()))
             pnl = float(champ.get("total_pnl") or 0.0)
             trades = int(champ.get("trades") or champ.get("n_matched") or 0)
-            bucket["session_pnls"].append(pnl)
-            bucket["trades"] += trades
-            bucket["total_pnl"] += pnl
-            if champ.get("win_rate") is not None and trades:
-                bucket["wins"] += round(float(champ["win_rate"]) * trades)
-            if champ.get("dir_hit") is not None:
-                bucket["dir_hits"].append(float(champ["dir_hit"]))
+            win_rate = float(champ["win_rate"]) if champ.get("win_rate") is not None else None
+            dir_hit = float(champ["dir_hit"]) if champ.get("dir_hit") is not None else None
+
+            for bucket in (cum_bucket, gen_bucket):
+                bucket["session_pnls"].append(pnl)
+                bucket["trades"] += trades
+                bucket["total_pnl"] += pnl
+                if win_rate is not None and trades:
+                    bucket["wins"] += round(win_rate * trades)
+                if dir_hit is not None:
+                    bucket["dir_hits"].append(dir_hit)
 
             for name, report in scored.items():
                 tot = authority_totals.setdefault(
@@ -372,20 +387,39 @@ def run_universe_phase(
                 )
                 tot["n_universes"] += 1
 
-        interim_matrix = _matrix_from_buckets(per_archetype)
+        # Coverage stays cumulative (unvisited means never seen this run).
+        # Performance scores for the next draw are generation-local.
+        gen_matrix = _matrix_from_buckets(gen_buckets)
         coverage_matrix = merge_coverage([coverage]) if coverage else None
-        scores = scores_from_archetype_matrix(interim_matrix)
+        gen_scores = scores_from_archetype_matrix(gen_matrix)
+        latest_gen_scores = gen_scores
+
         if generation + 1 < n_generations:
-            catalog, latest_plan = evolve_catalog(catalog, scores, coverage_matrix)
-            generation_plans.append(latest_plan.to_dict())
-        else:
-            # Final plan for the *next* Dojo run (and for the report).
-            latest_plan = next_generation_weights(
-                scores,
+            catalog, latest_plan = evolve_catalog(
+                catalog,
+                gen_scores,
                 coverage_matrix,
-                generation=catalog.generation + 1,
+                prior_weights=catalog.archetype_weights,
+                inertia=CURRICULUM_INERTIA,
             )
             generation_plans.append(latest_plan.to_dict())
+        else:
+            latest_plan = next_generation_weights(
+                gen_scores,
+                coverage_matrix,
+                generation=catalog.generation + 1,
+                prior_weights=catalog.archetype_weights,
+                inertia=CURRICULUM_INERTIA,
+            )
+            generation_plans.append(latest_plan.to_dict())
+
+        # Only credit "prior curriculum" when disk weights were in the blend chain.
+        if (
+            prior_weights is not None
+            and latest_plan is not None
+            and latest_plan.blended_from_prior
+        ):
+            prior_blended_into_plan = True
 
     matrix = _matrix_from_buckets(per_archetype)
     coverage_matrix = merge_coverage([coverage]) if coverage else None
@@ -400,8 +434,11 @@ def run_universe_phase(
         "universe_days": cfg.universe_days,
         "simulator_config_hash": simulator_config_hash(),
         "archetype_matrix": matrix,
-        "seeded_from_prior_weights": seeded_from_prior,
+        "seeded_from_prior_weights": prior_weights is not None,
+        "prior_influenced_sampling": prior_influenced_sampling,
+        "prior_blended_into_plan": prior_blended_into_plan,
         "generation_plans": generation_plans,
+        "curriculum_inertia": CURRICULUM_INERTIA,
     }
     if coverage_matrix is not None:
         result["coverage"] = coverage_matrix.to_dict()
@@ -417,21 +454,28 @@ def run_universe_phase(
 
     if latest_plan is not None:
         result["evolution"] = latest_plan.to_dict()
-        weak = _weak_archetypes(matrix, min_sessions=1)
+        losing = _losing_archetypes(matrix, min_sessions=1)
         saved = save_curriculum_weights(
             cfg.configs_dir,
             weights=latest_plan.weights,
             generation=latest_plan.generation,
-            weak_archetypes=[row["archetype"] for row in weak],
-            extra={"report_status": result["status"]},
+            weak_archetypes=[row["archetype"] for row in losing],
+            extra={
+                "report_status": result["status"],
+                "inertia": latest_plan.inertia,
+                "blended_from_prior": latest_plan.blended_from_prior,
+            },
         )
         if saved is not None:
             result["curriculum_weights_path"] = str(saved)
 
     result["remediation"] = _remediation_block(
-        matrix,
         latest_plan,
-        seeded_from_prior=seeded_from_prior,
+        scores=latest_gen_scores,
+        cumulative_matrix=matrix,
+        prior_weights=prior_weights,
+        prior_influenced_sampling=prior_influenced_sampling,
+        prior_blended_into_plan=prior_blended_into_plan,
     )
 
     if authority_totals:

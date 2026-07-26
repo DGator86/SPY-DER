@@ -101,16 +101,22 @@ next draws spend time where the champion is worst — that is the point of the
 Dojo.
 
 - **Intra-run:** with `--generations N` (N > 1), generation *k+1* samples from
-  the evolved weights of generation *k*.
+  weights evolved from generation *k*'s **local** scores (not the cumulative
+  matrix). Coverage/unvisited cells stay cumulative across the run.
+- **Curriculum inertia:** each new plan blends with the prior
+  (`w = (1-a)*w_hat + a*w_prior`, a ≈ 0.35) so a large measurement pass cannot
+  erase accumulated gap pressure.
 - **Across runs:** the final plan is written to
   `configs/curriculum_weights.json` and loaded as the seed weights of the next
   Dojo run.
 - **Weekly full lattice:** generation 0 still enumerates every cell
-  (measurement). Generations ≥ 1 switch to a weighted sample so remediation
-  concentrates on gaps instead of replaying the whole lattice.
+  (measurement — sampling weights do not apply). The plan after that
+  measurement still blends in the prior curriculum; generations ≥ 1 then
+  sample with those blended weights.
 
-The report’s `metrics.phases.universe.remediation` block names the focus
-archetypes in plain English for the dashboard.
+The report’s `metrics.phases.universe.remediation` block lists focus
+archetypes ranked by the evolution plan, each with reasons (negative P&L,
+low directional accuracy, unvisited regimes, prior curriculum carry, …).
 
 ## Reports
 

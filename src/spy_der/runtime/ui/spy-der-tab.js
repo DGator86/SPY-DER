@@ -499,7 +499,7 @@ function dojoVerdict(dojo, phases) {
   const promoted = flagNames.some((f) => /^champion_promoted/.test(f));
   const rejected = flagNames.find((f) => /^promotion_rejected/.test(f));
   const remediation = phases.universe.remediation || {};
-  const weak = Array.isArray(remediation.weak_archetypes) ? remediation.weak_archetypes : [];
+  const focus = Array.isArray(remediation.focus) ? remediation.focus : [];
 
   if (promoted) {
     return ["ok", "Promoted a safer setting", "The re-run beat the champion on every gate."];
@@ -508,15 +508,15 @@ function dojoVerdict(dojo, phases) {
     const gate = rejected.split(":").slice(1).join(" ").replace(/_/g, " ") || "a gate";
     return ["warn", "Change held back", `Blocked by ${gate} — champion unchanged.`];
   }
-  if (weak.length) {
-    const names = weak
+  if (focus.length) {
+    const names = focus
       .slice(0, 2)
       .map((row) => humanLabel(row.label || row.archetype))
       .join(", ");
     return [
       "warn",
       "Gaps found — next sparring will focus there",
-      remediation.headline || `Weak on ${names}. Sampling weights will rise on those market types.`,
+      remediation.headline || `Sampling will overweight ${names}.`,
     ];
   }
   if (phases.universe.status === "skipped") {
@@ -635,33 +635,39 @@ function sparringStage(universe) {
 function renderFocus(universe) {
   const remediation = universe.remediation || {};
   const focus = Array.isArray(remediation.focus) ? remediation.focus : [];
-  const weak = Array.isArray(remediation.weak_archetypes) ? remediation.weak_archetypes : [];
   const wrap = el("div", "spyder-tab__focus");
   wrap.appendChild(el("h4", "spyder-tab__subhead", "Tonight’s focus"));
   const headline = text(remediation.headline, "");
   if (headline && headline !== "—") {
     wrap.appendChild(el("p", "spyder-tab__focus-headline", headline));
-  } else if (!focus.length && !weak.length) {
-    wrap.appendChild(note("No losing market types — sparring stays balanced."));
+  } else if (!focus.length) {
+    wrap.appendChild(note("No elevated sampling targets — sparring stays balanced."));
     return wrap;
   }
-  const list = focus.length ? focus : weak.slice(0, 3);
-  if (list.length) {
-    const chips = el("ul", "spyder-tab__focus-list");
-    for (const row of list) {
+  if (focus.length) {
+    const list = el("ul", "spyder-tab__focus-list");
+    for (const row of focus) {
       const label = humanLabel(row.label || row.archetype);
-      const pnl = row.mean_session_pnl;
-      const item = el(
-        "li",
-        null,
-        pnl != null ? `${label} (${money(pnl)} / session)` : label
-      );
-      chips.appendChild(item);
+      const reasons = Array.isArray(row.reasons) ? row.reasons.filter(Boolean) : [];
+      const reasonText = reasons.length ? reasons.join("; ") : null;
+      const item = el("li", "spyder-tab__focus-item");
+      item.appendChild(el("div", "spyder-tab__focus-name", label));
+      if (reasonText) {
+        item.appendChild(el("div", "spyder-tab__focus-reason", reasonText));
+      }
+      list.appendChild(item);
     }
-    wrap.appendChild(chips);
+    wrap.appendChild(list);
   }
-  if (remediation.seeded_from_prior) {
-    wrap.appendChild(note("This run started from last night’s gap weights."));
+  const priorNote = text(remediation.prior_note, "");
+  if (priorNote && priorNote !== "—") {
+    wrap.appendChild(note(priorNote));
+  } else if (remediation.prior_influenced_sampling) {
+    wrap.appendChild(note("This run sampled with last night’s gap weights."));
+  } else if (remediation.prior_blended_into_plan) {
+    wrap.appendChild(
+      note("Prior curriculum was blended into the next-run plan (lattice measurement does not re-sample).")
+    );
   }
   return wrap;
 }
