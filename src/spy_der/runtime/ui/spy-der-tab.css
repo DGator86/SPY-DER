@@ -1,0 +1,428 @@
+/* SPY-DER dashboard tab.
+ *
+ * Every rule is scoped under `.spyder-tab`. This stylesheet is loaded into
+ * 0DTE's Vercel dashboard alongside that project's own CSS, so an unscoped
+ * selector here would restyle a page this repository cannot see. Custom
+ * properties are declared on `.spyder-tab` rather than `:root` for the same
+ * reason.
+ */
+
+.spyder-tab {
+  --sd-bg: #0d1117;
+  --sd-panel: #161b22;
+  --sd-panel-2: #1c2330;
+  --sd-border: #2d333b;
+  --sd-text: #e6edf3;
+  --sd-muted: #8b949e;
+  --sd-accent: #58a6ff;
+  --sd-ok: #3fb950;
+  --sd-warn: #d29922;
+  --sd-bad: #f85149;
+  --sd-idle: #6e7681;
+
+  color: var(--sd-text);
+  background: var(--sd-bg);
+  font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  padding: 16px;
+  border-radius: 8px;
+}
+
+@media (prefers-color-scheme: light) {
+  .spyder-tab:not([data-force-dark]) {
+    --sd-bg: #ffffff;
+    --sd-panel: #f6f8fa;
+    --sd-panel-2: #eef1f4;
+    --sd-border: #d0d7de;
+    --sd-text: #1f2328;
+    --sd-muted: #656d76;
+    --sd-accent: #0969da;
+    --sd-ok: #1a7f37;
+    --sd-warn: #9a6700;
+    --sd-bad: #cf222e;
+    --sd-idle: #8c959f;
+  }
+}
+
+.spyder-tab * {
+  box-sizing: border-box;
+}
+
+/* Header ------------------------------------------------------------------ */
+.spyder-tab__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.spyder-tab__title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin: 0;
+}
+
+.spyder-tab__title small {
+  color: var(--sd-muted);
+  font-weight: 400;
+  margin-left: 8px;
+}
+
+.spyder-tab__spacer {
+  flex: 1 1 auto;
+}
+
+.spyder-tab__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--sd-border);
+  background: var(--sd-panel);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.spyder-tab__pill::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sd-idle);
+}
+
+.spyder-tab__pill--ok::before { background: var(--sd-ok); }
+.spyder-tab__pill--warn::before { background: var(--sd-warn); }
+.spyder-tab__pill--bad::before { background: var(--sd-bad); }
+
+.spyder-tab__refresh {
+  font: inherit;
+  font-size: 12px;
+  color: var(--sd-muted);
+  background: var(--sd-panel);
+  border: 1px solid var(--sd-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.spyder-tab__refresh:hover {
+  color: var(--sd-text);
+  border-color: var(--sd-accent);
+}
+
+/* Grid and panels -------------------------------------------------------- */
+.spyder-tab__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.spyder-tab__panel {
+  background: var(--sd-panel);
+  border: 1px solid var(--sd-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.spyder-tab__panel--wide {
+  grid-column: 1 / -1;
+}
+
+.spyder-tab__panel h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sd-muted);
+}
+
+.spyder-tab__note {
+  color: var(--sd-muted);
+  font-size: 12px;
+  margin: 0;
+}
+
+.spyder-tab__note--bad {
+  color: var(--sd-bad);
+}
+
+/* Key/value rows --------------------------------------------------------- */
+.spyder-tab__kv {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.spyder-tab__kv dt {
+  color: var(--sd-muted);
+  font-size: 12px;
+}
+
+.spyder-tab__kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Decision chain --------------------------------------------------------- */
+.spyder-tab__chain {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.spyder-tab__stage {
+  flex: 1 1 150px;
+  min-width: 0;
+  background: var(--sd-panel-2);
+  border: 1px solid var(--sd-border);
+  border-left: 3px solid var(--sd-idle);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.spyder-tab__stage--ok { border-left-color: var(--sd-ok); }
+.spyder-tab__stage--warn { border-left-color: var(--sd-warn); }
+.spyder-tab__stage--bad { border-left-color: var(--sd-bad); }
+.spyder-tab__stage--authority { border-left-color: var(--sd-accent); }
+
+.spyder-tab__stage-name {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sd-muted);
+}
+
+.spyder-tab__stage-value {
+  font-weight: 600;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.spyder-tab__stage-detail {
+  font-size: 12px;
+  color: var(--sd-muted);
+  overflow-wrap: anywhere;
+}
+
+.spyder-tab__chain-caption {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--sd-muted);
+}
+
+/* Meters ----------------------------------------------------------------- */
+.spyder-tab__meter {
+  margin-bottom: 8px;
+}
+
+.spyder-tab__meter-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--sd-muted);
+  margin-bottom: 3px;
+}
+
+.spyder-tab__meter-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--sd-panel-2);
+  overflow: hidden;
+}
+
+.spyder-tab__meter-fill {
+  height: 100%;
+  background: var(--sd-accent);
+}
+
+.spyder-tab__meter-fill--ok { background: var(--sd-ok); }
+.spyder-tab__meter-fill--warn { background: var(--sd-warn); }
+.spyder-tab__meter-fill--bad { background: var(--sd-bad); }
+
+/* Waterfall -------------------------------------------------------------- */
+.spyder-tab__waterfall {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.spyder-tab__bar-row {
+  display: grid;
+  grid-template-columns: 96px 1fr 92px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.spyder-tab__bar-label {
+  color: var(--sd-muted);
+  text-transform: capitalize;
+}
+
+/* Two half-tracks meeting at a centre line, so sign is legible as position
+ * and not only as colour. */
+.spyder-tab__bar-track {
+  display: flex;
+  height: 14px;
+  background: var(--sd-panel-2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.spyder-tab__bar-half {
+  flex: 1 1 50%;
+  display: flex;
+  min-width: 0;
+}
+
+.spyder-tab__bar-half--neg { justify-content: flex-end; }
+
+.spyder-tab__bar-fill {
+  height: 100%;
+}
+
+.spyder-tab__bar-fill--neg { background: var(--sd-bad); }
+.spyder-tab__bar-fill--pos { background: var(--sd-ok); }
+
+.spyder-tab__bar-value {
+  text-align: right;
+}
+
+.spyder-tab__bar-value--neg { color: var(--sd-bad); }
+.spyder-tab__bar-value--pos { color: var(--sd-ok); }
+
+/* Books side by side ----------------------------------------------------- */
+.spyder-tab__books {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.spyder-tab__book {
+  background: var(--sd-panel-2);
+  border: 1px solid var(--sd-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.spyder-tab__book-name {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sd-muted);
+}
+
+.spyder-tab__book-value {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.spyder-tab__book-value--neg { color: var(--sd-bad); }
+.spyder-tab__book-value--pos { color: var(--sd-ok); }
+
+.spyder-tab__book-sub {
+  font-size: 12px;
+  color: var(--sd-muted);
+}
+
+/* Tag lists -------------------------------------------------------------- */
+.spyder-tab__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.spyder-tab__tags li {
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--sd-panel-2);
+  border: 1px solid var(--sd-border);
+  color: var(--sd-muted);
+}
+
+.spyder-tab__tags li[data-tone="warn"] {
+  border-color: var(--sd-warn);
+  color: var(--sd-warn);
+}
+
+.spyder-tab__tags li[data-tone="bad"] {
+  border-color: var(--sd-bad);
+  color: var(--sd-bad);
+}
+
+/* Tables ----------------------------------------------------------------- */
+.spyder-tab__scroll {
+  overflow-x: auto;
+}
+
+.spyder-tab table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.spyder-tab th,
+.spyder-tab td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--sd-border);
+  white-space: nowrap;
+}
+
+.spyder-tab th {
+  color: var(--sd-muted);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.spyder-tab tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.spyder-tab code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.spyder-tab__rationale {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: var(--sd-panel-2);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--sd-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.spyder-tab__footer {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--sd-border);
+  font-size: 11px;
+  color: var(--sd-muted);
+}

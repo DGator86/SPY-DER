@@ -1,0 +1,43 @@
+<!doctype html>
+<!--
+  Standalone shell for the SPY-DER tab, served by `spy-der-dashboard-api` at
+  `/ui`. It loads the same `spy-der-tab.js` the 0DTE Vercel dashboard embeds, so
+  there is one implementation and no second copy to drift.
+
+  This is the mount that keeps working after 0DTE is retired: the tab needs no
+  host dashboard, only the read-only API on the same origin.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>SPY-DER</title>
+    <link rel="stylesheet" href="/ui/spy-der-tab.css" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #0d1117;
+        min-height: 100%;
+      }
+      @media (prefers-color-scheme: light) {
+        html,
+        body {
+          background: #ffffff;
+        }
+      }
+      #spy-der {
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Same-origin: the API serving this page also serves /v1/*, so the
+         default endpoints need no base prefix. -->
+    <div id="spy-der" data-spy-der-tab></div>
+    <script type="module" src="/ui/spy-der-tab.js"></script>
+  </body>
+</html>

@@ -16,6 +16,20 @@ Routes:
     GET /v1/dojo/reports           index of stamped Dojo reports (newest first)
     GET /v1/validation/latest      newest parity-validation report
     GET /v1/validation/reports     index of stamped validation reports
+    GET /v1/attribution/latest     newest shadow-account attribution report
+    GET /v1/attribution/reports    index of stamped attribution reports
+    GET /ui                        the SPY-DER dashboard tab, standalone
+    GET /ui/<asset>                its stylesheet and module
+
+`handle_get` is the single read path for JSON: `spy_der.runtime.mcp_server` wraps
+the same function, so a route added here is available over MCP without a second
+implementation — and cannot acquire write access on either transport.
+
+`/ui` is served separately by the HTTP handler because it returns HTML, CSS and
+JavaScript rather than a JSON object. It is deliberately kept out of `handle_get`
+so the MCP surface stays JSON-only. The assets under `ui/` are the same files the
+0DTE Vercel dashboard embeds as a tab — see
+`integrations/zerodte/spy_der_tab/README.md`.
 """
 
 from __future__ import annotations
@@ -33,11 +47,24 @@ from spy_der.dojo.reports import read_latest_dojo_report
 __all__ = [
     "DEFAULT_HOST",
     "DEFAULT_PORT",
+    "UI_CONTENT_TYPES",
+    "UI_ROOT",
     "DashboardApiState",
     "handle_get",
     "main",
+    "read_ui_asset",
     "serve",
 ]
+
+#: Installed alongside this module, so the assets ship with the package and the
+#: unit is not depending on a checkout being present on the VPS.
+UI_ROOT = Path(__file__).resolve().parent / "ui"
+
+UI_CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+}
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8788
@@ -54,6 +81,7 @@ class DashboardApiState:
         self.state_root = Path(state_root)
         self.reports_dir = self.state_root / "reports" / "dojo"
         self.validation_dir = self.state_root / "reports" / "validation"
+        self.attribution_dir = self.state_root / "reports" / "attribution"
         self.live_state_path = self.state_root / "live_state.json"
 
     def live_state(self) -> dict[str, Any] | None:
@@ -74,11 +102,22 @@ class DashboardApiState:
             data = json.load(handle)
         return data if isinstance(data, dict) else None
 
+    def latest_attribution_report(self) -> dict[str, Any] | None:
+        latest = self.attribution_dir / "latest.json"
+        if not latest.is_file():
+            return None
+        with open(latest, encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else None
+
     def dojo_report_index(self, limit: int = 20) -> list[dict[str, Any]]:
         return self._report_index(self.reports_dir, "dojo_", limit)
 
     def validation_report_index(self, limit: int = 20) -> list[dict[str, Any]]:
         return self._report_index(self.validation_dir, "validation_", limit)
+
+    def attribution_report_index(self, limit: int = 20) -> list[dict[str, Any]]:
+        return self._report_index(self.attribution_dir, "attribution_", limit)
 
     def _report_index(
         self, directory: Path, prefix: str, limit: int = 20
@@ -153,19 +192,58 @@ def handle_get(state: DashboardApiState, path: str, query: str = "") -> tuple[in
                 "detail": "no validation run has completed, or its report is unreadable",
             }
         return 200, body
-    if path in {"/v1/dojo/reports", "/v1/validation/reports"}:
+    if path in {"/v1/attribution/latest", "/v1/attribution"}:
+        body = state.latest_attribution_report()
+        if body is None:
+            return 404, {
+                "error": "no_attribution_report",
+                "path": str(state.attribution_dir / "latest.json"),
+                "detail": (
+                    "no shadow-account report has been written, or it is "
+                    "unreadable"
+                ),
+            }
+        return 200, body
+    if path in {
+        "/v1/dojo/reports",
+        "/v1/validation/reports",
+        "/v1/attribution/reports",
+    }:
         raw = (params.get("limit") or ["20"])[0]
         try:
             limit = int(raw)
         except ValueError:
             return 400, {"error": "invalid_limit", "got": raw}
-        index = (
-            state.dojo_report_index(limit)
-            if path == "/v1/dojo/reports"
-            else state.validation_report_index(limit)
-        )
-        return 200, {"reports": index}
+        indexers = {
+            "/v1/dojo/reports": state.dojo_report_index,
+            "/v1/validation/reports": state.validation_report_index,
+            "/v1/attribution/reports": state.attribution_report_index,
+        }
+        return 200, {"reports": indexers[path](limit)}
     return 404, {"error": "not_found", "path": path}
+
+
+def read_ui_asset(path: str) -> tuple[int, str, bytes]:
+    """Resolve a `/ui...` path to (status, content type, body).
+
+    Path handling is restrictive on purpose: this is the only part of the API
+    that maps a request path onto a filename, so it takes the basename, checks
+    the suffix against a fixed allowlist, and confirms the resolved file is
+    inside `UI_ROOT`. Traversal is therefore rejected three independent ways —
+    the service is read-only, but read-only over the wrong directory is still a
+    disclosure.
+    """
+    name = path[len("/ui") :].lstrip("/") or "index.html"
+    if "/" in name or "\\" in name:
+        return 404, "text/plain; charset=utf-8", b"not found"
+    suffix = Path(name).suffix
+    content_type = UI_CONTENT_TYPES.get(suffix)
+    if content_type is None:
+        return 404, "text/plain; charset=utf-8", b"not found"
+    candidate = (UI_ROOT / name).resolve()
+    if candidate.parent != UI_ROOT or not candidate.is_file():
+        return 404, "text/plain; charset=utf-8", b"not found"
+    return 200, content_type, candidate.read_bytes()
 
 
 class _DashboardHandler(BaseHTTPRequestHandler):
@@ -184,8 +262,23 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_bytes(self, code: int, content_type: str, body: bytes) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/ui" or parsed.path.startswith("/ui/"):
+            try:
+                code, content_type, body = read_ui_asset(parsed.path)
+            except OSError as exc:
+                self._send(503, {"error": "ui_unreadable", "detail": str(exc)})
+                return
+            self._send_bytes(code, content_type, body)
+            return
         try:
             code, payload = handle_get(self.state, parsed.path, parsed.query)
         except PermissionError as exc:
