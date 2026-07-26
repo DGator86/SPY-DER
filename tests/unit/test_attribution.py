@@ -351,3 +351,23 @@ def test_report_serializes_to_json_safe_types() -> None:
     trades = body["trades"]
     assert isinstance(trades, list)
     assert isinstance(trades[0]["components"]["entry"], str)
+
+
+def test_unapproved_trade_carries_its_own_session_date() -> None:
+    # With no PlannedTrade to inherit from, a session made up entirely of
+    # unapproved trades would otherwise roll up with no date at all.
+    report = attribute_session(
+        [
+            (
+                None,
+                _actual(
+                    candidate_id="cand-x",
+                    approved=False,
+                    session_date="2026-07-24",
+                    snapshot_id="snap-9",
+                ),
+            )
+        ]
+    )
+    assert report.sessions == ("2026-07-24",)
+    assert report.trades[0].snapshot_id == "snap-9"

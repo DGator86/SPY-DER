@@ -169,6 +169,11 @@ class ActualTrade:
     modeled_exit_price: Decimal | None = None
     entry_at: datetime | None = None
     exit_at: datetime | None = None
+    #: Only read when there is no `PlannedTrade` to take them from. Without
+    #: them an unapproved trade is unattributable to a session, and a session
+    #: containing nothing else would roll up with no date at all.
+    session_date: str = ""
+    snapshot_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,8 +321,8 @@ def attribute_trade(
         components[AttributionComponent.PARTICIPATION.value] = actual_pnl
         flags.append(BehaviorFlag.UNAPPROVED_TRADE.value)
         return TradeAttribution(
-            session_date="",
-            snapshot_id="",
+            session_date=actual.session_date,
+            snapshot_id=actual.snapshot_id,
             planned_candidate_id=None,
             actual_candidate_id=actual.candidate_id,
             model_pnl=Decimal("0"),
