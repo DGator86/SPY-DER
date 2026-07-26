@@ -92,6 +92,26 @@ sudo systemctl enable --now spy-der-dojo-daily.timer \
                             spy-der-dojo-weekly.timer
 ```
 
+## Gap-driven sparring
+
+Universe sparring builds a per-archetype robustness matrix (P&L / win rate by
+market type). After each generation the Dojo re-weights the catalog toward the
+weakest and least-visited archetypes (`spy_der.synthetic.evolution`), so the
+next draws spend time where the champion is worst — that is the point of the
+Dojo.
+
+- **Intra-run:** with `--generations N` (N > 1), generation *k+1* samples from
+  the evolved weights of generation *k*.
+- **Across runs:** the final plan is written to
+  `configs/curriculum_weights.json` and loaded as the seed weights of the next
+  Dojo run.
+- **Weekly full lattice:** generation 0 still enumerates every cell
+  (measurement). Generations ≥ 1 switch to a weighted sample so remediation
+  concentrates on gaps instead of replaying the whole lattice.
+
+The report’s `metrics.phases.universe.remediation` block names the focus
+archetypes in plain English for the dashboard.
+
 ## Reports
 
 A run writes a stamped report plus a `latest.json` pointer:
@@ -99,10 +119,11 @@ A run writes a stamped report plus a `latest.json` pointer:
 ```
 /var/lib/spy-der/reports/dojo/dojo_YYYYMMDD_HHMMSS.json
 /var/lib/spy-der/reports/dojo/latest.json
+/var/lib/spy-der/configs/curriculum_weights.json
 ```
 
-Both are published world-readable (0644, minus the operator umask) because the
-dashboard API and the 0DTE adapter read them as different users.
+Both report files are published world-readable (0644, minus the operator umask)
+because the dashboard API and the 0DTE adapter read them as different users.
 
 ## Serving the report
 

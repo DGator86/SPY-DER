@@ -197,8 +197,9 @@ def test_rich_evaluation_metrics() -> None:
     assert report.calibration_error is not None
 
 
-def test_universe_scores_with_authorities() -> None:
+def test_universe_scores_with_authorities(tmp_path: Path) -> None:
     cfg = DojoConfig(
+        configs_dir=str(tmp_path / "configs"),
         universes_per_gen=3,
         generations=1,
         skip_recorded=True,
@@ -215,6 +216,7 @@ def test_universe_scores_with_authorities() -> None:
     matrix = out["archetype_matrix"]
     assert any(v.get("mean_session_pnl") is not None for v in matrix.values())
     assert "authorities" in out
+    assert "remediation" in out
 
 
 def test_sequential_inline_scoring(tmp_path: Path) -> None:

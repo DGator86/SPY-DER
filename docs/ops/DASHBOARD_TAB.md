@@ -39,7 +39,7 @@ five GETs. No JavaScript edit on the 0DTE side — the module auto-mounts.
 | Current decision | `/v1/state` | confidence, uncertainty, size scalar, reason codes, models, rationale |
 | Shadow account | `/v1/attribution/latest` | model book vs actual book, gap decomposition, behavioural flags |
 | System health | `/v1/system` | services, feed, AI gate, deploy |
-| Dojo & parity | `/v1/dojo/latest`, `/v1/validation/latest` | latest run, flags, gate verdict |
+| Dojo training room | `/v1/dojo/latest`, `/v1/validation/latest` | plain-English verdict, tonight’s focus, stage cards, robustness matrix, parity |
 | Open positions | `/v1/state` | live positions with unrealized P&L |
 
 `/v1/state` carries either published shape — a `spyder.dashboard.v1` packet from
