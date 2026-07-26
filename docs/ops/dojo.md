@@ -7,9 +7,39 @@ The Dojo compresses market experience into one run:
 
 1. **recorded** — walk `MarketExperienceProvider`; score champion / challenger / baseline via `CandidateEvaluator`
 2. **sequential** — leak-free blind-day forward transfer + retention panel
-3. **learner** — diagnose → hypothesize → optimize (holdout) → stage a challenger only if gates pass
-4. **universe** — spar against `SyntheticUniverseProvider` packets with the same AI scoring path
+3. **learner** — diagnose (recorded tape **and** remembered archetype gaps) → hypothesize → optimize (holdout) → stage a challenger only if gates pass
+4. **universe** — spar against `SyntheticUniverseProvider` packets, weighted toward the archetypes the system is losing in, scoring every authority per archetype
 5. **promotion** — re-run 1 and 2 with the staged change installed as the candidate champion, and write `champion.json` if it wins
+
+## Training the gaps
+
+The robustness matrix is not a scoreboard — it is the training set. A losing
+archetype is recorded as a structured failure episode
+(`spy_der.learning.gaps`), and the next run:
+
+1. **spends the lattice there** — remembered gaps seed the archetype sampling
+   weights, and each generation re-weights again from its own scores, so the
+   worlds the system is bad at get more draws than the ones it already handles;
+2. **diagnoses it** — `weak_archetype:crash` is a diagnosis in its own right, so
+   a profitable overall tape no longer reads as `stable_baseline` while five
+   archetypes are underwater;
+3. **stages a change aimed at it** — one live knob at a time (OOD stand-down,
+   confidence floor, size derate), tagged with the archetype it targets;
+4. **holds it to that target** — the `archetype_repair` gate scores the
+   candidate on the target archetype's own ticks. A change that improves the
+   average while leaving crash where it was does not promote.
+
+Gaps age out after 14 days and disappear as soon as an archetype stops losing,
+so the training set follows the system rather than the other way round. Two
+sample-size rules keep noise out: an archetype needs 3+ scored sessions before
+it counts as a gap, and severity discounts thin evidence — a single -108
+session ranks below a repeated -13.
+
+The knobs available today can only make the system *stand down* in an archetype
+it reads badly; the Dojo cannot invent a strategy for crash. Note also that
+archetype labels are simulator ground truth, so the repair is validated on
+synthetic worlds and then held to real recorded tape by the P&L gates — a
+change that fixes crash in simulation but costs money on the tape is refused.
 
 ## Promotion
 

@@ -10,14 +10,15 @@ below passes against the incumbent it wants to replace.
 The gates are deliberately boring, and every one of them is a reason to *not*
 promote:
 
-``actionable``        the change touches at least one live decision knob
-``evidence``          enough scored sessions and trades to mean anything
-``pnl_edge``          candidate beats the incumbent on the same tape
-``win_rate``          and does not buy that P&L with a worse hit rate
-``forward_transfer``  positive mean transfer on leak-free blind days
-``retention``         no forgetting regression on the retention panel
-``universe``          no robustness collapse across synthetic archetypes
-``cooldown``          not promoting on top of a promotion that just landed
+``actionable``         the change touches at least one live decision knob
+``evidence``           enough scored sessions and trades to mean anything
+``pnl_edge``           candidate beats the incumbent on the same tape
+``win_rate``           and does not buy that P&L with a worse hit rate
+``forward_transfer``   positive mean transfer on leak-free blind days
+``retention``          no forgetting regression on the retention panel
+``universe``           no robustness collapse across synthetic archetypes
+``archetype_repair``   a change staged to fix crash has to fix *crash*
+``cooldown``           not promoting on top of a promotion that just landed
 
 A trial that fails any gate leaves ``champion.json`` exactly where it was and
 says which gate stopped it. Nothing here writes the champion — that is
@@ -104,6 +105,8 @@ class PromotionTrial:
     status: str
     candidate_id: str | None
     knobs: dict[str, Any]
+    #: Archetype this change was staged to repair, if any.
+    target_archetype: str | None = None
     gates: tuple[TrialGate, ...] = ()
     incumbent: dict[str, Any] = field(default_factory=dict)
     candidate: dict[str, Any] = field(default_factory=dict)
@@ -128,6 +131,7 @@ class PromotionTrial:
             "status": self.status,
             "candidate_id": self.candidate_id,
             "knobs": dict(self.knobs),
+            "target_archetype": self.target_archetype,
             "gates": [g.to_dict() for g in self.gates],
             "incumbent": dict(self.incumbent),
             "candidate": dict(self.candidate),
@@ -303,6 +307,53 @@ def _retention_gate(sequential: dict[str, Any]) -> TrialGate:
     )
 
 
+def _archetype_repair_gate(
+    universe: dict[str, Any],
+    target: str | None,
+) -> TrialGate:
+    """A change staged to fix an archetype has to actually fix that archetype.
+
+    The aggregate can improve while the gap the change was staged for gets
+    worse — abstaining more in calm markets would do it. This is the gate that
+    makes "train the weak archetypes" mean something: the candidate is scored on
+    the target archetype's own ticks and has to beat the incumbent there.
+    """
+    if not target:
+        return TrialGate("archetype_repair", True, "not an archetype-targeted change")
+    panels = universe.get("archetype_authorities")
+    if not isinstance(panels, dict):
+        return TrialGate(
+            "archetype_repair", True, f"no per-archetype panel for {target}"
+        )
+    panel = panels.get(target)
+    if not isinstance(panel, dict):
+        return TrialGate(
+            "archetype_repair", True, f"{target} not visited by this lattice"
+        )
+    challenger = panel.get("challenger")
+    champion = panel.get("champion")
+    if not isinstance(challenger, dict) or not isinstance(champion, dict):
+        return TrialGate(
+            "archetype_repair", True, f"{target} not scored for both authorities"
+        )
+    cand = _as_float(challenger.get("total_pnl"))
+    inc = _as_float(champion.get("total_pnl"))
+    if cand is None or inc is None:
+        return TrialGate("archetype_repair", True, f"{target} P&L unmeasured")
+    if cand <= inc:
+        return TrialGate(
+            "archetype_repair",
+            False,
+            f"{target} {cand:+.4f} vs champion {inc:+.4f} — "
+            "the gap it was staged to repair did not improve",
+        )
+    return TrialGate(
+        "archetype_repair",
+        True,
+        f"{target} {inc:+.4f} → {cand:+.4f} ({cand - inc:+.4f})",
+    )
+
+
 def _universe_gate(
     universe: dict[str, Any],
     thresholds: PromotionThresholds,
@@ -344,6 +395,7 @@ def run_promotion_trial(
     current_champion: dict[str, Any] | None = None,
     thresholds: PromotionThresholds | None = None,
     incumbent_authority: DecisionAuthority | None = None,
+    target_archetype: str | None = None,
 ) -> PromotionTrial:
     """Score the recommended change as a candidate champion and rule on it."""
     from spy_der.dojo.authority import ChallengerDecisionAuthority, default_authorities
@@ -360,6 +412,7 @@ def run_promotion_trial(
             status=status,
             candidate_id=candidate_id,
             knobs=knobs,
+            target_archetype=target_archetype,
             gates=(gate,),
             thresholds=thresholds.to_dict(),
             universe=universe_summary,
@@ -430,6 +483,7 @@ def run_promotion_trial(
         _sequential_gate(sequential, thresholds),
         _retention_gate(sequential),
         _universe_gate(universe_result or {}, thresholds),
+        _archetype_repair_gate(universe_result or {}, target_archetype),
         _cooldown_gate(current_champion, thresholds),
     )
     passed = all(g.passed for g in gates)
@@ -438,6 +492,7 @@ def run_promotion_trial(
         status="validated" if passed else "rejected",
         candidate_id=candidate_id,
         knobs=knobs,
+        target_archetype=target_archetype,
         gates=gates,
         incumbent=incumbent_head,
         candidate=candidate_head,

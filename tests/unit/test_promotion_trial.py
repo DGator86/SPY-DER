@@ -224,6 +224,7 @@ def test_trial_validates_a_change_that_beats_the_champion(tmp_path: Path) -> Non
         "forward_transfer",
         "retention",
         "universe",
+        "archetype_repair",
         "cooldown",
     }
 
