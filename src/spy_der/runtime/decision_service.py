@@ -28,6 +28,7 @@ from spy_der.contracts.integration import (
     MarketPacket,
     market_packet_from_dict,
 )
+from spy_der.decisions.champion import load_champion_knobs
 from spy_der.decisions.shadow import (
     ShadowCandidateView,
     decide_shadow_tick,
@@ -70,6 +71,10 @@ def market_packet_to_decision(market: MarketPacket) -> DashboardPacket:
         for c in market.candidates
     ]
     now = market.generated_at or datetime.now(UTC)
+    # A promoted champion.json is enacted here — the same DecisionKnobs the Dojo
+    # scored the challenger with, applied to the live tick. No promotion, no
+    # champion file, or the kill switch set → empty knobs, i.e. unchanged.
+    knobs = load_champion_knobs()
     shadow = decide_shadow_tick(
         snapshot_id=market.snapshot_id,
         symbol=market.symbol,
@@ -77,14 +82,24 @@ def market_packet_to_decision(market: MarketPacket) -> DashboardPacket:
         underlying_price=market.underlying_price,
         candidates=views,
         now=now,
-        risk_max_size_scalar=market.risk_max_size_scalar,
-        hard_vetoes=market.hard_vetoes,
+        risk_max_size_scalar=knobs.effective_risk(market.risk_max_size_scalar),
+        hard_vetoes=knobs.effective_hard_vetoes(
+            market.hard_vetoes, market.forecast_uncertainty
+        ),
         data_quality=market.data_quality,
         forecast_uncertainty=market.forecast_uncertainty,
         track_record=market.track_record or None,
     )
+    action, candidate_id = knobs.apply_confidence_floor(
+        shadow.action, shadow.candidate_id, float(shadow.confidence)
+    )
+    # A knob-forced stand-down has to be a whole decision, not just a relabelled
+    # action: drop the selection, the size and the direction with it.
+    floored = action != shadow.action
+    reason_codes = tuple(shadow.reason_codes)
+    if floored:
+        reason_codes = (*reason_codes, "champion_min_confidence")
     # Map SELECT_CANDIDATE-style bridge actions onto dashboard TRADE.
-    action = shadow.action
     if action == "SELECT_CANDIDATE":
         action = "TRADE"
     packet = DashboardPacket(
@@ -92,16 +107,16 @@ def market_packet_to_decision(market: MarketPacket) -> DashboardPacket:
         generated_at=datetime.now(UTC),
         mode=DecisionMode.SHADOW,
         action=action,
-        candidate_id=shadow.candidate_id,
+        candidate_id=candidate_id,
         confidence=float(shadow.confidence),
         uncertainty=float(shadow.uncertainty),
         trader_model=shadow.trader_model_id or shadow.model_id or None,
         reviewer_model=shadow.reviewer_model_id or None,
-        reason_codes=tuple(shadow.reason_codes),
+        reason_codes=reason_codes,
         rationale=shadow.rationale,
-        size_scalar=float(shadow.size_scalar),
-        structure=shadow.structure,
-        direction=shadow.direction,
+        size_scalar=0.0 if floored else float(shadow.size_scalar),
+        structure=None if floored else shadow.structure,
+        direction=None if floored else shadow.direction,
         provider=shadow.provider,
         available=True,
         dojo=DashboardDojoStatus(),

@@ -34,7 +34,7 @@ market/forecast/candidate pipelines stays with 0DTE.
 
 - `spy_der.contracts.integration` — MarketPacket / OutcomePacket / DashboardPacket
 - `spy_der.dojo` — protocol-driven Dojo (no 0DTE internal imports)
-- `spy_der.learning` — adaptive learning + human-gated promotion
+- `spy_der.learning` — adaptive learning + evidence-gated automatic promotion
 - `spy_der.integrations.zerodte` — HTTP client, filesystem experience feed,
   dashboard publisher, legacy in-process provider (migration only)
 - `spy_der.runtime.decision_service` — local `POST /v1/decision`

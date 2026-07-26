@@ -85,9 +85,15 @@ Paths:
 /var/lib/spy-der/configs/champion.json
 /var/lib/spy-der/configs/challengers/
 /var/lib/spy-der/configs/pending_review/
+/var/lib/spy-der/configs/promoted/
+/var/lib/spy-der/configs/champion_history/
 ```
 
-Promotion remains human-gated. The Dojo stages `pending_review` only.
+Promotion is automatic and evidence-gated: the learner stages a challenger, the
+Dojo re-runs recorded tape and blind days with that change installed, and
+`champion.json` is written only when the re-run beats the incumbent on every
+gate. The human path (`promote_pending(..., human_ack="PROMOTE")`) still works.
+See `docs/ops/dojo.md` for the gate table and the kill switches.
 
 ### Phase 6 — 0DTE as dashboard consumer
 

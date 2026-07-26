@@ -476,7 +476,14 @@ function renderDojo(dojo, validation) {
       box.appendChild(
         tags(
           flags.map((f) => text(f && f.flag ? f.flag : f)),
-          (label) => (/regress|fail/i.test(label) ? "bad" : "warn")
+          // champion_promoted is the Dojo enacting a validated change — a good
+          // outcome. Amber-ing it alongside a retention regression would read
+          // as "something is wrong" on the one flag that means the opposite.
+          (label) => {
+            if (/promotion_write_failed|regress|fail/i.test(label)) return "bad";
+            if (/^champion_promoted/.test(label)) return "ok";
+            return "warn";
+          }
         )
       );
     } else {

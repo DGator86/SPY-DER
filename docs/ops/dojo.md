@@ -7,10 +7,45 @@ The Dojo compresses market experience into one run:
 
 1. **recorded** — walk `MarketExperienceProvider`; score champion / challenger / baseline via `CandidateEvaluator`
 2. **sequential** — leak-free blind-day forward transfer + retention panel
-3. **learner** — diagnose → hypothesize → optimize (holdout) → stage `pending_review` only if gates pass
+3. **learner** — diagnose → hypothesize → optimize (holdout) → stage a challenger only if gates pass
 4. **universe** — spar against `SyntheticUniverseProvider` packets with the same AI scoring path
+5. **promotion** — re-run 1 and 2 with the staged change installed as the candidate champion, and write `champion.json` if it wins
 
-It never writes `champion.json`. Promotion is human-gated.
+## Promotion
+
+A recommendation does not promote anything. When the learner stages a
+challenger, the Dojo re-runs the system with that change installed and promotes
+it only if the re-run beats the incumbent on **every** gate:
+
+| Gate | Passes when |
+|---|---|
+| `actionable` | the change touches a live decision knob (`risk_max_size_scalar`, `min_confidence`, `prefer_abstain_on_ood`) |
+| `evidence` | the candidate re-run scored ≥ 20 matched trades over ≥ 3 sessions |
+| `pnl_edge` | candidate total P&L beats the incumbent's on the same tape |
+| `win_rate` | and gives back ≤ 0.05 of win rate doing it |
+| `forward_transfer` | mean forward transfer ≥ 0 on leak-free blind days |
+| `retention` | no forgetting regression on the retention panel |
+| `universe` | the synthetic panel does not disagree |
+| `cooldown` | ≥ 6h since the last automatic promotion (three timers fire daily) |
+
+A promotion writes `configs/champion.json` with the validation report attached,
+snapshots the outgoing config into `configs/champion_history/`, and moves the
+staged file to `configs/promoted/`. The live decision service reads those knobs
+on the next tick, so a promotion changes decisions rather than only paperwork.
+Knobs can only reduce exposure — the size scalar is a cap, never a lift.
+
+```bash
+# stop promoting (staging still happens)
+SPY_DER_DOJO_AUTO_PROMOTE=0 venv/bin/spy-der dojo ...     # or --no-auto-promote
+# make the live path ignore a promoted config without deleting the audit trail
+SPY_DER_CHAMPION_KNOBS=0
+# put the previous champion back
+venv/bin/python -c "from spy_der.learning.promotion import rollback_champion; \
+    print(rollback_champion('/var/lib/spy-der/configs'))"
+```
+
+The human path is still there: `promote_pending(configs, candidate_id,
+human_ack="PROMOTE")` promotes a staged candidate directly.
 
 ## VPS quick start
 

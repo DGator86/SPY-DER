@@ -1,21 +1,35 @@
 """Adaptive learning cycle — diagnose → hypothesize → optimize → stage.
 
-Never writes champion.json. Promotion stays human via ``learning.promotion``.
-Staging is gated on retention / forward-transfer when those scores exist.
+This module never writes champion.json; it stages a challenger and hands the
+change on. Whether that challenger is *enacted* is decided by the promotion
+trial in :mod:`spy_der.learning.promotion_trial`, which re-runs the system with
+the change installed. Staging itself is gated on retention / forward-transfer
+when those scores exist, and a hypothesis that changes no live decision knob is
+not staged at all — there would be nothing to promote.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from spy_der.dojo.config import DojoConfig
-from spy_der.dojo.protocols import CandidateEvaluator, DecisionAuthority, MarketExperienceProvider
-from spy_der.dojo.recorded import run_recorded_phase
+from spy_der.decisions.knobs import actionable_knobs
 from spy_der.learning.hypotheses import diagnose, generate_hypotheses
 from spy_der.learning.optimization import optimize_with_holdout
 from spy_der.learning.promotion import stage_pending_review
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from spy_der.dojo.protocols import (
+        CandidateEvaluator,
+        DecisionAuthority,
+        MarketExperienceProvider,
+    )
+
+# spy_der.dojo imports this module through its package __init__, so importing
+# any dojo module at learning's import time makes `import spy_der.learning`
+# fail depending on which side is imported first. Dojo pieces are pulled in
+# where they are used instead.
 
 __all__ = ["run_learning_cycle", "staging_gates_pass"]
 
@@ -71,6 +85,9 @@ def run_learning_cycle(
     recorded_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One adaptive-learning cycle. Stages pending_review only after gates pass."""
+    from spy_der.dojo.config import DojoConfig
+    from spy_der.dojo.recorded import run_recorded_phase
+
     cfg = DojoConfig(
         configs_dir=configs_dir,
         skip_learner=True,  # avoid recursion if recorded phase ever called learner
@@ -98,19 +115,31 @@ def run_learning_cycle(
     )
 
     staged_path: str | None = None
+    staged_candidate_id: str | None = None
+    staged_changes: dict[str, Any] = {}
     outcome = "no_change"
     if optimization.status == "ok" and optimization.selected is not None:
+        knobs = actionable_knobs(optimization.selected.change)
         if not gates_ok:
             outcome = "gated"
+        elif not knobs:
+            # e.g. the "stable_baseline" diagnosis, whose hypothesis is
+            # literally "hold_champion". Calling that a promotion recommendation
+            # asks a promoter to enact nothing.
+            outcome = "no_change"
         else:
             candidate_id = (
                 f"{mode}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-"
                 f"{optimization.selected.hypothesis_id}"
             )
+            staged_candidate_id = candidate_id
+            staged_changes = knobs
             path = stage_pending_review(
                 configs_dir,
                 candidate_id=candidate_id,
+                auto_promote=True,
                 payload={
+                    "knobs": knobs,
                     "mode": mode,
                     "hypothesis": optimization.selected.to_dict(),
                     "diagnoses": diagnoses,
@@ -143,9 +172,11 @@ def run_learning_cycle(
         "optimization": optimization.to_dict(),
         "gates": list(gate_notes),
         "staged_path": staged_path,
+        "staged_candidate_id": staged_candidate_id,
+        "staged_changes": staged_changes,
         "configs_dir": str(Path(configs_dir)),
         "note": (
-            "champion.json untouched — human promoter required"
+            "challenger staged — promotion trial re-runs the system with it"
             if outcome == "promotion_recommended"
             else (
                 "staging blocked by promotion gates"

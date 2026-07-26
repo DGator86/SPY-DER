@@ -102,9 +102,17 @@ dojo:
   universe_snapshot_stride: 15
   full_lattice: false
   catalog_seed: 20260723
-  # Promotion is human-gated. The Dojo stages candidates into
-  # configs/pending_review/ and never writes champion.json.
-  auto_promote: false
+  # Promotion is automatic but evidence-gated: the Dojo re-runs recorded tape
+  # and blind days with a recommended change installed and writes
+  # configs/champion.json only when that re-run beats the incumbent on every
+  # gate below. Set false (or SPY_DER_DOJO_AUTO_PROMOTE=0) to stop at a staged
+  # candidate and promote by hand. See docs/ops/dojo.md.
+  auto_promote: true
+  promote_min_trades: 20
+  promote_min_sessions: 3
+  promote_min_pnl_edge: 0.0
+  promote_max_win_rate_drop: 0.05
+  promote_cooldown_hours: 6.0
 
 validation:
   reports_dir: /var/lib/spy-der/reports/validation

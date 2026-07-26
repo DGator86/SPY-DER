@@ -1,0 +1,69 @@
+{
+  "phase": "dojo-auto-promotion",
+  "phase_name": "Validated automatic promotion — the Dojo enacts its own recommendation",
+  "spec_reference": "docs/ops/dojo.md (Promotion), docs/DOJO_MIGRATION.md Phase 5",
+  "source_repository": "DGator86/SPY-DER",
+  "target_repository": "DGator86/SPY-DER",
+  "generated_at": "2026-07-26T00:00:00Z",
+  "files_inspected": [
+    "src/spy_der/dojo/runner.py",
+    "src/spy_der/dojo/authority.py",
+    "src/spy_der/learning/learner.py",
+    "src/spy_der/learning/promotion.py",
+    "src/spy_der/learning/hypotheses.py",
+    "src/spy_der/runtime/decision_service.py",
+    "docs/ops/dojo.md",
+    "deploy/config.yaml.example"
+  ],
+  "files_migrated": [
+    "NEW src/spy_der/decisions/knobs.py (single knob-application path)",
+    "NEW src/spy_der/decisions/champion.py (live champion.json reader, mtime-cached)",
+    "NEW src/spy_der/learning/promotion_trial.py (re-run + gates)",
+    "EXTEND src/spy_der/learning/promotion.py (auto_promote_pending, champion_history, rollback)",
+    "EXTEND src/spy_der/learning/learner.py (no staging without a live knob)",
+    "EXTEND src/spy_der/learning/hypotheses.py (one knob per hypothesis)",
+    "EXTEND src/spy_der/dojo/runner.py (phase 5 promotion, flags, CLI)",
+    "EXTEND src/spy_der/dojo/authority.py (champion carries promoted knobs)",
+    "EXTEND src/spy_der/dojo/config.py (auto_promote + thresholds)",
+    "EXTEND src/spy_der/runtime/decision_service.py (enact promoted knobs live)",
+    "NEW tests/unit/test_promotion_trial.py",
+    "UPDATE docs/ops/dojo.md, docs/DOJO_MIGRATION.md, README.md, deploy/config.yaml.example"
+  ],
+  "files_deferred": [
+    "0DTE dashboard rendering of the promotion phase lands in the 0DTE PR",
+    "Per-archetype promotion gates (currently aggregate synthetic panel only)"
+  ],
+  "behavior_preserved": [
+    "Live trading remains disabled; promotion changes shadow decisions only.",
+    "Human promotion path intact — promote_pending still demands 'PROMOTE'.",
+    "Offline Dojo defaults to deterministic agents (no Grok spend).",
+    "Promotion knobs can only reduce exposure: size is capped, never lifted."
+  ],
+  "intentional_changes": [
+    "The Dojo promotes automatically when a re-run under the recommended change beats the incumbent on every gate.",
+    "champion.json is read by the live decision path, so a promotion changes decisions.",
+    "A hypothesis that changes no live decision knob is no longer staged as a promotion recommendation.",
+    "Hypotheses carry one knob each so a trial result is attributable."
+  ],
+  "deliverables": [
+    "src/spy_der/learning/promotion_trial.py",
+    "src/spy_der/learning/promotion.py",
+    "src/spy_der/decisions/knobs.py",
+    "src/spy_der/decisions/champion.py",
+    "tests/unit/test_promotion_trial.py"
+  ],
+  "tests": [
+    {"name": "pytest tests/unit/test_promotion_trial.py", "result": "pass"},
+    {"name": "pytest tests (full suite)", "result": "pass"}
+  ],
+  "known_gaps": [
+    "risk_max_size_scalar cannot win a trial on its own: the evaluator scores realized P&L per matched trade and ignores size, so a pure size change shows no edge and is refused.",
+    "A confidence floor is all-or-nothing on tape where the deterministic agent reports a flat 0.5 confidence; such candidates fail the evidence gate rather than promoting."
+  ],
+  "rollback": [
+    "SPY_DER_DOJO_AUTO_PROMOTE=0 stops further automatic promotions.",
+    "SPY_DER_CHAMPION_KNOBS=0 makes the live path ignore a promoted config.",
+    "spy_der.learning.promotion.rollback_champion() restores the archived champion from configs/champion_history/."
+  ],
+  "next_phase": "0DTE dashboard: render the promotion phase (verdict, gates, incumbent vs candidate)."
+}

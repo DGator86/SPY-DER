@@ -459,9 +459,22 @@ def test_config_template_declares_parity_tolerances() -> None:
     assert "hard_vetoes_abs" not in text
 
 
-def test_config_template_does_not_auto_promote() -> None:
+def test_config_template_declares_promotion_gates() -> None:
+    """Automatic promotion is fine; unbounded automatic promotion is not.
+
+    The template must show the operator the bars a challenger clears before the
+    Dojo writes champion.json, so 'auto_promote: true' is never the whole story.
+    """
     text = (_DEPLOY / "config.yaml.example").read_text(encoding="utf-8")
-    assert "auto_promote: false" in text
+    assert "auto_promote: true" in text
+    for gate in (
+        "promote_min_trades",
+        "promote_min_sessions",
+        "promote_min_pnl_edge",
+        "promote_max_win_rate_drop",
+        "promote_cooldown_hours",
+    ):
+        assert gate in text, f"promotion gate {gate} not declared"
 
 
 # --------------------------------------------------------------------------- #
