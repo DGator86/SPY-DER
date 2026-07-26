@@ -35,12 +35,19 @@ spy-der-engine = "spy_der.runtime.engine:main"
 spy-der-settlement = "spy_der.runtime.settlement:main"
 spy-der-dojo = "spy_der.runtime.dojo_runner:main"
 spy-der-market = "spy_der.runtime.market_service:main"
+spy-der-mcp = "spy_der.runtime.mcp_server:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# The dashboard tab is served by spy-der-dashboard-api from inside the installed
+# package, so the assets must ship with the wheel rather than being read out of a
+# checkout that may not exist on the VPS.
+"spy_der.runtime" = ["ui/*.html", "ui/*.css", "ui/*.js"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

@@ -11,7 +11,12 @@ import stat
 from pathlib import Path
 
 from spy_der.dojo.reports import persist_dojo_report
-from spy_der.runtime.dashboard_api import DashboardApiState, handle_get
+from spy_der.runtime.dashboard_api import (
+    UI_ROOT,
+    DashboardApiState,
+    handle_get,
+    read_ui_asset,
+)
 from spy_der.util.files import atomic_write_json
 
 
@@ -209,3 +214,104 @@ def test_atomic_write_json_respects_a_restrictive_umask(tmp_path: Path) -> None:
         assert not mode & stat.S_IROTH, oct(mode)
     finally:
         os.umask(previous)
+
+
+# --------------------------------------------------------------------------- #
+# Attribution route                                                           #
+# --------------------------------------------------------------------------- #
+def test_attribution_latest_is_404_before_any_report(tmp_path: Path) -> None:
+    code, body = handle_get(_state(tmp_path), "/v1/attribution/latest")
+    assert code == 404
+    assert body["error"] == "no_attribution_report"
+
+
+def test_attribution_latest_serves_the_persisted_report(tmp_path: Path) -> None:
+    from decimal import Decimal
+
+    from spy_der.evaluation.attribution import (
+        ActualTrade,
+        PlannedTrade,
+        attribute_session,
+    )
+    from spy_der.evaluation.reports import persist_attribution_report
+
+    report = attribute_session(
+        [
+            (
+                PlannedTrade(
+                    candidate_id="cand-a",
+                    contracts=10,
+                    entry_price=Decimal("-0.50"),
+                    exit_price=Decimal("0"),
+                    session_date="2026-07-24",
+                ),
+                ActualTrade(
+                    candidate_id="cand-a",
+                    contracts=10,
+                    entry_price=Decimal("-0.40"),
+                    exit_price=Decimal("0"),
+                ),
+            )
+        ]
+    )
+    persist_attribution_report(tmp_path / "reports" / "attribution", report=report)
+    code, body = handle_get(_state(tmp_path), "/v1/attribution/latest")
+    assert code == 200
+    assert body["verdict"] == "execution_drag"
+    assert body["report_date"] == "2026-07-24"
+
+
+def test_attribution_report_index_is_empty_not_an_error(tmp_path: Path) -> None:
+    code, body = handle_get(_state(tmp_path), "/v1/attribution/reports")
+    assert code == 200
+    assert body["reports"] == []
+
+
+# --------------------------------------------------------------------------- #
+# UI assets                                                                   #
+# --------------------------------------------------------------------------- #
+def test_ui_root_serves_the_standalone_shell() -> None:
+    code, content_type, body = read_ui_asset("/ui")
+    assert code == 200
+    assert content_type.startswith("text/html")
+    assert b"data-spy-der-tab" in body
+
+
+def test_ui_serves_the_module_and_stylesheet() -> None:
+    for name, expected in (("spy-der-tab.js", "javascript"), ("spy-der-tab.css", "css")):
+        code, content_type, body = read_ui_asset(f"/ui/{name}")
+        assert code == 200, name
+        assert expected in content_type
+        assert body
+
+
+def test_ui_assets_ship_inside_the_installed_package() -> None:
+    # The unit reads these out of site-packages on the VPS, not a checkout.
+    assert UI_ROOT.is_dir()
+    assert (UI_ROOT / "index.html").is_file()
+    assert UI_ROOT.parent.name == "runtime"
+
+
+def test_ui_rejects_path_traversal() -> None:
+    for attempt in (
+        "/ui/../../../etc/passwd",
+        "/ui/..%2f..%2fetc%2fpasswd",
+        "/ui/subdir/thing.js",
+        "/ui/../dashboard_api.py",
+    ):
+        code, _, body = read_ui_asset(attempt)
+        assert code == 404, attempt
+        assert body == b"not found"
+
+
+def test_ui_rejects_unlisted_suffixes() -> None:
+    # Only html/css/js are servable; a .py in the same directory is not.
+    code, _, _ = read_ui_asset("/ui/spy-der-tab.py")
+    assert code == 404
+
+
+def test_ui_is_not_reachable_through_the_json_handler(tmp_path: Path) -> None:
+    # The MCP surface wraps handle_get; assets must stay off it.
+    code, body = handle_get(_state(tmp_path), "/ui")
+    assert code == 404
+    assert body["error"] == "not_found"

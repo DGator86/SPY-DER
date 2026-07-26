@@ -2,6 +2,19 @@
 
 from __future__ import annotations
 
+from spy_der.evaluation.attribution import (
+    ATTRIBUTION_SCHEMA,
+    ActualTrade,
+    AttributionComponent,
+    AttributionConfig,
+    BehaviorFlag,
+    PlannedTrade,
+    ShadowAccountReport,
+    TradeAttribution,
+    assert_reconciles,
+    attribute_session,
+    attribute_trade,
+)
 from spy_der.evaluation.comparison import (
     AblationId,
     ComparisonKind,
@@ -32,18 +45,29 @@ from spy_der.evaluation.reports import SessionReport, render_comparison_report, 
 from spy_der.evaluation.settlement import SettlementBatch, settle_candidate, settle_session
 
 __all__ = [
+    "ATTRIBUTION_SCHEMA",
     "EVALUATION_SCHEMA",
     "HORIZONS",
     "AblationId",
+    "ActualTrade",
+    "AttributionComponent",
+    "AttributionConfig",
+    "BehaviorFlag",
     "ComparisonKind",
     "ComparisonManifest",
     "ComparisonReport",
     "EvaluationResult",
+    "PlannedTrade",
     "SessionLabeler",
     "SessionReport",
     "SettlementBatch",
+    "ShadowAccountReport",
+    "TradeAttribution",
     "TradeOutcome",
     "VariantResult",
+    "assert_reconciles",
+    "attribute_session",
+    "attribute_trade",
     "compare_agents",
     "compare_controlled",
     "compare_native",

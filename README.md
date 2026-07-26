@@ -28,6 +28,10 @@ dependency.
   coupled chain repricing, coverage matrix, calibration, archetype evolution)
 - `spy_der.dojo` — protocol-driven Dojo over recorded and synthetic experience
 - `spy_der.learning` — diagnose / optimize / stage `pending_review`
+- `spy_der.evaluation.attribution` — shadow account: model quality vs execution
+  quality, decomposed into a waterfall that reconciles exactly
+- `spy_der.runtime.mcp_server` — read-only MCP surface over published state
+- `spy_der.runtime.ui` — the dashboard tab, served standalone and embedded
 - `spy_der.contracts.integration` — versioned packets (temporary bridge surface)
 
 ## Decision hierarchy
@@ -59,6 +63,19 @@ python -m ruff check .
 python -m mypy src
 python -m pytest
 ```
+
+## Dashboard and MCP
+
+```bash
+spy-der-dashboard-api --state-root /var/lib/spy-der   # then open /ui
+spy-der-mcp --state-root /var/lib/spy-der             # stdio MCP, read-only
+```
+
+Both are read-only over published state and share one read path
+(`dashboard_api.handle_get`). Neither can place, size, approve or promote
+anything. See [`docs/ops/DASHBOARD_TAB.md`](docs/ops/DASHBOARD_TAB.md) and
+[`integrations/zerodte/spy_der_tab/`](integrations/zerodte/spy_der_tab) for the
+0DTE Vercel embed.
 
 ## Deployment
 

@@ -30,7 +30,10 @@ def _logit(p: np.ndarray, eps: float = 1e-6) -> np.ndarray:
 
 def clip_probability(p: Any, eps: float = 1e-6) -> np.ndarray:
     """Local copy avoids importing forecasting (circular with model calibrators)."""
-    return np.clip(np.asarray(p, dtype=float), eps, 1.0 - eps)
+    # Bound to a declared local: numpy's stubs type `clip` as Any, which
+    # `--strict`'s no-any-return rejects when returned directly.
+    clipped: np.ndarray = np.clip(np.asarray(p, dtype=float), eps, 1.0 - eps)
+    return clipped
 
 
 def brier_score(y: Any, p: Any) -> float:
