@@ -3,6 +3,21 @@
 > Migrated ownership: the Dojo belongs to SPY-DER, not 0DTE.
 > See `docs/OWNERSHIP_BOUNDARY.md` and `docs/DOJO_MIGRATION.md`.
 
+## What it is (read this first)
+
+The Vercel **Dojo** tab shows SPY-DER Dojo reports. Dojo is a **nightly exam +
+study plan**, not an open-ended trainer:
+
+| Question | Answer |
+|---|---|
+| What data? | **Stored real sessions** (`inbox/experience`) plus **synthetic stress worlds**. Not the live market feed. |
+| Does it trade live? | **No.** Live knobs change only after a validated promotion writes `champion.json`. |
+| Why stop before “great”? | Fixed timer budgets (e.g. daily: 6 worlds × 1 generation). Weak market types raise weights for the **next** generation / next night — the run does not loop until every archetype is green. |
+
+Each report includes a `human` block (`headline`, `data_story`, `stop_reason`,
+`next_step`) for dashboards. The Vercel tab rewrite lives in
+[`integrations/zerodte/dojo-tab-human-ui.patch`](../../integrations/zerodte/dojo-tab-human-ui.patch).
+
 The Dojo compresses market experience into one run:
 
 1. **recorded** — walk `MarketExperienceProvider`; score champion / challenger / baseline via `CandidateEvaluator`

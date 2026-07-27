@@ -487,17 +487,20 @@ def run_universe_phase(
                 float(champ_tot["total_pnl"]),
                 float(base_tot["total_pnl"]),
             )
-        result["note"] = "Synthetic worlds scored against the live decision path."
+        result["note"] = (
+            "Synthetic stress worlds scored the same way live decisions are made. "
+            "These are generated markets, not the live tape."
+        )
     elif n_catalog_specs > 0 and n_scored_universes == 0:
         result["status"] = "unscored"
         result["note"] = (
-            f"generated {n_catalog_specs} universes / {n_packets} snapshots but "
-            "scored 0 — provider outcomes missing realized_pnl labels"
+            f"Built {n_catalog_specs} synthetic worlds / {n_packets} snapshots but "
+            "scored none — outcomes were missing P&L labels."
         )
     else:
         result["note"] = (
-            "Synthetic worlds generated; attach a decision authority with "
-            "labeled outcomes to score robustness P&L."
+            "Synthetic stress worlds were generated; attach a decision authority "
+            "with labeled outcomes to score them."
         )
     return result
 
