@@ -37,6 +37,7 @@ spy-der-dojo = "spy_der.runtime.dojo_runner:main"
 spy-der-market = "spy_der.runtime.market_service:main"
 spy-der-mcp = "spy_der.runtime.mcp_server:main"
 spy-der-train = "spy_der.runtime.training:main"
+spy-der-import-zerodte = "spy_der.runtime.zerodte_import:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
