@@ -32,7 +32,7 @@ def test_mtf_indicators_on_trend() -> None:
     closes = [500.0 + i * 0.5 for i in range(60)]  # steady uptrend
     features = compute_mtf(_bars(closes))
     by_tf = {f.timeframe_minutes: f for f in features}
-    assert set(by_tf) == {1, 5, 15}
+    assert set(by_tf) == {1, 5, 15, 30, 60, 240, 1440}
     one = by_tf[1]
     assert one.last_return is not None and one.last_return > 0
     assert one.ema_slope is not None and one.ema_slope > 0
