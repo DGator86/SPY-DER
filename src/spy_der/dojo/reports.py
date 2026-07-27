@@ -23,6 +23,7 @@ def persist_dojo_report(
     summary: str,
     flags: list[dict[str, Any]],
     metrics: dict[str, Any],
+    human: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> dict[str, str]:
     """Write stamped JSON + `latest.json`. Never touches champion configs."""
@@ -30,13 +31,15 @@ def persist_dojo_report(
     root.mkdir(parents=True, exist_ok=True)
     stamp_dt = now or datetime.now(ET)
     stamp = stamp_dt.strftime("%Y%m%d_%H%M%S")
-    payload = {
+    payload: dict[str, Any] = {
         "report_date": report_date,
         "summary": summary,
         "flags": flags,
         "metrics": metrics,
         "generated_at": stamp_dt.isoformat(),
     }
+    if human:
+        payload["human"] = human
     stamped = root / f"dojo_{stamp}.json"
     latest = root / "latest.json"
     with open(stamped, "w", encoding="utf-8") as handle:

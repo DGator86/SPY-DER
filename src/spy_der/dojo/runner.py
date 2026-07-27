@@ -27,6 +27,7 @@ from spy_der.decisions.shadow import ai_context
 from spy_der.dojo.authority import default_authorities
 from spy_der.dojo.config import DEFAULT_CONFIGS_DIR, DEFAULT_REPORTS_DIR, DojoConfig
 from spy_der.dojo.evaluation import OutcomeCandidateEvaluator
+from spy_der.dojo.human import build_human_report
 from spy_der.dojo.protocols import (
     CandidateEvaluator,
     DecisionAuthority,
@@ -516,6 +517,17 @@ def _run_dojo_phases(
 
     flags = _build_flags(recorded, sequential, learner, universe, promotion)
     summary = _summary_text(recorded, sequential, learner, universe, flags)
+    config_blob = {
+        "wf_folds": cfg.wf_folds,
+        "learn_trials": cfg.learn_trials,
+        "universes_per_gen": cfg.universes_per_gen,
+        "generations": cfg.generations,
+        "full_lattice": cfg.full_lattice,
+        "universe_days": cfg.universe_days,
+        "recent_days": cfg.recent_days,
+        "catalog_seed": cfg.catalog_seed,
+        "authorities": sorted(authority_set.keys()),
+    }
     metrics = {
         "phases": {
             "recorded": recorded,
@@ -526,29 +538,31 @@ def _run_dojo_phases(
         },
         "lessons_written": lessons,
         "elapsed_s": round(time.time() - started, 1),
-        "config": {
-            "wf_folds": cfg.wf_folds,
-            "learn_trials": cfg.learn_trials,
-            "universes_per_gen": cfg.universes_per_gen,
-            "generations": cfg.generations,
-            "full_lattice": cfg.full_lattice,
-            "universe_days": cfg.universe_days,
-            "recent_days": cfg.recent_days,
-            "catalog_seed": cfg.catalog_seed,
-            "authorities": sorted(authority_set.keys()),
-        },
+        "config": config_blob,
     }
+    human = build_human_report(
+        recorded=recorded,
+        sequential=sequential,
+        learner=learner,
+        universe=universe,
+        promotion=promotion,
+        flags=flags,
+        summary=summary,
+        config=config_blob,
+    )
     paths = persist_dojo_report(
         cfg.reports_dir,
         report_date=report_date,
         summary=summary,
         flags=flags,
         metrics=metrics,
+        human=human,
     )
     return {
         "report_date": report_date,
         "summary": summary,
         "flags": flags,
+        "human": human,
         "metrics": metrics,
         **paths,
     }

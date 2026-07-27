@@ -733,18 +733,39 @@ function renderRobustness(universe) {
   return wrap;
 }
 
+function renderHumanStory(human) {
+  if (!human || typeof human !== "object") return null;
+  const wrap = el("div", "spyder-tab__story");
+  const lines = [
+    ["What this checked", human.what_ran],
+    ["Data used", human.data_story],
+    ["Why it stopped", human.stop_reason],
+    ["What changes", human.change],
+    ["Next", human.next_step],
+  ];
+  for (const [label, value] of lines) {
+    if (!value) continue;
+    const row = el("div", "spyder-tab__story-row");
+    row.appendChild(el("div", "spyder-tab__story-label", label));
+    row.appendChild(el("div", "spyder-tab__story-body", text(value)));
+    wrap.appendChild(row);
+  }
+  return wrap.firstChild ? wrap : null;
+}
+
 function renderDojo(dojo, validation) {
   const box = panel("Dojo training room", true);
   if (!dojo) {
     box.appendChild(note("No Dojo report yet. The nightly run will fill this in."));
   } else {
     const phases = phasesOf(dojo);
+    const human = dojo.human && typeof dojo.human === "object" ? dojo.human : null;
     const [tone, title, blurb] = dojoVerdict(dojo, phases);
 
     const verdict = el("p", "spyder-tab__pill" + (tone ? ` spyder-tab__pill--${tone}` : ""));
-    verdict.textContent = title;
+    verdict.textContent = human && human.headline ? text(human.headline) : title;
     box.appendChild(verdict);
-    if (blurb) box.appendChild(note(blurb));
+    if (blurb && !(human && human.headline)) box.appendChild(note(blurb));
 
     box.appendChild(
       kv([
@@ -752,6 +773,9 @@ function renderDojo(dojo, validation) {
         ["Generated", dojo.generated_at ? ageLabel(dojo.generated_at) : null],
       ])
     );
+
+    const story = renderHumanStory(human);
+    if (story) box.appendChild(story);
 
     if (phases.universe && (phases.universe.remediation || phases.universe.archetype_matrix)) {
       box.appendChild(renderFocus(phases.universe));
