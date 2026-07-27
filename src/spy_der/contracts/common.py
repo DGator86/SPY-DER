@@ -19,7 +19,21 @@ from spy_der.contracts.serialization import to_canonical_json
 
 SCHEMA_VERSION = "1.0.0"
 
+#: Version of the canonical *normalization*, distinct from the schema version.
+#:
+#: Snapshot identity hashes this alongside the content, so it must change
+#: whenever the set of fields that participate in identity changes — otherwise
+#: snapshots recorded before and after such a change would be silently
+#: comparable by id while describing different content models. Bumped to 1.1.0
+#: when the volatility term structure and breadth state joined the snapshot.
+#:
+#: Single-sourced here because it appears both on the contract's default and in
+#: the assembler; two copies would eventually disagree, and a disagreement about
+#: an identity input is undetectable by construction.
+NORMALIZATION_VERSION = "1.1.0"
+
 __all__ = [
+    "NORMALIZATION_VERSION",
     "SCHEMA_VERSION",
     "ContractError",
     "ErrorCode",

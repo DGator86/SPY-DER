@@ -182,10 +182,22 @@ def stub_vendor(monkeypatch: pytest.MonkeyPatch):
     return _install
 
 
-def _run(tmp_path: Path, ticks: int = 1) -> list[dict[str, Any]]:
+def _run(
+    tmp_path: Path, ticks: int = 1, *, settlement: str = ""
+) -> list[dict[str, Any]]:
+    """Run the service. Settlement defaults off so these stay offline.
+
+    The default deployment *does* configure Yahoo (see
+    `test_settlement_provider_is_configured_by_default`), but Yahoo is a real
+    network call and `conftest` blocks the socket, so tests that only care about
+    the Massive path opt out explicitly rather than silently.
+    """
     service = MarketService(
         config=MarketServiceConfig(
-            state_root=str(tmp_path), interval_seconds=0.0, max_ticks=ticks
+            state_root=str(tmp_path),
+            interval_seconds=0.0,
+            max_ticks=ticks,
+            settlement_provider=settlement,
         )
     )
     assert service.run() == 0
@@ -317,3 +329,32 @@ def test_stop_signal_ends_the_loop(tmp_path: Path, stub_vendor: Any) -> None:
     service.request_stop()
     assert service.run() == 0
     assert service._seq == 0
+
+
+def test_settlement_provider_is_configured_by_default() -> None:
+    """Without one, every snapshot carries the missing-settlement penalty.
+
+    Yahoo needs no credential, so the default is a working settlement source
+    rather than a standing quality penalty that has to be explained away.
+    """
+    assert MarketServiceConfig().settlement_provider == "yahoo"
+
+
+def test_settlement_provider_is_wired_into_the_feed(
+    tmp_path: Path, stub_vendor: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With settlement present the snapshot is fully live and unpenalized."""
+    session = _current_session()
+    stub_vendor(session)
+    monkeypatch.setattr(
+        "spy_der.market_data.providers.yahoo.get_json",
+        lambda url, **kw: {
+            "chart": {
+                "result": [{"meta": {"regularMarketPrice": 600.0}}],
+                "error": None,
+            }
+        },
+    )
+    snapshot = _run(tmp_path, settlement="yahoo")[0]["snapshot"]
+    assert snapshot["missing_components"] == []
+    assert float(snapshot["data_quality"]["penalty"]) == 0.0

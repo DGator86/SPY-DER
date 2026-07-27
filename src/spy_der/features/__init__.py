@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from spy_der.features.flow import FlowState, compute_flow
 from spy_der.features.gex import GexRankWindow, compute_oi_gex
 from spy_der.features.mtf import (
     DEFAULT_TIMEFRAMES,
@@ -20,10 +21,12 @@ __all__ = [
     "DEFAULT_TIMEFRAMES",
     "NATIVE_FIELDS",
     "TIMEFRAME_LABELS",
+    "FlowState",
     "GexRankWindow",
     "RobustStandardizer",
     "StructuralStateService",
     "TimeframeFeatures",
+    "compute_flow",
     "compute_mtf",
     "compute_oi_gex",
     "compute_rnd",

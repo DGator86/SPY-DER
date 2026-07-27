@@ -1,5 +1,6 @@
 {
   "bars_1m": [],
+  "breadth": null,
   "catalyst_state": {
     "lockout_active": false,
     "reason": null
@@ -12,7 +13,7 @@
     "min_strike": null,
     "strikes_total": 0
   },
-  "content_hash": "sha256:4645b126fd6f2f718bab98197f1766aa4302b7f8f04b1375d3196e54c69d8c43",
+  "content_hash": "sha256:3c900b2b4993dc85d05349a3b61f03a1da494aad457ee2c9692e802be919fd37",
   "data_quality": {
     "flags": [],
     "is_healthy": true,
@@ -75,16 +76,17 @@
   "minutes_from_open": 300,
   "minutes_to_close": 90,
   "missing_components": [],
-  "normalization_version": "1.0.0",
+  "normalization_version": "1.1.0",
   "option_chain": [],
   "schema_version": "1.0.0",
   "selected_providers": [],
   "session_date": "2026-01-05",
   "session_status": "OPEN",
-  "snapshot_id": "snap-d6063a90d084",
+  "snapshot_id": "snap-0be135fbd5db",
   "timestamp": "2026-01-05T14:30:00-05:00",
   "underlying_ask": "500.14",
   "underlying_bid": "500.1",
   "underlying_price": "500.12",
-  "underlying_symbol": "SPY"
+  "underlying_symbol": "SPY",
+  "volatility_term_structure": null
 }

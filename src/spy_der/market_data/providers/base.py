@@ -16,7 +16,12 @@ from decimal import Decimal
 from typing import Protocol, runtime_checkable
 
 from spy_der.contracts.common import require_tz_aware
-from spy_der.contracts.market import Bar, OptionQuote
+from spy_der.contracts.market import (
+    Bar,
+    BreadthState,
+    OptionQuote,
+    VolatilityTermStructure,
+)
 
 __all__ = ["MarketDataProvider", "RawTick"]
 
@@ -44,6 +49,8 @@ class RawTick:
     option_chain: tuple[OptionQuote, ...] = ()
     has_chain: bool = True
     quality_flags: tuple[str, ...] = ()
+    volatility_term_structure: VolatilityTermStructure | None = None
+    breadth: BreadthState | None = None
 
     def __post_init__(self) -> None:
         require_tz_aware(self.observed_at, "RawTick.observed_at")

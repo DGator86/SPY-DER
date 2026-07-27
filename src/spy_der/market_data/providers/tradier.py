@@ -52,7 +52,14 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from spy_der.contracts.market import Bar, OptionContract, OptionQuote, OptionType
+from spy_der.contracts.market import (
+    Bar,
+    BreadthState,
+    OptionContract,
+    OptionQuote,
+    OptionType,
+    VolatilityTermStructure,
+)
 from spy_der.market_data.providers._http import HttpConfig, ProviderHttpError, get_json
 from spy_der.market_data.providers.bars import (
     DEFAULT_LOOKBACK_MINUTES,
@@ -77,6 +84,26 @@ FLAG_SPOT_VENDOR_QUOTE = "spot:tradier_quote"
 FLAG_SPOT_PARITY = "spot:put_call_parity"
 #: Bars were requested and the vendor did not supply a usable series.
 FLAG_BARS_UNAVAILABLE = "bars:unavailable"
+#: The CBOE index quotes were unavailable (commonly an entitlement gap).
+FLAG_VIX_UNAVAILABLE = "vix:unavailable"
+#: The batched breadth quote returned nothing usable.
+FLAG_BREADTH_UNAVAILABLE = "breadth:unavailable"
+
+#: Sector ETFs standing in for the GICS sectors, for the alignment fraction.
+SECTOR_ETFS: tuple[str, ...] = (
+    "XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU", "XLC",
+)
+
+#: Approximate S&P 500 top-10 index weights, renormalized at use.
+#:
+#: These drift as the index rebalances, which is tolerable because the output is
+#: a *weighted average of daily moves* — the weights set relative influence, not
+#: a level, so a stale weight biases the reading slightly rather than breaking
+#: it. Worth refreshing periodically all the same.
+TOP10_WEIGHTS: dict[str, float] = {
+    "NVDA": 7.5, "MSFT": 6.8, "AAPL": 6.1, "AMZN": 4.0, "META": 2.9,
+    "AVGO": 2.5, "GOOGL": 2.2, "GOOG": 1.8, "TSLA": 1.7, "BRK.B": 1.6,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +143,24 @@ def _as_decimal(value: Any) -> Decimal | None:
         return None if value is None else Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return None
+
+
+def _day_change(quote: dict[str, Any] | None) -> float | None:
+    """Fractional move on the session, from whichever field the vendor filled.
+
+    ``change_percentage`` is what Tradier normally sends; the last/prevclose
+    ratio is the fallback for symbols where it is absent.
+    """
+    if not quote:
+        return None
+    percentage = _as_float(quote.get("change_percentage"))
+    if percentage is not None:
+        return percentage / 100.0
+    last = _as_float(quote.get("last"))
+    previous = _as_float(quote.get("prevclose"))
+    if last is not None and previous:
+        return last / previous - 1.0
+    return None
 
 
 def _parse_date(value: Any) -> date | None:
@@ -222,11 +267,19 @@ class TradierProvider(MarketDataProvider):
             # letting a fabricated spot reshape every moneyness band downstream.
             return None
 
-        # Bars are best-effort: see the module docstring. A history-entitlement
-        # failure must not discard a perfectly good chain.
+        # Bars, VIX and breadth are all best-effort: see the module docstring. A
+        # history- or index-entitlement failure must not discard a good chain.
         bars = self._safe_bars(timestamp)
         if not bars:
             flags.append(FLAG_BARS_UNAVAILABLE)
+
+        term_structure = self._safe_vix()
+        if term_structure is None:
+            flags.append(FLAG_VIX_UNAVAILABLE)
+
+        breadth = self._safe_breadth()
+        if breadth is None:
+            flags.append(FLAG_BREADTH_UNAVAILABLE)
 
         return RawTick(
             provider=self.name,
@@ -239,6 +292,8 @@ class TradierProvider(MarketDataProvider):
             option_chain=tuple(quotes),
             has_chain=True,
             quality_flags=tuple(flags),
+            volatility_term_structure=term_structure,
+            breadth=breadth,
         )
 
     # -- vendor calls --------------------------------------------------------
@@ -329,6 +384,93 @@ class TradierProvider(MarketDataProvider):
             if quote is not None:
                 quotes.append(quote)
         return quotes
+
+    # -- volatility indices --------------------------------------------------
+    def _safe_vix(self) -> VolatilityTermStructure | None:
+        try:
+            return self._vix()
+        except ProviderHttpError:
+            return None
+
+    def _vix(self) -> VolatilityTermStructure | None:
+        """CBOE volatility indices from the batched quote endpoint.
+
+        ``VIX9D``/``VIX3M``/``VVIX`` are a separate entitlement on most accounts
+        and are left ``None`` when absent rather than substituted with the
+        30-day VIX. System A backfilled them so the term-structure ordering
+        stayed monotonic; that makes an unknown curve indistinguishable from a
+        genuinely flat one, and flat vs unknown drive opposite regime reads.
+        Without VIX itself there is no term structure at all.
+        """
+        symbols = ",".join(("VIX", "VIX9D", "VIX3M", "VVIX"))
+        url = f"{self._base_url}/v1/markets/quotes?symbols={symbols}"
+        payload = get_json(url, headers=self._headers(), config=self._http)
+        levels: dict[str, float] = {}
+        for quote in _as_list((payload.get("quotes") or {}).get("quote")):
+            if not isinstance(quote, dict):
+                continue
+            symbol = str(quote.get("symbol", "")).upper()
+            value = _as_float(quote.get("last")) or _as_float(quote.get("close"))
+            if symbol and value is not None and value > 0:
+                levels[symbol] = value
+
+        vix = levels.get("VIX")
+        if vix is None:
+            return None
+        return VolatilityTermStructure(
+            vix=vix,
+            vix9d=levels.get("VIX9D"),
+            vix3m=levels.get("VIX3M"),
+            vvix=levels.get("VVIX"),
+            source=self.name,
+        )
+
+    # -- breadth -------------------------------------------------------------
+    def _safe_breadth(self) -> BreadthState | None:
+        try:
+            return self._breadth()
+        except ProviderHttpError:
+            return None
+
+    def _breadth(self) -> BreadthState | None:
+        """Equal-weight divergence, sector alignment and mega-cap pressure.
+
+        One batched quote call covers all three — roughly the informative part
+        of a full 500-constituent breadth engine at a fraction of the data. Each
+        component is independently optional so a partial response still reports
+        what it did resolve.
+        """
+        symbols = ["SPY", "RSP", *SECTOR_ETFS, *TOP10_WEIGHTS]
+        url = f"{self._base_url}/v1/markets/quotes?symbols={','.join(symbols)}"
+        payload = get_json(url, headers=self._headers(), config=self._http)
+        quotes: dict[str, dict[str, Any]] = {}
+        for quote in _as_list((payload.get("quotes") or {}).get("quote")):
+            if isinstance(quote, dict) and quote.get("symbol"):
+                quotes[str(quote["symbol"]).upper()] = quote
+
+        spy = _day_change(quotes.get("SPY"))
+        rsp = _day_change(quotes.get("RSP"))
+        divergence = rsp - spy if spy is not None and rsp is not None else None
+
+        moves = [m for m in (_day_change(quotes.get(s)) for s in SECTOR_ETFS) if m is not None]
+        alignment = (sum(1 for m in moves if m > 0) / len(moves)) if moves else None
+
+        numerator = denominator = 0.0
+        for symbol, weight in TOP10_WEIGHTS.items():
+            move = _day_change(quotes.get(symbol))
+            if move is not None:
+                numerator += weight * move
+                denominator += weight
+        pressure = numerator / denominator if denominator > 0 else None
+
+        state = BreadthState(
+            rsp_spy_div=divergence,
+            sector_align=alignment,
+            top10_pressure=pressure,
+            sectors_observed=len(moves),
+            source=self.name,
+        )
+        return state if state.is_observed else None
 
     def _quote_from_option(
         self, option: dict[str, Any], session: date, timestamp: datetime

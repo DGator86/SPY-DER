@@ -31,7 +31,7 @@ TS = datetime(2026, 1, 5, 14, 30, tzinfo=ET)
 EXPIRY = date(2026, 1, 5)
 SPOT = Decimal("500")
 _SIGMA, _T = 0.03, 0.05
-_EXPECTED_STATE_ID = "struct-72bacd101148"
+_EXPECTED_STATE_ID = "struct-9cec056cdaa5"
 
 
 def _ncdf(x: float) -> float:

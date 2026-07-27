@@ -14,6 +14,7 @@ import datetime as dt
 from decimal import Decimal
 
 from spy_der.contracts.common import (
+    NORMALIZATION_VERSION,
     SCHEMA_VERSION,
     content_hash,
     deterministic_id,
@@ -22,6 +23,7 @@ from spy_der.contracts.common import (
 from spy_der.contracts.market import (
     REQUIRED_FEED_COMPONENTS,
     Bar,
+    BreadthState,
     CanonicalMarketSnapshot,
     CatalystState,
     ChainCoverage,
@@ -31,12 +33,11 @@ from spy_der.contracts.market import (
     OptionQuote,
     OptionType,
     ProviderSelection,
+    VolatilityTermStructure,
 )
 from spy_der.market_data.calendar import MarketCalendar
 
 __all__ = ["CanonicalSnapshotAssembler"]
-
-_NORMALIZATION_VERSION = "1.0.0"
 
 
 def _chain_coverage(chain: tuple[OptionQuote, ...]) -> ChainCoverage:
@@ -112,6 +113,8 @@ class CanonicalSnapshotAssembler:
         underlying_ask: Decimal | None = None,
         catalyst_state: CatalystState | None = None,
         provider_flags: tuple[str, ...] = (),
+        volatility_term_structure: VolatilityTermStructure | None = None,
+        breadth: BreadthState | None = None,
     ) -> CanonicalMarketSnapshot:
         require_tz_aware(timestamp, "timestamp")
         session_date = self.calendar.session_date(timestamp)
@@ -127,7 +130,7 @@ class CanonicalSnapshotAssembler:
         # assigned id/hash. Deterministic across processes and hosts.
         identity = {
             "schema_version": SCHEMA_VERSION,
-            "normalization_version": _NORMALIZATION_VERSION,
+            "normalization_version": NORMALIZATION_VERSION,
             "timestamp": timestamp,
             "session_date": session_date,
             "session_status": session_status,
@@ -145,6 +148,8 @@ class CanonicalSnapshotAssembler:
             "catalyst_state": catalyst,
             "data_quality": quality,
             "missing_components": missing,
+            "volatility_term_structure": volatility_term_structure,
+            "breadth": breadth,
         }
         digest = content_hash(identity)
         snapshot_id = deterministic_id("snap", digest)
@@ -157,7 +162,7 @@ class CanonicalSnapshotAssembler:
             underlying_symbol=underlying_symbol,
             underlying_price=underlying_price,
             session_status=session_status,
-            normalization_version=_NORMALIZATION_VERSION,
+            normalization_version=NORMALIZATION_VERSION,
             underlying_bid=underlying_bid,
             underlying_ask=underlying_ask,
             minutes_from_open=minutes_from_open,
@@ -170,4 +175,6 @@ class CanonicalSnapshotAssembler:
             catalyst_state=catalyst,
             data_quality=quality,
             missing_components=missing,
+            volatility_term_structure=volatility_term_structure,
+            breadth=breadth,
         )

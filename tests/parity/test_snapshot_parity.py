@@ -24,8 +24,8 @@ _EXPECTED = _ROOT / "baseline" / "expected_outputs" / "phase1" / "canonical_snap
 
 # Frozen identity of the golden snapshot. If ingestion changes intentionally,
 # regenerate the expected output and update these deliberately (spec §65).
-_EXPECTED_SNAPSHOT_ID = "snap-d6063a90d084"
-_EXPECTED_CONTENT_HASH = "sha256:4645b126fd6f2f718bab98197f1766aa4302b7f8f04b1375d3196e54c69d8c43"
+_EXPECTED_SNAPSHOT_ID = "snap-0be135fbd5db"
+_EXPECTED_CONTENT_HASH = "sha256:3c900b2b4993dc85d05349a3b61f03a1da494aad457ee2c9692e802be919fd37"
 
 
 def _adapt() -> object:

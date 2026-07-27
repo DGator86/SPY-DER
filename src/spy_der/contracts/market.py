@@ -13,6 +13,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from spy_der.contracts.common import (
+    NORMALIZATION_VERSION,
     SCHEMA_VERSION,
     require_finite,
     require_tz_aware,
@@ -21,6 +22,7 @@ from spy_der.contracts.common import (
 __all__ = [
     "REQUIRED_FEED_COMPONENTS",
     "Bar",
+    "BreadthState",
     "CanonicalMarketSnapshot",
     "CatalystState",
     "ChainCoverage",
@@ -33,6 +35,7 @@ __all__ = [
     "OptionType",
     "ProviderSelection",
     "SessionStatus",
+    "VolatilityTermStructure",
 ]
 
 
@@ -169,6 +172,75 @@ class ChainCoverage:
 
 
 @dataclass(frozen=True, slots=True)
+class VolatilityTermStructure:
+    """CBOE volatility indices for one snapshot (spec §19).
+
+    ``vix9d``/``vix3m`` are optional because they are a separate market-data
+    entitlement on most brokerage accounts. They are left ``None`` rather than
+    backfilled from the 30-day VIX: a flat term structure and an unknown one
+    lead to opposite regime reads, and the caller can substitute if it wants to.
+    """
+
+    vix: float
+    vix9d: float | None = None
+    vix3m: float | None = None
+    vvix: float | None = None
+    vvix_baseline: float | None = None
+    source: str = ""
+
+    def __post_init__(self) -> None:
+        require_finite(self.vix, "VolatilityTermStructure.vix")
+        for name in ("vix9d", "vix3m", "vvix", "vvix_baseline"):
+            value = getattr(self, name)
+            if value is not None:
+                require_finite(value, f"VolatilityTermStructure.{name}")
+
+    @property
+    def contango(self) -> float | None:
+        """``vix3m / vix - 1``: positive in contango, negative in backwardation."""
+        if self.vix3m is None or self.vix <= 0:
+            return None
+        return self.vix3m / self.vix - 1.0
+
+    @property
+    def near_term_stress(self) -> float | None:
+        """``vix9d / vix - 1``: positive when near-dated vol is bid."""
+        if self.vix9d is None or self.vix <= 0:
+            return None
+        return self.vix9d / self.vix - 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class BreadthState:
+    """Equal-weight divergence, sector alignment and mega-cap pressure (spec §21).
+
+    Each field is independently optional: they come from one batched quote call,
+    and a partial response should surface what it did return rather than
+    discarding the rest. ``None`` means not observed — never zero, which for
+    ``rsp_spy_div`` would assert that breadth is exactly neutral.
+    """
+
+    rsp_spy_div: float | None = None
+    sector_align: float | None = None
+    top10_pressure: float | None = None
+    sectors_observed: int = 0
+    source: str = ""
+
+    def __post_init__(self) -> None:
+        for name in ("rsp_spy_div", "sector_align", "top10_pressure"):
+            value = getattr(self, name)
+            if value is not None:
+                require_finite(value, f"BreadthState.{name}")
+
+    @property
+    def is_observed(self) -> bool:
+        return any(
+            getattr(self, name) is not None
+            for name in ("rsp_spy_div", "sector_align", "top10_pressure")
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CatalystState:
     lockout_active: bool = False
     reason: str | None = None
@@ -200,7 +272,7 @@ class CanonicalMarketSnapshot:
     underlying_price: Decimal
     session_status: SessionStatus
     schema_version: str = SCHEMA_VERSION
-    normalization_version: str = "1.0.0"
+    normalization_version: str = NORMALIZATION_VERSION
     underlying_bid: Decimal | None = None
     underlying_ask: Decimal | None = None
     minutes_from_open: int | None = None
@@ -213,6 +285,8 @@ class CanonicalMarketSnapshot:
     catalyst_state: CatalystState = field(default_factory=CatalystState)
     data_quality: DataQuality = field(default_factory=DataQuality)
     missing_components: tuple[str, ...] = ()
+    volatility_term_structure: VolatilityTermStructure | None = None
+    breadth: BreadthState | None = None
 
     def __post_init__(self) -> None:
         require_tz_aware(self.timestamp, "CanonicalMarketSnapshot.timestamp")

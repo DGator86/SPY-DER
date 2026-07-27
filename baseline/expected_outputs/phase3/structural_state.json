@@ -8,7 +8,7 @@
     "net_gex_bn": 0.0,
     "net_ratio": 0.0,
     "put_wall": "500.0",
-    "wall_concentration": 0.23787117295408158
+    "wall_concentration": 0.23787117295408164
   },
   "missing_fields": [
     "gamma_flip_velocity",
@@ -31,8 +31,8 @@
     "std": 3.460450259726033
   },
   "schema_version": "1.0.0",
-  "snapshot_id": "snap-2c7ba6403ea8",
-  "structural_state_id": "struct-72bacd101148",
+  "snapshot_id": "snap-ca99be0cbeeb",
+  "structural_state_id": "struct-9cec056cdaa5",
   "structural_state_version": "1.0.0",
   "volatility": {
     "atm_straddle": "2.6762",
