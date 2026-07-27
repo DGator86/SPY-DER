@@ -1,40 +1,44 @@
 # Human Dojo tab for the Vercel (0DTE) dashboard
 
 The Vercel **Dojo** tab *is* the SPY-DER Dojo — it reads
-`/var/lib/spy-der/reports/dojo/latest.json`. The jargon you saw
-(`DecisionAuthority`, `LATTICE`, file paths, `promotion_pending_review`) came
-from 0DTE’s renderer in `dashboard/static/app.js`, not from a separate product.
+`/var/lib/spy-der/reports/dojo/latest.json`.
 
-SPY-DER now attaches a plain-English `human` block to every report. This patch
-rewrites the Vercel Dojo tab to use it and to answer, on every run:
+SPY-DER attaches a plain-English `human` block to every report. The phone UI
+must answer, on every run:
 
 1. **What this checked** — stored real sessions + synthetic stress worlds  
 2. **Data used** — not live trading  
 3. **Why it stopped** — fixed nightly budget; it does not grind until “great”  
-4. **Tonight’s focus** — which weak market types get more practice next  
+4. **Next** — which weak market types get more practice  
 
 ## Apply on 0DTE
 
-From a checkout of `DGator86/0DTE`:
+Preferred (current production UI):
 
 ```bash
-git apply /path/to/SPY-DER/integrations/zerodte/dojo-tab-human-ui.patch
-# or:
-patch -p1 < /path/to/SPY-DER/integrations/zerodte/dojo-tab-human-ui.patch
+# From DGator86/0DTE at main
+patch -p0 -d dashboard/static < /path/to/SPY-DER/integrations/zerodte/dojo-tab-purpose-story.patch
+# Also update the Dojo intro in dashboard/static/index.html to the nightly-exam copy
+# (see dojo-purpose-story-0dte.patch for the full 3-file change).
 ```
 
-Files touched:
+Full commit-style patch:
 
-- `dashboard/static/app.js` — human `renderDojoDetail` / list / matrix  
-- `dashboard/static/index.html` — intro copy  
-- `dashboard/static/style.css` — story / focus styles  
+```bash
+git am /path/to/SPY-DER/integrations/zerodte/dojo-purpose-story-0dte.patch
+# or:
+git apply /path/to/SPY-DER/integrations/zerodte/dojo-purpose-story-0dte.patch
+```
 
-Deploy the Vercel dashboard as usual after merging.
+Older wholesale rewrite (superseded by the purpose-story patch on top of the
+current narrative UI):
 
-## Without the patch
+- `dojo-tab-human-ui.patch`
+- `dojo_tab_human.js.snippet`
 
-Even before the UI patch lands, new SPY-DER Dojo runs write `human.headline`,
-`human.data_story`, and `human.stop_reason` into `latest.json`, and strip
-evaluator class names from phase `note` fields. The list summary line will
-already read better once the VPS is on a SPY-DER build that includes this
-change.
+## Without the UI patch
+
+New SPY-DER Dojo runs already write `human.headline`, `human.data_story`,
+`human.stop_reason`, and strip evaluator class names from phase notes. The
+list summary line reads in plain English once the VPS is on a build that
+includes that change.

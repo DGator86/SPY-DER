@@ -1,0 +1,95 @@
+From 83f8a642908d3574adef5f9264b95f6e7b137b2d Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Mon, 27 Jul 2026 14:49:12 +0000
+Subject: [PATCH] Make Dojo purpose and data story obvious on the phone UI
+
+Label What this checked / Data used / Why it stopped from the SPY-DER
+human block (with fixed-budget fallbacks), and rewrite the Dojo intro so
+operators see stored sessions + synthetic worlds, not live trading.
+---
+ dashboard/static/app.js     | 36 +++++++++++++++++++++++++-----------
+ dashboard/static/index.html |  7 ++++---
+ dashboard/static/style.css  |  1 +
+ 3 files changed, 30 insertions(+), 14 deletions(-)
+
+diff --git a/dashboard/static/app.js b/dashboard/static/app.js
+index fda8eb2..a911d50 100644
+--- a/dashboard/static/app.js
++++ b/dashboard/static/app.js
+@@ -4067,18 +4067,32 @@
+     return ["No change", "dim"];
+   }
+ 
+-  /* ---- why the run stopped where it did ----
+-     SPY-DER attaches a `human` block to every report (headline / data_story /
+-     stop_reason / next_step). The stop reason is the one thing this renderer
+-     cannot derive: "it stopped because the nightly budget ran out, not because
+-     everything is fixed" is a fact about the schedule, not about the numbers.
+-     Read it rather than restate it, so the two repos do not drift apart. */
++  /* ---- purpose + data story (always visible) ----
++     Prefer SPY-DER's `human` block so the two repos do not drift. Fall back to
++     the product truth when an older report lacks it: stored tape + synthetic
++     worlds, fixed nightly budget, no grind-until-green. */
+   function renderDojoStopReason(human) {
+-    if (!human || typeof human !== "object") return "";
+-    const lines = [human.stop_reason, human.next_step, human.data_story]
+-      .filter((s) => typeof s === "string" && s.trim());
+-    if (!lines.length) return "";
+-    return `<p class="dojo-stop">${lines.map((s) => esc(s)).join(" ")}</p>`;
++    const h = (human && typeof human === "object") ? human : {};
++    const what = (typeof h.what_ran === "string" && h.what_ran.trim())
++      ? h.what_ran.trim()
++      : "Checked stored real market sessions, then synthetic stress worlds.";
++    const data = (typeof h.data_story === "string" && h.data_story.trim())
++      ? h.data_story.trim()
++      : "Used stored real market sessions plus generated stress worlds. Did not trade or score against the live market during this run.";
++    const stop = (typeof h.stop_reason === "string" && h.stop_reason.trim())
++      ? h.stop_reason.trim()
++      : "Finished its fixed nightly budget. It does not keep running until results look great.";
++    const next = (typeof h.next_step === "string" && h.next_step.trim())
++      ? h.next_step.trim()
++      : "";
++    const rows = [
++      ["What this checked", what],
++      ["Data used", data],
++      ["Why it stopped", stop],
++    ];
++    if (next) rows.push(["Next", next]);
++    return `<div class="dojo-stop">${rows.map(([label, body]) =>
++      `<p class="tj-sub"><b>${esc(label)}.</b> ${esc(body)}</p>`).join("")}</div>`;
+   }
+ 
+   /* ---- where the system is weak ---- */
+diff --git a/dashboard/static/index.html b/dashboard/static/index.html
+index 9bad6dd..58a8387 100644
+--- a/dashboard/static/index.html
++++ b/dashboard/static/index.html
+@@ -479,9 +479,10 @@
+       <section class="panel" id="dojo-list-panel">
+         <h2>Training runs <span class="h2-right" id="dojo-count">—</span></h2>
+         <p class="empty" id="dojo-intro" style="margin:0 0 10px">
+-          Each night SPY-DER re-trades recorded market days and thousands of
+-          simulated ones, finds where it loses money, and tests a fix against
+-          both before changing how it trades.
++          SPY-DER Dojo is a <b>nightly exam</b> on <b>stored real sessions</b>
++          plus <b>synthetic stress worlds</b>. It does not trade live, and it
++          does not keep running until results look great — weak market types
++          get more practice on the next scheduled run.
+         </p>
+         <div class="val-list" id="dojo-list"><p class="empty">No training run yet —
+           enable the <span class="mono">spy-der-dojo-*</span> timers on the VPS</p></div>
+diff --git a/dashboard/static/style.css b/dashboard/static/style.css
+index 438852a..1bd4c1b 100644
+--- a/dashboard/static/style.css
++++ b/dashboard/static/style.css
+@@ -1149,6 +1149,7 @@ html, body {
+   color: var(--ink); margin-bottom: 16px;
+ }
+ /* Why the run stopped where it did — schedule context, not a finding. */
++.dojo-stop .tj-sub { margin: 0 0 6px; }
+ .dojo-stop {
+   font-size: 12px; line-height: 1.55; color: var(--muted);
+   margin: 0 0 14px;
+-- 
+2.43.0
+
