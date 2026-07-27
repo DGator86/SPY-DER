@@ -127,11 +127,11 @@ def run_recorded_phase(
         "wf_folds": cfg.wf_folds,
         "evaluation": report_dict,
         "note": (
-            "recorded tape scored via DecisionAuthority + CandidateEvaluator"
+            "Scored against settled outcomes from stored real market sessions."
             if authorities or decision_list
             else (
-                "recorded baseline assembled via MarketExperienceProvider; "
-                "attach DecisionAuthority to score AI decisions"
+                "Stored market sessions loaded; attach a decision authority "
+                "to score the champion against outcomes."
             )
         ),
     }
