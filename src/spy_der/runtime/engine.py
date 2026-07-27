@@ -20,11 +20,12 @@ outcomes, which is the design saying a stage may legitimately not run. Today:
   RND, volatility, flow, breadth and volatility-surface families into a
   `FeatureBundle`, recorded under `features/` and journaled as
   `FEATURES_COMPUTED`
-* `forecast` needs a trained model group from `spy_der.training.registry`.
-  `ForecastServer` is fail-closed by design and `heuristic_bundle` is marked
-  research-only, so with no registry configured the engine journals
-  `FORECAST_UNAVAILABLE` rather than serving a neutral 0.5 that downstream
-  stages would read as a real forecast
+* `forecast` runs when a trained model group is configured
+  (`--forecast-group`, produced by `spy-der train`), serving through
+  `ForecastServer` and journaling `FORECAST_GENERATED`. With no group it stays
+  fail-closed and journals `FORECAST_UNAVAILABLE` rather than serving
+  `heuristic_bundle`'s neutral 0.5, which is marked research-only and which
+  downstream stages would read as a real forecast
 
 The engine is idempotent: it skips snapshots whose candidate artifact is
 already on disk, so a restart resumes rather than duplicating.
@@ -49,10 +50,12 @@ from spy_der.features.pipeline import (
     FEATURE_PIPELINE_VERSION,
     SnapshotFeaturePipeline,
 )
+from spy_der.forecasting.runtime import ForecastServer, ForecastServingError
 from spy_der.journal.store import SqliteJournalStore
 from spy_der.market_data.replay import CorruptRecordingError, ReplayFeed
 from spy_der.runtime.artifacts import StageArtifactStore
 from spy_der.runtime.heartbeat import write_heartbeat
+from spy_der.training.registry import ModelRegistry
 
 __all__ = ["EngineConfig", "EngineService", "build_arg_parser", "main"]
 
@@ -70,6 +73,16 @@ class EngineConfig:
     max_passes: int = 0
     #: Restrict to one session (YYYY-MM-DD); empty means every recorded session.
     session: str = ""
+    #: Registered model group to serve forecasts from. Empty keeps the stage
+    #: fail-closed, which is the correct state until `spy-der train` has run.
+    forecast_group_id: str = ""
+    #: Registry load mode. `shadow` by design: the engine observes, and serving
+    #: in `champion` mode is a promotion decision, not an engine flag.
+    forecast_load_mode: str = "shadow"
+
+    @property
+    def model_dir(self) -> Path:
+        return Path(self.state_root) / "models"
 
     @property
     def market_dir(self) -> Path:
@@ -80,7 +93,7 @@ class EngineConfig:
         return Path(self.state_root) / "journal" / "journal.db"
 
 
-def _stage_availability() -> dict[str, str]:
+def _stage_availability(forecast: str) -> dict[str, str]:
     """Which deterministic stages can run in this deployment.
 
     Resolved once per process rather than per snapshot: a missing model registry
@@ -90,11 +103,14 @@ def _stage_availability() -> dict[str, str]:
     return {
         "candidates": "available",
         "features": "available",
-        "forecast": (
-            "unavailable: no trained model group is configured; "
-            "refusing the research-only heuristic path"
-        ),
+        "forecast": forecast,
     }
+
+
+_NO_FORECAST_GROUP = (
+    "unavailable: no trained model group is configured; "
+    "refusing the research-only heuristic path"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +119,7 @@ class _Stores:
 
     candidates: StageArtifactStore
     features: StageArtifactStore
+    forecasts: StageArtifactStore
 
 
 @dataclass
@@ -113,6 +130,7 @@ class EngineService:
     _stop: bool = False
     _seen: dict[str, set[str]] = field(default_factory=dict)
     features: SnapshotFeaturePipeline = field(default_factory=SnapshotFeaturePipeline)
+    _forecaster: ForecastServer | None = field(default=None, init=False, repr=False)
 
     def request_stop(self, *_args: object) -> None:
         self._stop = True
@@ -149,10 +167,31 @@ class EngineService:
         self._seen[session] = done
         return done
 
+    def _open_forecaster(self) -> tuple[ForecastServer | None, str]:
+        """Load the configured model group; ``(None, reason)`` when it cannot serve.
+
+        A load failure is a *reported* unavailability, not a crash and not a
+        silent downgrade: the engine keeps running the stages that do work, and
+        every snapshot journals why the forecast is missing.
+        """
+        cfg = self.config
+        if not cfg.forecast_group_id:
+            return None, _NO_FORECAST_GROUP
+        try:
+            server = ForecastServer(
+                registry=ModelRegistry(str(cfg.model_dir)),
+                group_id=cfg.forecast_group_id,
+                load_mode=cfg.forecast_load_mode,
+            ).load()
+        except ForecastServingError as exc:
+            return None, f"unavailable: {exc}"
+        return server, f"available: group {cfg.forecast_group_id} ({cfg.forecast_load_mode})"
+
     # -- run --------------------------------------------------------------- #
     def run(self) -> int:
         cfg = self.config
-        stages = _stage_availability()
+        self._forecaster, forecast_state = self._open_forecaster()
+        stages = _stage_availability(forecast_state)
         for name, state in sorted(stages.items()):
             log.info("stage %s: %s", name, state)
 
@@ -160,6 +199,7 @@ class EngineService:
         stores = _Stores(
             candidates=StageArtifactStore(cfg.state_root, "candidates"),
             features=StageArtifactStore(cfg.state_root, "features"),
+            forecasts=StageArtifactStore(cfg.state_root, "forecasts"),
         )
         # Startup is logged, not journaled: the journal's event types describe
         # pipeline outcomes, and borrowing one (SYSTEM_DECIDED) for a lifecycle
@@ -243,8 +283,8 @@ class EngineService:
         stores: _Stores,
         session: str,
         snapshot: CanonicalMarketSnapshot,
-    ) -> None:
-        """Build and record the feature bundle for ``snapshot``.
+    ) -> Any:
+        """Build and record the feature bundle for ``snapshot``; ``None`` on failure.
 
         Never raises: a feature failure is journaled as `FEATURE_STAGE_FAILED`
         and the snapshot still gets its candidate universe. Features inform the
@@ -266,7 +306,7 @@ class EngineService:
                     snapshot_id=snapshot.snapshot_id,
                 )
             )
-            return
+            return None
 
         stores.features.append(
             session,
@@ -307,6 +347,87 @@ class EngineService:
                     snapshot_id=snapshot.snapshot_id,
                 )
             )
+        return result.bundle
+
+    def _run_forecast_stage(
+        self,
+        journal: SqliteJournalStore,
+        stores: _Stores,
+        stages: dict[str, str],
+        session: str,
+        snapshot: CanonicalMarketSnapshot,
+        bundle: Any,
+    ) -> None:
+        """Serve a forecast for ``snapshot``, or journal why it could not be.
+
+        Fail-closed at every step. No configured group, no feature row, or a
+        serving error all produce `FORECAST_UNAVAILABLE` with the reason — never
+        a neutral value that a downstream stage would read as a real forecast.
+        """
+        reason = ""
+        if self._forecaster is None:
+            reason = stages.get("forecast", _NO_FORECAST_GROUP)
+        elif bundle is None or not bundle.features:
+            # A forecast needs features; without them there is nothing to serve
+            # from, and the feature stage has already journaled its own failure.
+            reason = "unavailable: no feature bundle for this snapshot"
+
+        if not reason:
+            try:
+                forecast = self._forecaster.predict(  # type: ignore[union-attr]
+                    snapshot_id=snapshot.snapshot_id,
+                    ts=snapshot.timestamp.isoformat(),
+                    session_date=snapshot.session_date.isoformat(),
+                    symbol=snapshot.underlying_symbol,
+                    feature_row=dict(bundle.features),
+                    data_quality=1.0 - snapshot.data_quality.penalty,
+                    # feature_coverage is a [0,1] fraction and the engine has no
+                    # denominator for it — the expected feature set varies by
+                    # snapshot. Left unset rather than filled with a count.
+                )
+            except Exception as exc:
+                # Deliberately broad: a serving fault on one snapshot must not
+                # stop the engine, and it is journaled rather than swallowed.
+                log.warning("forecast failed for %s: %s", snapshot.snapshot_id, exc)
+                reason = f"unavailable: {type(exc).__name__}: {exc}"
+
+        if reason:
+            journal.append(
+                JournalEvent(
+                    event_type=JournalEventType.FORECAST_UNAVAILABLE.value,
+                    aggregate_type=AggregateType.SYSTEM.value,
+                    aggregate_id=snapshot.snapshot_id,
+                    occurred_at=snapshot.timestamp,
+                    payload={"reason": reason},
+                    deployment_id=DEPLOYMENT_ID,
+                    snapshot_id=snapshot.snapshot_id,
+                )
+            )
+            return
+
+        stores.forecasts.append(
+            session,
+            artifact_id=snapshot.snapshot_id,
+            schema_version=forecast.schema_version,
+            payload=forecast,
+        )
+        journal.append(
+            JournalEvent(
+                event_type=JournalEventType.FORECAST_GENERATED.value,
+                aggregate_type=AggregateType.SYSTEM.value,
+                aggregate_id=snapshot.snapshot_id,
+                occurred_at=snapshot.timestamp,
+                payload={
+                    "session_date": session,
+                    "model_group_id": forecast.model_group_id,
+                    "p_up_30m": forecast.p_up_30m,
+                    "expected_return_30m": forecast.expected_return_30m,
+                    "uncertainty": forecast.uncertainty,
+                },
+                deployment_id=DEPLOYMENT_ID,
+                snapshot_id=snapshot.snapshot_id,
+            )
+        )
 
     def _process_snapshot(
         self,
@@ -333,22 +454,9 @@ class EngineService:
             )
             return False
 
-        self._run_feature_stage(journal, stores, session, snapshot)
+        bundle = self._run_feature_stage(journal, stores, session, snapshot)
 
-        # The forecast stage is fail-closed: unavailable is journaled, never
-        # replaced with a neutral value downstream would read as a forecast.
-        if stages.get("forecast", "").startswith("unavailable"):
-            journal.append(
-                JournalEvent(
-                    event_type=JournalEventType.FORECAST_UNAVAILABLE.value,
-                    aggregate_type=AggregateType.SYSTEM.value,
-                    aggregate_id=snapshot.snapshot_id,
-                    occurred_at=snapshot.timestamp,
-                    payload={"reason": stages["forecast"]},
-                    deployment_id=DEPLOYMENT_ID,
-                    snapshot_id=snapshot.snapshot_id,
-                )
-            )
+        self._run_forecast_stage(journal, stores, stages, session, snapshot, bundle)
 
         try:
             universe = generate_candidate_universe(snapshot)
@@ -405,6 +513,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-passes", type=int, default=0, help="0 = run until signalled")
     p.add_argument("--once", action="store_true", help="single pass, then exit")
     p.add_argument("--session", default="", help="restrict to one YYYY-MM-DD session")
+    p.add_argument(
+        "--forecast-group",
+        default="",
+        help="registered model group to serve forecasts from (see spy-der-train)",
+    )
+    p.add_argument(
+        "--forecast-load-mode",
+        default="shadow",
+        help="registry load mode for the forecast group (default: shadow)",
+    )
     # Accepted so the systemd unit's --config is not a hard error before the
     # config loader lands; the file is not read yet (same as `spy-der market`).
     p.add_argument("--config", default=None, help="reserved (not read yet)")
@@ -426,6 +544,8 @@ def main(argv: list[str] | None = None) -> int:
             interval_seconds=args.interval,
             max_passes=1 if args.once else max(args.max_passes, 0),
             session=args.session,
+            forecast_group_id=args.forecast_group,
+            forecast_load_mode=args.forecast_load_mode,
         )
     )
     signal.signal(signal.SIGINT, service.request_stop)

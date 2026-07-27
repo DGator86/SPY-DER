@@ -1,4 +1,12 @@
-"""Training substrate: as-of datasets, folds, calibration, and registry."""
+"""Training substrate: as-of datasets, folds, calibration, and registry.
+
+`observations` and `pipeline` are deliberately *not* re-exported here. They sit
+above `spy_der.forecasting.models`, which in turn imports this package's
+calibration — re-exporting them would make importing the substrate pull in the
+models that depend on it, which is a cycle. Import them by module path:
+
+    from spy_der.training.pipeline import train_model_group
+"""
 
 from __future__ import annotations
 
