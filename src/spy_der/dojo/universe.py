@@ -533,8 +533,13 @@ def run_universe_phase(
             "use spy_der.synthetic for the (archetype x regime) matrix"
         )
 
+    # An unscored phase produces a plan with no evidence behind it. Persisting
+    # that would dilute the pressure earlier scored runs accumulated, so the
+    # plan is still reported — it just does not become the next run's seed.
+    scored_this_run = n_scored_universes > 0
     if latest_plan is not None:
         result["evolution"] = latest_plan.to_dict()
+    if latest_plan is not None and scored_this_run:
         losing = _losing_archetypes(matrix, min_sessions=1)
         saved = save_curriculum_weights(
             cfg.configs_dir,
@@ -549,6 +554,10 @@ def run_universe_phase(
         )
         if saved is not None:
             result["curriculum_weights_path"] = str(saved)
+    elif latest_plan is not None:
+        result["curriculum_weights_note"] = (
+            "plan not persisted — no universe scored this run"
+        )
 
     result["remediation"] = _remediation_block(
         latest_plan,

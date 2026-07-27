@@ -32,9 +32,12 @@ The robustness matrix is not a scoreboard — it is the training set. A losing
 archetype is recorded as a structured failure episode
 (`spy_der.learning.gaps`), and the next run:
 
-1. **spends the lattice there** — remembered gaps seed the archetype sampling
-   weights, and each generation re-weights again from its own scores, so the
-   worlds the system is bad at get more draws than the ones it already handles;
+1. **spends the lattice there** — the curriculum weights persisted in
+   `configs/curriculum_weights.json` seed the next run's sampling and each
+   generation re-weights again from its own scores, so the worlds the system is
+   bad at get more draws than the ones it already handles (a separate mechanism
+   from the gap episodes below: that one decides *how many worlds*, this one
+   decides *whether the learner tries to fix it*);
 2. **diagnoses it** — `weak_archetype:crash` is a diagnosis in its own right, so
    a profitable overall tape no longer reads as `stable_baseline` while five
    archetypes are underwater;

@@ -355,3 +355,30 @@ def test_repair_gate_fails_closed_without_evidence(tmp_path: Path) -> None:
         repair = next(g for g in trial.gates if g.name == "archetype_repair")
         assert repair.passed is False, f"{label} passed the repair gate"
     assert MIN_TARGET_TRADES >= 10, "the target evidence floor must be meaningful"
+
+
+def test_an_unscored_lattice_does_not_overwrite_curriculum_weights(
+    tmp_path: Path,
+) -> None:
+    """A run that scored nothing must not dilute learned sampling pressure.
+
+    The plan is still computed and reported, but persisting it would let a
+    forced run with unlabeled outcomes overwrite weights that earlier *scored*
+    runs earned.
+    """
+    from spy_der.dojo.universe import run_universe_phase
+
+    cfg = DojoConfig(
+        reports_dir=str(tmp_path / "reports"),
+        configs_dir=str(tmp_path / "configs"),
+        universes_per_gen=2,
+        generations=2,
+        universe_days=1,
+        universe_snapshot_stride=120,
+        force_universe=True,
+    )
+    # No authorities → worlds are generated but nothing is scored.
+    out = run_universe_phase(cfg, authorities=None)
+    assert out["status"] == "unscored"
+    assert "curriculum_weights_path" not in out
+    assert not (tmp_path / "configs" / "curriculum_weights.json").exists()

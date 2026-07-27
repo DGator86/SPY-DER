@@ -437,9 +437,10 @@ def _run_dojo_phases(
         configs_dir=cfg.configs_dir,
     )
 
-    # What earlier runs found the system losing money in. These drive both what
-    # the learner diagnoses and where the lattice spends its draws — the Dojo
-    # trains on its known gaps instead of re-measuring the average.
+    # What earlier runs found the system losing money in. These drive what the
+    # learner diagnoses and which archetype a staged change is held to. How many
+    # worlds a weak archetype gets drawn is a separate mechanism — the curriculum
+    # weights the universe phase persists (spy_der.dojo.curriculum_weights).
     state_root = str(_Path(cfg.configs_dir).parent)
     remembered_gaps = load_archetype_gaps(state_root)
 
