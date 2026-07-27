@@ -142,22 +142,62 @@ def _rows(session: str, spot: float = 600.0) -> list[dict[str, Any]]:
     return rows
 
 
+def _minute_bars(count: int = 5, *, close: float = 600.0) -> list[dict[str, Any]]:
+    """Polygon-shaped 1-minute aggregates ending now."""
+    base_ms = int(datetime.now(tz=UTC).timestamp() * 1000) - count * 60_000
+    return [
+        {
+            "t": base_ms + i * 60_000,
+            "o": close - 0.10,
+            "h": close + 0.15,
+            "l": close - 0.20,
+            "c": close,
+            "v": 1_000 + i,
+        }
+        for i in range(count)
+    ]
+
+
 @pytest.fixture
 def stub_vendor(monkeypatch: pytest.MonkeyPatch):
+    """A full live-shaped Massive vendor: chain, underlying quote and bars.
+
+    Routing by endpoint matters — a stub that answered every URL with the chain
+    would leave ``bars`` empty and quietly turn every assertion about snapshot
+    quality into an assertion about a degraded snapshot.
+    """
+
     def _install(session: str) -> None:
         monkeypatch.setenv("MASSIVE_API_KEY", "k")
-        monkeypatch.setattr(
-            "spy_der.market_data.providers.massive.get_json",
-            lambda url, **kw: {"results": _rows(session)},
-        )
+
+        def fake(url: str, **_kw: Any) -> dict[str, Any]:
+            if "/v2/snapshot/locale/" in url:
+                return {"ticker": {"ticker": "SPY", "lastTrade": {"p": 600.0}}}
+            if "/range/1/minute/" in url:
+                return {"results": _minute_bars()}
+            return {"results": _rows(session)}
+
+        monkeypatch.setattr("spy_der.market_data.providers.massive.get_json", fake)
 
     return _install
 
 
-def _run(tmp_path: Path, ticks: int = 1) -> list[dict[str, Any]]:
+def _run(
+    tmp_path: Path, ticks: int = 1, *, settlement: str = ""
+) -> list[dict[str, Any]]:
+    """Run the service. Settlement defaults off so these stay offline.
+
+    The default deployment *does* configure Yahoo (see
+    `test_settlement_provider_is_configured_by_default`), but Yahoo is a real
+    network call and `conftest` blocks the socket, so tests that only care about
+    the Massive path opt out explicitly rather than silently.
+    """
     service = MarketService(
         config=MarketServiceConfig(
-            state_root=str(tmp_path), interval_seconds=0.0, max_ticks=ticks
+            state_root=str(tmp_path),
+            interval_seconds=0.0,
+            max_ticks=ticks,
+            settlement_provider=settlement,
         )
     )
     assert service.run() == 0
@@ -208,8 +248,30 @@ def test_massive_alone_carries_the_missing_settlement_penalty(
     session = _current_session()
     stub_vendor(session)
     snapshot = _run(tmp_path)[0]["snapshot"]
-    assert "settlement" in snapshot["missing_components"]
+    assert snapshot["missing_components"] == ["settlement"]
     assert float(snapshot["data_quality"]["penalty"]) == pytest.approx(0.5)
+
+
+def test_bars_are_recorded_alongside_the_chain(
+    tmp_path: Path, stub_vendor: Any
+) -> None:
+    """Without bars in the recording, every history-dependent feature is dead."""
+    session = _current_session()
+    stub_vendor(session)
+    snapshot = _run(tmp_path)[0]["snapshot"]
+    assert len(snapshot["bars_1m"]) == 5
+    assert "bars" not in snapshot["missing_components"]
+
+
+def test_the_underlying_price_is_measured_not_inferred(
+    tmp_path: Path, stub_vendor: Any
+) -> None:
+    """With a live underlying quote available, parity must not be what priced it."""
+    session = _current_session()
+    stub_vendor(session)
+    snapshot = _run(tmp_path)[0]["snapshot"]
+    assert "spot:underlying_quote" in snapshot["data_quality"]["flags"]
+    assert "spot:put_call_parity" not in snapshot["data_quality"]["flags"]
 
 
 def test_a_provider_returning_nothing_is_survived(
@@ -267,3 +329,32 @@ def test_stop_signal_ends_the_loop(tmp_path: Path, stub_vendor: Any) -> None:
     service.request_stop()
     assert service.run() == 0
     assert service._seq == 0
+
+
+def test_settlement_provider_is_configured_by_default() -> None:
+    """Without one, every snapshot carries the missing-settlement penalty.
+
+    Yahoo needs no credential, so the default is a working settlement source
+    rather than a standing quality penalty that has to be explained away.
+    """
+    assert MarketServiceConfig().settlement_provider == "yahoo"
+
+
+def test_settlement_provider_is_wired_into_the_feed(
+    tmp_path: Path, stub_vendor: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With settlement present the snapshot is fully live and unpenalized."""
+    session = _current_session()
+    stub_vendor(session)
+    monkeypatch.setattr(
+        "spy_der.market_data.providers.yahoo.get_json",
+        lambda url, **kw: {
+            "chart": {
+                "result": [{"meta": {"regularMarketPrice": 600.0}}],
+                "error": None,
+            }
+        },
+    )
+    snapshot = _run(tmp_path, settlement="yahoo")[0]["snapshot"]
+    assert snapshot["missing_components"] == []
+    assert float(snapshot["data_quality"]["penalty"]) == 0.0

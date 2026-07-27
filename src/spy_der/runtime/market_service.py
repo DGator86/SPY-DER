@@ -29,6 +29,7 @@ from spy_der.market_data.composite import CompositeFeed
 from spy_der.market_data.providers.factory import (
     UnknownProviderError,
     build_provider_chain,
+    build_settlement_provider,
 )
 from spy_der.market_data.recording import build_record
 from spy_der.runtime.heartbeat import write_heartbeat
@@ -44,6 +45,15 @@ log = logging.getLogger("spy_der.market")
 #: host holding either key alone still runs.
 _DEFAULT_PROVIDERS = ("tradier", "massive")
 
+#: Settlement's dedicated source, separate from the failover chain.
+#:
+#: Without one, `settlement` is a required-but-missing component on every tick
+#: and the snapshot carries a 0.5 quality penalty — below the configured
+#: `min_data_quality`, so the deterministic layers refuse to trade. Yahoo needs
+#: no credential, so the default is a working settlement source rather than a
+#: standing penalty that has to be explained.
+_DEFAULT_SETTLEMENT_PROVIDER = "yahoo"
+
 
 @dataclass(frozen=True, slots=True)
 class MarketServiceConfig:
@@ -51,6 +61,8 @@ class MarketServiceConfig:
     symbol: str = "SPY"
     interval_seconds: float = 60.0
     providers: tuple[str, ...] = _DEFAULT_PROVIDERS
+    #: Settlement's dedicated source; empty disables the backstop.
+    settlement_provider: str = _DEFAULT_SETTLEMENT_PROVIDER
     #: Stop after this many ticks. 0 means run until signalled (the unit's case).
     max_ticks: int = 0
 
@@ -110,7 +122,21 @@ class MarketService:
             chain.describe(),
             cfg.interval_seconds,
         )
-        feed = CompositeFeed(list(chain.providers), calendar=MarketCalendar())
+        settlement = build_settlement_provider(
+            cfg.settlement_provider, symbol=cfg.symbol
+        )
+        if settlement is not None:
+            log.info("settlement provider: %s", settlement.name)
+        else:
+            # Not fatal, but it does mean every snapshot fails the quality floor.
+            log.warning(
+                "no settlement provider: snapshots will report settlement missing"
+            )
+        feed = CompositeFeed(
+            list(chain.providers),
+            settlement_provider=settlement,
+            calendar=MarketCalendar(),
+        )
         cfg.market_dir.mkdir(parents=True, exist_ok=True)
 
         ticks = 0
@@ -193,6 +219,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         dest="providers",
         help="Provider name, repeatable; order is the failover priority",
     )
+    p.add_argument(
+        "--settlement-provider",
+        default=_DEFAULT_SETTLEMENT_PROVIDER,
+        help="dedicated settlement source; empty string disables it",
+    )
     p.add_argument("--max-ticks", type=int, default=0, help="0 = run until signalled")
     # Accepted so the systemd unit's --config is not a hard error before the
     # config loader lands; the file is not read yet.
@@ -215,6 +246,7 @@ def main(argv: list[str] | None = None) -> int:
             symbol=args.symbol,
             interval_seconds=args.interval,
             providers=tuple(args.providers or _DEFAULT_PROVIDERS),
+            settlement_provider=args.settlement_provider,
             max_ticks=max(args.max_ticks, 0),
         )
     )

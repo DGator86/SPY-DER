@@ -147,3 +147,63 @@ def test_replay_detects_malformed_record() -> None:
     with pytest.raises(CorruptRecordingError) as exc:
         ReplayFeed([{"seq": 0}])
     assert exc.value.code is ErrorCode.MALFORMED_RECORD
+
+
+# ---------------------------------------------------------- bars component ----
+def test_bars_component_is_missing_when_a_provider_returns_none() -> None:
+    """`is_live` must describe the data that arrived, not which adapter ran."""
+    tick = RawTick(
+        provider="tradier",
+        symbol="SPY",
+        observed_at=TS,
+        underlying_price=Decimal("500"),
+        bars_1m=(),
+        option_chain=(),
+        has_chain=False,
+    )
+    feed = CompositeFeed([StaticProvider("tradier", [tick])])
+    snap = feed.snapshot(TS)
+    assert snap is not None
+    assert "bars" in snap.missing_components
+    assert not snap.is_live
+
+
+def test_bars_component_is_live_when_bars_are_present() -> None:
+    feed = CompositeFeed([StaticProvider("tradier", [_tick("tradier", "500.10")])])
+    snap = feed.snapshot(TS)
+    assert snap is not None
+    assert "bars" not in snap.missing_components
+    statuses = {o.component.value: o.status.value for o in snap.feed_observations}
+    assert statuses["bars"] == "LIVE"
+
+
+def test_provider_quality_flags_reach_the_snapshot() -> None:
+    """Spot provenance survives from the adapter into the recorded snapshot."""
+    tick = RawTick(
+        provider="massive",
+        symbol="SPY",
+        observed_at=TS,
+        underlying_price=Decimal("500"),
+        quality_flags=("spot:put_call_parity",),
+    )
+    feed = CompositeFeed([StaticProvider("massive", [tick])])
+    snap = feed.snapshot(TS)
+    assert snap is not None
+    assert "spot:put_call_parity" in snap.data_quality.flags
+
+
+def test_provider_flags_do_not_move_the_availability_penalty() -> None:
+    """Provenance is recorded; weighing it is downstream policy's job."""
+    plain = RawTick(
+        provider="massive", symbol="SPY", observed_at=TS,
+        underlying_price=Decimal("500"), has_chain=False,
+    )
+    flagged = RawTick(
+        provider="massive", symbol="SPY", observed_at=TS,
+        underlying_price=Decimal("500"), has_chain=False,
+        quality_flags=("spot:put_call_parity",),
+    )
+    a = CompositeFeed([StaticProvider("massive", [plain])]).snapshot(TS)
+    b = CompositeFeed([StaticProvider("massive", [flagged])]).snapshot(TS)
+    assert a is not None and b is not None
+    assert a.data_quality.penalty == b.data_quality.penalty

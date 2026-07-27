@@ -13,11 +13,12 @@ genuine two-sided markets, so they carry ``live_quote``.
 Endpoints (all documented, JSON):
 
 ===============================================  =================================
-``GET /v1/markets/quotes?symbols=SPY``            real-time underlying
+``GET /v1/markets/quotes?symbols=SPY``            real-time underlying + NBBO
 ``GET /v1/markets/options/chains?symbol=&...``    chain with ``greeks=true``
+``GET /v1/markets/timesales?symbol=&interval=``   1-minute OHLCV bars
 ===============================================  =================================
 
-Two vendor quirks are handled here rather than downstream:
+Three vendor quirks are handled here rather than downstream:
 
 1. **Single-element collections are returned bare.** Tradier emits
    ``{"option": {...}}`` for a one-contract chain and ``{"option": [...]}``
@@ -26,6 +27,15 @@ Two vendor quirks are handled here rather than downstream:
 2. **Greeks come from ORATS and can lag the quote by minutes.** Bid/ask are
    real-time regardless, so a row missing greeks is dropped rather than being
    priced with stale ones — the same fail-closed rule the rest of the layer uses.
+3. **``timesales`` timestamps are epoch seconds in exchange-local terms.** The
+   sibling ``time`` field is a *naive* ISO string in ET; parsing that instead of
+   the epoch field silently produces UTC-labelled ET bars, which shifts every
+   session boundary by four or five hours. Only ``timestamp`` is read.
+
+Bars are fetched but never allowed to fail the tick: an account without market
+history entitlement still returns a tradeable chain, so a bars failure degrades
+the snapshot (the ``bars`` feed component reports MISSING) instead of dropping
+it. The chain and the underlying quote are what make a tick usable.
 
 Credentials come from the environment only. ``TRADIER_ACCESS_TOKEN`` is read
 first because that is the name the token already has in existing deployments;
@@ -36,13 +46,27 @@ older name both work. Never hardcode a token here or anywhere else.
 from __future__ import annotations
 
 import os
-from datetime import date, datetime
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from spy_der.contracts.market import OptionContract, OptionQuote, OptionType
+from spy_der.contracts.market import (
+    Bar,
+    BreadthState,
+    OptionContract,
+    OptionQuote,
+    OptionType,
+    VolatilityTermStructure,
+)
 from spy_der.market_data.providers._http import HttpConfig, ProviderHttpError, get_json
+from spy_der.market_data.providers.bars import (
+    DEFAULT_LOOKBACK_MINUTES,
+    bar_from_ohlcv,
+    lookback_window,
+    normalize_bars,
+)
 from spy_der.market_data.providers.base import MarketDataProvider, RawTick
 from spy_der.market_data.providers.spot import ChainQuoteView, estimate_spot_from_chain
 
@@ -54,6 +78,41 @@ _DEFAULT_BASE_URL = "https://api.tradier.com"
 
 #: Quality flag: Tradier quotes are a real two-sided market.
 FLAG_LIVE_QUOTE = "live_quote"
+
+#: Snapshot-level provenance for how the underlying price was obtained.
+FLAG_SPOT_VENDOR_QUOTE = "spot:tradier_quote"
+FLAG_SPOT_PARITY = "spot:put_call_parity"
+#: Bars were requested and the vendor did not supply a usable series.
+FLAG_BARS_UNAVAILABLE = "bars:unavailable"
+#: The CBOE index quotes were unavailable (commonly an entitlement gap).
+FLAG_VIX_UNAVAILABLE = "vix:unavailable"
+#: The batched breadth quote returned nothing usable.
+FLAG_BREADTH_UNAVAILABLE = "breadth:unavailable"
+
+#: Sector ETFs standing in for the GICS sectors, for the alignment fraction.
+SECTOR_ETFS: tuple[str, ...] = (
+    "XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU", "XLC",
+)
+
+#: Approximate S&P 500 top-10 index weights, renormalized at use.
+#:
+#: These drift as the index rebalances, which is tolerable because the output is
+#: a *weighted average of daily moves* — the weights set relative influence, not
+#: a level, so a stale weight biases the reading slightly rather than breaking
+#: it. Worth refreshing periodically all the same.
+TOP10_WEIGHTS: dict[str, float] = {
+    "NVDA": 7.5, "MSFT": 6.8, "AAPL": 6.1, "AMZN": 4.0, "META": 2.9,
+    "AVGO": 2.5, "GOOGL": 2.2, "GOOG": 1.8, "TSLA": 1.7, "BRK.B": 1.6,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _UnderlyingQuote:
+    """What ``/markets/quotes`` yields for the underlying, each part optional."""
+
+    price: Decimal | None = None
+    bid: Decimal | None = None
+    ask: Decimal | None = None
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -84,6 +143,24 @@ def _as_decimal(value: Any) -> Decimal | None:
         return None if value is None else Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return None
+
+
+def _day_change(quote: dict[str, Any] | None) -> float | None:
+    """Fractional move on the session, from whichever field the vendor filled.
+
+    ``change_percentage`` is what Tradier normally sends; the last/prevclose
+    ratio is the fallback for symbols where it is absent.
+    """
+    if not quote:
+        return None
+    percentage = _as_float(quote.get("change_percentage"))
+    if percentage is not None:
+        return percentage / 100.0
+    last = _as_float(quote.get("last"))
+    previous = _as_float(quote.get("prevclose"))
+    if last is not None and previous:
+        return last / previous - 1.0
+    return None
 
 
 def _parse_date(value: Any) -> date | None:
@@ -118,9 +195,11 @@ class TradierProvider(MarketDataProvider):
         zero_dte_only: bool = True,
         http: HttpConfig | None = None,
         name: str = "tradier",
+        lookback_minutes: int = DEFAULT_LOOKBACK_MINUTES,
     ) -> None:
         self.symbol = symbol
         self.zero_dte_only = zero_dte_only
+        self.lookback_minutes = lookback_minutes
         self._name = name
         self._http = http or HttpConfig()
         self._base_url = self._resolve_base_url(base_url)
@@ -168,32 +247,65 @@ class TradierProvider(MarketDataProvider):
         session = timestamp.astimezone(ET).date()
         try:
             quotes = self._chain(session, timestamp)
-            vendor_spot = self._spot()
+            underlying = self._underlying()
         except ProviderHttpError:
             # Vendor failure is a failover signal, never an exception upward.
             return None
 
         if not quotes:
             return None
-        spot = vendor_spot if vendor_spot is not None else self._recover_spot(quotes)
+
+        flags: list[str] = []
+        spot = underlying.price
+        if spot is not None:
+            flags.append(FLAG_SPOT_VENDOR_QUOTE)
+        else:
+            spot = self._recover_spot(quotes)
+            flags.append(FLAG_SPOT_PARITY)
         if spot is None or spot <= 0:
             # No trustworthy underlying price: report unavailable rather than
             # letting a fabricated spot reshape every moneyness band downstream.
             return None
+
+        # Bars, VIX and breadth are all best-effort: see the module docstring. A
+        # history- or index-entitlement failure must not discard a good chain.
+        bars = self._safe_bars(timestamp)
+        if not bars:
+            flags.append(FLAG_BARS_UNAVAILABLE)
+
+        term_structure = self._safe_vix()
+        if term_structure is None:
+            flags.append(FLAG_VIX_UNAVAILABLE)
+
+        breadth = self._safe_breadth()
+        if breadth is None:
+            flags.append(FLAG_BREADTH_UNAVAILABLE)
 
         return RawTick(
             provider=self.name,
             symbol=self.symbol,
             observed_at=timestamp,
             underlying_price=spot,
-            bars_1m=(),
+            underlying_bid=underlying.bid,
+            underlying_ask=underlying.ask,
+            bars_1m=bars,
             option_chain=tuple(quotes),
             has_chain=True,
+            quality_flags=tuple(flags),
+            volatility_term_structure=term_structure,
+            breadth=breadth,
         )
 
     # -- vendor calls --------------------------------------------------------
-    def _spot(self) -> Decimal | None:
-        """Real-time underlying price, or ``None`` when unusable."""
+    def _underlying(self) -> _UnderlyingQuote:
+        """Real-time underlying price and NBBO from ``/markets/quotes``.
+
+        Price precedence is ``last -> close -> prevclose``: the live print when
+        the market is open, then today's settle, then yesterday's. Bid and ask
+        are reported independently — they are frequently absent outside regular
+        hours while ``last`` is still valid, and a one-sided or crossed book is
+        dropped rather than passed on as a market.
+        """
         url = f"{self._base_url}/v1/markets/quotes?symbols={self.symbol}"
         payload = get_json(url, headers=self._headers(), config=self._http)
         quotes = _as_list((payload.get("quotes") or {}).get("quote"))
@@ -202,11 +314,60 @@ class TradierProvider(MarketDataProvider):
                 continue
             if str(quote.get("symbol", "")).upper() != self.symbol.upper():
                 continue
+            price: Decimal | None = None
             for field in ("last", "close", "prevclose"):
                 value = _as_decimal(quote.get(field))
                 if value is not None and value > 0:
-                    return value
-        return None
+                    price = value
+                    break
+            bid = _as_decimal(quote.get("bid"))
+            ask = _as_decimal(quote.get("ask"))
+            if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
+                bid = ask = None
+            return _UnderlyingQuote(price=price, bid=bid, ask=ask)
+        return _UnderlyingQuote()
+
+    def _safe_bars(self, timestamp: datetime) -> tuple[Bar, ...]:
+        """``_bars`` with vendor failures downgraded to an empty series."""
+        try:
+            return self._bars(timestamp)
+        except ProviderHttpError:
+            return ()
+
+    def _bars(self, timestamp: datetime) -> tuple[Bar, ...]:
+        """1-minute OHLCV from ``/markets/timesales``.
+
+        Tradier wants naive ET strings for ``start``/``end``, so the UTC window
+        is converted rather than formatted directly.
+        """
+        start, end = lookback_window(timestamp, self.lookback_minutes)
+        url = (
+            f"{self._base_url}/v1/markets/timesales"
+            f"?symbol={self.symbol}&interval=1min"
+            f"&start={start.astimezone(ET):%Y-%m-%d %H:%M}"
+            f"&end={end.astimezone(ET):%Y-%m-%d %H:%M}"
+        ).replace(" ", "%20")
+        payload = get_json(url, headers=self._headers(), config=self._http)
+        points = _as_list((payload.get("series") or {}).get("data"))
+
+        bars: list[Bar] = []
+        for point in points:
+            if not isinstance(point, dict):
+                continue
+            epoch = _as_int(point.get("timestamp"))
+            if epoch is None:
+                continue
+            bar = bar_from_ohlcv(
+                datetime.fromtimestamp(epoch, tz=UTC),
+                point.get("open"),
+                point.get("high"),
+                point.get("low"),
+                point.get("close"),
+                point.get("volume"),
+            )
+            if bar is not None:
+                bars.append(bar)
+        return normalize_bars(bars)
 
     def _chain(self, session: date, timestamp: datetime) -> list[OptionQuote]:
         url = (
@@ -223,6 +384,93 @@ class TradierProvider(MarketDataProvider):
             if quote is not None:
                 quotes.append(quote)
         return quotes
+
+    # -- volatility indices --------------------------------------------------
+    def _safe_vix(self) -> VolatilityTermStructure | None:
+        try:
+            return self._vix()
+        except ProviderHttpError:
+            return None
+
+    def _vix(self) -> VolatilityTermStructure | None:
+        """CBOE volatility indices from the batched quote endpoint.
+
+        ``VIX9D``/``VIX3M``/``VVIX`` are a separate entitlement on most accounts
+        and are left ``None`` when absent rather than substituted with the
+        30-day VIX. System A backfilled them so the term-structure ordering
+        stayed monotonic; that makes an unknown curve indistinguishable from a
+        genuinely flat one, and flat vs unknown drive opposite regime reads.
+        Without VIX itself there is no term structure at all.
+        """
+        symbols = ",".join(("VIX", "VIX9D", "VIX3M", "VVIX"))
+        url = f"{self._base_url}/v1/markets/quotes?symbols={symbols}"
+        payload = get_json(url, headers=self._headers(), config=self._http)
+        levels: dict[str, float] = {}
+        for quote in _as_list((payload.get("quotes") or {}).get("quote")):
+            if not isinstance(quote, dict):
+                continue
+            symbol = str(quote.get("symbol", "")).upper()
+            value = _as_float(quote.get("last")) or _as_float(quote.get("close"))
+            if symbol and value is not None and value > 0:
+                levels[symbol] = value
+
+        vix = levels.get("VIX")
+        if vix is None:
+            return None
+        return VolatilityTermStructure(
+            vix=vix,
+            vix9d=levels.get("VIX9D"),
+            vix3m=levels.get("VIX3M"),
+            vvix=levels.get("VVIX"),
+            source=self.name,
+        )
+
+    # -- breadth -------------------------------------------------------------
+    def _safe_breadth(self) -> BreadthState | None:
+        try:
+            return self._breadth()
+        except ProviderHttpError:
+            return None
+
+    def _breadth(self) -> BreadthState | None:
+        """Equal-weight divergence, sector alignment and mega-cap pressure.
+
+        One batched quote call covers all three — roughly the informative part
+        of a full 500-constituent breadth engine at a fraction of the data. Each
+        component is independently optional so a partial response still reports
+        what it did resolve.
+        """
+        symbols = ["SPY", "RSP", *SECTOR_ETFS, *TOP10_WEIGHTS]
+        url = f"{self._base_url}/v1/markets/quotes?symbols={','.join(symbols)}"
+        payload = get_json(url, headers=self._headers(), config=self._http)
+        quotes: dict[str, dict[str, Any]] = {}
+        for quote in _as_list((payload.get("quotes") or {}).get("quote")):
+            if isinstance(quote, dict) and quote.get("symbol"):
+                quotes[str(quote["symbol"]).upper()] = quote
+
+        spy = _day_change(quotes.get("SPY"))
+        rsp = _day_change(quotes.get("RSP"))
+        divergence = rsp - spy if spy is not None and rsp is not None else None
+
+        moves = [m for m in (_day_change(quotes.get(s)) for s in SECTOR_ETFS) if m is not None]
+        alignment = (sum(1 for m in moves if m > 0) / len(moves)) if moves else None
+
+        numerator = denominator = 0.0
+        for symbol, weight in TOP10_WEIGHTS.items():
+            move = _day_change(quotes.get(symbol))
+            if move is not None:
+                numerator += weight * move
+                denominator += weight
+        pressure = numerator / denominator if denominator > 0 else None
+
+        state = BreadthState(
+            rsp_spy_div=divergence,
+            sector_align=alignment,
+            top10_pressure=pressure,
+            sectors_observed=len(moves),
+            source=self.name,
+        )
+        return state if state.is_observed else None
 
     def _quote_from_option(
         self, option: dict[str, Any], session: date, timestamp: datetime

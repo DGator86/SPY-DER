@@ -20,9 +20,10 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from spy_der.contracts.common import ContractError, ErrorCode
+from spy_der.contracts.common import NORMALIZATION_VERSION, ContractError, ErrorCode
 from spy_der.contracts.market import (
     Bar,
+    BreadthState,
     CanonicalMarketSnapshot,
     CatalystState,
     ChainCoverage,
@@ -35,6 +36,7 @@ from spy_der.contracts.market import (
     OptionType,
     ProviderSelection,
     SessionStatus,
+    VolatilityTermStructure,
 )
 
 __all__ = ["SnapshotParseError", "snapshot_from_dict"]
@@ -261,6 +263,38 @@ def _quality(data: Any) -> DataQuality:
     )
 
 
+def _term_structure(data: Any) -> VolatilityTermStructure | None:
+    """Absent is ``None``; present-but-malformed still raises (fail-closed)."""
+    if data is None:
+        return None
+    body = _mapping(data, "volatility_term_structure")
+    return VolatilityTermStructure(
+        vix=_float(_require(body, "vix"), "volatility_term_structure.vix"),
+        vix9d=_optional_float(body.get("vix9d"), "volatility_term_structure.vix9d"),
+        vix3m=_optional_float(body.get("vix3m"), "volatility_term_structure.vix3m"),
+        vvix=_optional_float(body.get("vvix"), "volatility_term_structure.vvix"),
+        vvix_baseline=_optional_float(
+            body.get("vvix_baseline"), "volatility_term_structure.vvix_baseline"
+        ),
+        source=str(body.get("source", "")),
+    )
+
+
+def _breadth(data: Any) -> BreadthState | None:
+    if data is None:
+        return None
+    body = _mapping(data, "breadth")
+    return BreadthState(
+        rsp_spy_div=_optional_float(body.get("rsp_spy_div"), "breadth.rsp_spy_div"),
+        sector_align=_optional_float(body.get("sector_align"), "breadth.sector_align"),
+        top10_pressure=_optional_float(
+            body.get("top10_pressure"), "breadth.top10_pressure"
+        ),
+        sectors_observed=_int(body.get("sectors_observed", 0), "breadth.sectors_observed"),
+        source=str(body.get("source", "")),
+    )
+
+
 def _sequence(data: Any, field: str) -> list[Any]:
     if data is None:
         return []
@@ -284,7 +318,7 @@ def snapshot_from_dict(data: dict[str, Any]) -> CanonicalMarketSnapshot:
             SessionStatus, _require(data, "session_status"), "session_status"
         ),
         schema_version=str(data.get("schema_version", "")),
-        normalization_version=str(data.get("normalization_version", "1.0.0")),
+        normalization_version=str(data.get("normalization_version", NORMALIZATION_VERSION)),
         underlying_bid=_optional_decimal(data.get("underlying_bid"), "underlying_bid"),
         underlying_ask=_optional_decimal(data.get("underlying_ask"), "underlying_ask"),
         minutes_from_open=_optional_int(
@@ -316,4 +350,6 @@ def snapshot_from_dict(data: dict[str, Any]) -> CanonicalMarketSnapshot:
         missing_components=_strings(
             data.get("missing_components"), "missing_components"
         ),
+        volatility_term_structure=_term_structure(data.get("volatility_term_structure")),
+        breadth=_breadth(data.get("breadth")),
     )

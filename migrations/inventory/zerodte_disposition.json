@@ -16,24 +16,25 @@
   "rules": [
     {
       "match": "massive_feed.py",
-      "capability": "Market feed \u2014 Massive/Polygon-compatible options snapshot",
+      "capability": "Market feed — Massive/Polygon-compatible options snapshot",
       "disposition": "reimplement",
       "spy_der_owner": "spy_der.market_data.providers.massive",
       "status": "done",
       "parity_gate": "raw_market_snapshots",
-      "notes": "Ported to spy_der.market_data.providers.massive. HTTP client, field mappings, day-close fallback tagging, pagination cap and ATM put-call-parity spot recovery (including the high-bias fix) all preserved. Not yet verified against the live endpoint \u2014 tested against fixtures reproducing the feed's documented absences."
+      "notes": "Ported to spy_der.market_data.providers.massive. HTTP client, field mappings, day-close fallback tagging, pagination cap and ATM put-call-parity spot recovery (including the high-bias fix) all preserved. Now also fetches 1-minute aggregates and a dedicated underlying snapshot, so spot walks a measured ladder (options snapshot, underlying quote, newest minute close) before falling back to parity, and each rung is recorded as a quality flag. Not yet verified against the live endpoint — tested against fixtures reproducing the feed's documented absences."
     },
     {
       "match": "tradier_feed.py",
-      "capability": "Market feed \u2014 Tradier",
+      "capability": "Market feed — Tradier",
       "disposition": "reimplement",
       "spy_der_owner": "spy_der.market_data.providers.tradier",
-      "status": "pending",
-      "parity_gate": "raw_market_snapshots"
+      "status": "done",
+      "parity_gate": "raw_market_snapshots",
+      "notes": "Ported to spy_der.market_data.providers.tradier: real-time option NBBO with greeks, underlying quote and NBBO, 1-minute bars from /markets/timesales, CBOE index quotes and batched breadth. Bars, VIX and breadth are best-effort so an entitlement gap degrades the tick rather than discarding a tradeable chain. Not yet verified against the live endpoint."
     },
     {
       "match": "tastytrade_feed.py",
-      "capability": "Market feed \u2014 Tastytrade",
+      "capability": "Market feed — Tastytrade",
       "disposition": "reimplement",
       "spy_der_owner": "spy_der.market_data.providers.tastytrade",
       "status": "pending",
@@ -41,11 +42,12 @@
     },
     {
       "match": "yahoo_feed.py",
-      "capability": "Market feed \u2014 Yahoo (underlying/settlement backstop)",
+      "capability": "Market feed — Yahoo (underlying/settlement backstop)",
       "disposition": "reimplement",
       "spy_der_owner": "spy_der.market_data.providers.yahoo",
-      "status": "pending",
-      "parity_gate": "raw_market_snapshots"
+      "status": "done",
+      "parity_gate": "raw_market_snapshots",
+      "notes": "Ported to spy_der.market_data.providers.yahoo: settlement close for any recent session, the real CBOE indices (VIX9D/VIX/VIX3M/VVIX) with no entitlement, and 1-minute bars. Serves no option chain by design (has_chain=False) and the factory keeps it out of the failover chain; it is the default settlement provider. Not yet verified against the live endpoint."
     },
     {
       "match": "composite_feed.py",
@@ -85,8 +87,9 @@
       "capability": "Incremental bars, timeframe resampling, bar technicals",
       "disposition": "reimplement",
       "spy_der_owner": "spy_der.features.mtf",
-      "status": "partial",
-      "parity_gate": "feature_values"
+      "status": "done",
+      "parity_gate": "feature_values",
+      "notes": "Ported to spy_der.features.resample (session-anchored timeframe folding, 1m-1d) and spy_der.features.indicators (Wilder RMA/ATR/ADX/DI/RSI, EMA slope, Bollinger compression, realized-vol rank, RV expansion, R^2 trend cleanliness, rolling VWAP, range position, CVD proxy, Bollinger/Keltner/Donchian channels with the graded TTM squeeze). Periods and smoothing preserved, because the gate thresholds downstream were calibrated against these definitions. Bucketing is implemented directly rather than via pandas.resample so replay cannot depend on a library default that has moved across releases."
     },
     {
       "match": "gex_window.py",
@@ -106,7 +109,7 @@
     },
     {
       "match": "gex/**",
-      "capability": "Gamma exposure \u2014 OI, volume proxy, hybrid, weekly",
+      "capability": "Gamma exposure — OI, volume proxy, hybrid, weekly",
       "disposition": "replace",
       "spy_der_owner": "spy_der.features.gex",
       "status": "partial",
@@ -211,7 +214,7 @@
     },
     {
       "match": "prediction/**",
-      "capability": "Prediction engine \u2014 models, training, calibration, registry, storage",
+      "capability": "Prediction engine — models, training, calibration, registry, storage",
       "disposition": "replace",
       "spy_der_owner": "spy_der.forecasting + spy_der.training + spy_der.evaluation",
       "status": "partial",
@@ -362,7 +365,7 @@
       "spy_der_owner": "spy_der.runtime.runner + spy_der.runtime.ai_loop + spy_der.market_data",
       "status": "partial",
       "parity_gate": "live_shadow_parity",
-      "notes": "2051 lines and the reason most 0DTE modules cannot be moved intact \u2014 nearly everything imports it. Decomposed rather than ported."
+      "notes": "2051 lines and the reason most 0DTE modules cannot be moved intact — nearly everything imports it. Decomposed rather than ported."
     },
     {
       "match": "orchestrator.py",
@@ -432,7 +435,7 @@
     },
     {
       "match": "dashboard/**",
-      "capability": "Dashboard backend \u2014 queries, live schema, state, auth, server",
+      "capability": "Dashboard backend — queries, live schema, state, auth, server",
       "disposition": "reimplement",
       "spy_der_owner": "services/dashboard_api",
       "status": "pending",

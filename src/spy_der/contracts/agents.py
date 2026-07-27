@@ -32,6 +32,8 @@ __all__ = [
     "DeploymentContext",
     "ExitPolicySummary",
     "FamilyRecord",
+    "ForecastContext",
+    "MarketContext",
     "OpenPositionView",
     "PositionDecisionPacket",
     "ReadOnlyLegSummary",
@@ -95,6 +97,94 @@ class SnapshotSummary:
     session_date: date
     underlying_price: Decimal
     minutes_to_close: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MarketContext:
+    """The market state an entry decision is actually made against (spec §41).
+
+    Without this the agent received candidate summaries and nothing else: a list
+    of geometries with a utility score, and no way to see the dealer positioning,
+    the volatility surface, the trend structure or the walls those geometries sit
+    between. It could rank what it was handed but not disagree with the ranking
+    on evidence, which is the only thing an AI adds over the deterministic
+    ordering it was already given.
+
+    Every field is optional and omitted when unknown, matching the feature
+    bundle's rule that absent stays absent. It is derived, read-only, numeric
+    state — never instructions — and carries no credentials, order handles or
+    tool references (spec §41 forbids them in the packet).
+    """
+
+    # -- underlying
+    underlying_price: Decimal | None = None
+    underlying_bid: Decimal | None = None
+    underlying_ask: Decimal | None = None
+    minutes_from_open: int | None = None
+    minutes_to_close: int | None = None
+
+    # -- dealer positioning
+    net_gex_bn: float | None = None
+    gamma_sign: int | None = None
+    gamma_flip: Decimal | None = None
+    call_wall: Decimal | None = None
+    put_wall: Decimal | None = None
+    flip_cushion: float | None = None
+    call_wall_distance: float | None = None
+    put_wall_distance: float | None = None
+    gex_pct_rank: float | None = None
+
+    # -- volatility
+    atm_straddle: Decimal | None = None
+    expected_move: Decimal | None = None
+    expected_move_pct: float | None = None
+    expected_move_consumed: float | None = None
+    vix: float | None = None
+    vix9d: float | None = None
+    vix3m: float | None = None
+    vvix: float | None = None
+    vix_contango: float | None = None
+
+    # -- distribution shape
+    rnd_skew: float | None = None
+    rnd_prob_below_spot: float | None = None
+
+    # -- flow and breadth
+    pcr_volume: float | None = None
+    volume_oi_ratio: float | None = None
+    rsp_spy_div: float | None = None
+    sector_align: float | None = None
+    top10_pressure: float | None = None
+
+    # -- multi-timeframe technicals, keyed "<timeframe>.<indicator>"
+    technicals: tuple[tuple[str, float], ...] = ()
+
+    # -- provenance
+    data_quality_flags: tuple[str, ...] = ()
+
+    @property
+    def is_populated(self) -> bool:
+        return self.underlying_price is not None or bool(self.technicals)
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastContext:
+    """The forecast the decision is made under (spec §41).
+
+    A flat probability/quantile view rather than the full
+    :class:`~spy_der.contracts.forecasts.MarketForecastBundle`, so the packet
+    stays a processed-output surface: the agent sees what the models concluded,
+    not the machinery that produced it. Absent when no forecast ran, which is a
+    real and frequent state — the forecast stage is fail-closed.
+    """
+
+    forecast_id: str = ""
+    model_group_id: str = ""
+    horizons: tuple[tuple[str, float], ...] = ()
+
+    @property
+    def is_populated(self) -> bool:
+        return bool(self.horizons)
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +338,11 @@ class AgentDecisionPacket:
     # The agent's own realized paper record (learning feedback loop). Optional
     # so pre-feedback callers keep working unchanged.
     track_record: TrackRecordSummary | None = None
+    # The market state and forecast the decision is made against. Optional so
+    # callers predating them keep working, but the agent is choosing blind
+    # without them.
+    market_context: MarketContext | None = None
+    forecast_context: ForecastContext | None = None
 
     def __post_init__(self) -> None:
         if not self.packet_id:

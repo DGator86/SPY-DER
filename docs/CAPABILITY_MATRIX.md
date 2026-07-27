@@ -17,7 +17,7 @@ tracked path lacks a disposition or any rule goes dead.
 | **archive** | Kept read-only for provenance. Not carried into the runtime. | 139 |
 | **delete** | Removed outright — a temporary bridge whose purpose ends at cutover, or dead code. | 27 |
 
-`status` is `done` (26 rules), `partial` (21) or `pending` (19). **`done` means
+`status` is `done` (30 rules), `partial` (20) or `pending` (16). **`done` means
 the SPY-DER implementation exists, not that parity has been signed off** — that
 is what `docs/CUTOVER_PLAN.md` step 4 is for.
 
@@ -25,9 +25,9 @@ is what `docs/CUTOVER_PLAN.md` step 4 is for.
 
 | Capability | 0DTE implementation | SPY-DER implementation | Production-ready owner |
 |---|---|---|---|
-| Market feed | Existing live implementation (`massive_feed`, `tradier_feed`, `tastytrade_feed`, `yahoo_feed`) | `spy_der.market_data` — protocol, composite failover, assembler, freshness, calendar; live vendor adapters **pending** | Migrate to SPY-DER |
+| Market feed | Existing live implementation (`massive_feed`, `tradier_feed`, `tastytrade_feed`, `yahoo_feed`) | `spy_der.market_data` — protocol, composite failover, assembler, freshness, calendar; live Tradier, Massive and Yahoo adapters with 1-minute bars, underlying NBBO, VIX term structure and breadth. `tastytrade` still **pending** | Migrate to SPY-DER |
 | Chain storage | `chain_store` | `spy_der.market_data.recording` / `.replay` (canonical snapshots) | Migrate |
-| Features | `mtf_matrix`, `gex/`, `rnd_extractor`, `resample`, `market_dynamics` | `spy_der.features` — parity for MTF/RND/volatility; GEX and bar technicals partial | Validate and migrate |
+| Features | `mtf_matrix`, `gex/`, `rnd_extractor`, `resample`, `market_dynamics` | `spy_der.features` — full MTF matrix (1m–1d, Wilder ADX/DI, RSI, Bollinger/Keltner/Donchian, VWAP, CVD), GEX, RND, volatility, flow, plus `SnapshotFeaturePipeline` assembling them into a `FeatureBundle` the engine runs per snapshot | Validate and migrate |
 | Forecasting | `prediction/` (57 modules, ~18k LOC), `mc`, `forecast_stabilizer` | `spy_der.forecasting` + `spy_der.training` with phase 5–9 parity fixtures | Validate and migrate |
 | Candidates | `spread_selector`, `gate_scorer` | `spy_der.candidates` — geometry, payoff proofs, dominance | Validate and migrate |
 | Risk | `risk_manager`, `execution_cost` | `spy_der.risk`, `spy_der.economics` | Consolidate |

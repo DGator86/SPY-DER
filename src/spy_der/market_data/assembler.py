@@ -14,6 +14,7 @@ import datetime as dt
 from decimal import Decimal
 
 from spy_der.contracts.common import (
+    NORMALIZATION_VERSION,
     SCHEMA_VERSION,
     content_hash,
     deterministic_id,
@@ -22,6 +23,7 @@ from spy_der.contracts.common import (
 from spy_der.contracts.market import (
     REQUIRED_FEED_COMPONENTS,
     Bar,
+    BreadthState,
     CanonicalMarketSnapshot,
     CatalystState,
     ChainCoverage,
@@ -31,12 +33,11 @@ from spy_der.contracts.market import (
     OptionQuote,
     OptionType,
     ProviderSelection,
+    VolatilityTermStructure,
 )
 from spy_der.market_data.calendar import MarketCalendar
 
 __all__ = ["CanonicalSnapshotAssembler"]
-
-_NORMALIZATION_VERSION = "1.0.0"
 
 
 def _chain_coverage(chain: tuple[OptionQuote, ...]) -> ChainCoverage:
@@ -69,7 +70,17 @@ def _missing_components(observations: tuple[FeedObservation, ...]) -> tuple[str,
 def _data_quality(
     missing: tuple[str, ...],
     observations: tuple[FeedObservation, ...],
+    provider_flags: tuple[str, ...] = (),
 ) -> DataQuality:
+    """Flags and a penalty describing how trustworthy this snapshot is.
+
+    ``provider_flags`` are the adapter's own provenance notes — chiefly which
+    rung of the spot ladder produced the underlying price. They are recorded but
+    deliberately do **not** move the penalty: the penalty measures component
+    availability, and a measured-vs-inferred spot is a question of *quality* that
+    downstream policy weighs for itself. Folding it in here would double-count
+    against the same snapshot in every consumer.
+    """
     flags: list[str] = [f"missing:{name}" for name in missing]
     degraded = [
         f"{obs.component.value}:{obs.status.value}"
@@ -77,6 +88,7 @@ def _data_quality(
         if obs.status in (FeedStatus.STALE, FeedStatus.DELAYED)
     ]
     flags.extend(degraded)
+    flags.extend(provider_flags)
     penalty = min(1.0, 0.5 * len(missing) + 0.1 * len(degraded))
     return DataQuality(is_healthy=not missing, penalty=penalty, flags=tuple(flags))
 
@@ -100,6 +112,9 @@ class CanonicalSnapshotAssembler:
         underlying_bid: Decimal | None = None,
         underlying_ask: Decimal | None = None,
         catalyst_state: CatalystState | None = None,
+        provider_flags: tuple[str, ...] = (),
+        volatility_term_structure: VolatilityTermStructure | None = None,
+        breadth: BreadthState | None = None,
     ) -> CanonicalMarketSnapshot:
         require_tz_aware(timestamp, "timestamp")
         session_date = self.calendar.session_date(timestamp)
@@ -108,14 +123,14 @@ class CanonicalSnapshotAssembler:
         minutes_to_close = self.calendar.minutes_to_close(timestamp)
         coverage = _chain_coverage(option_chain)
         missing = _missing_components(feed_observations)
-        quality = _data_quality(missing, feed_observations)
+        quality = _data_quality(missing, feed_observations, provider_flags)
         catalyst = catalyst_state or CatalystState()
 
         # Identity payload: everything that defines the snapshot except the
         # assigned id/hash. Deterministic across processes and hosts.
         identity = {
             "schema_version": SCHEMA_VERSION,
-            "normalization_version": _NORMALIZATION_VERSION,
+            "normalization_version": NORMALIZATION_VERSION,
             "timestamp": timestamp,
             "session_date": session_date,
             "session_status": session_status,
@@ -133,6 +148,8 @@ class CanonicalSnapshotAssembler:
             "catalyst_state": catalyst,
             "data_quality": quality,
             "missing_components": missing,
+            "volatility_term_structure": volatility_term_structure,
+            "breadth": breadth,
         }
         digest = content_hash(identity)
         snapshot_id = deterministic_id("snap", digest)
@@ -145,7 +162,7 @@ class CanonicalSnapshotAssembler:
             underlying_symbol=underlying_symbol,
             underlying_price=underlying_price,
             session_status=session_status,
-            normalization_version=_NORMALIZATION_VERSION,
+            normalization_version=NORMALIZATION_VERSION,
             underlying_bid=underlying_bid,
             underlying_ask=underlying_ask,
             minutes_from_open=minutes_from_open,
@@ -158,4 +175,6 @@ class CanonicalSnapshotAssembler:
             catalyst_state=catalyst,
             data_quality=quality,
             missing_components=missing,
+            volatility_term_structure=volatility_term_structure,
+            breadth=breadth,
         )

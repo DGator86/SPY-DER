@@ -4,7 +4,7 @@ The service set and what each stage reads and writes under `/var/lib/spy-der`.
 
 ```
 spy-der market       providers ──────────────▶ market/<session>.jsonl
-spy-der engine       market/ ────────────────▶ candidates/<session>.jsonl + journal
+spy-der engine       market/ ────────────────▶ candidates/ + features/ + journal
 spy-der settlement   market/ + journal ──────▶ settlements/<session>.jsonl + journal
 spy-der dojo         experience ─────────────▶ reports/dojo/
 spy-der validate     market/ ────────────────▶ reports/validation/
@@ -15,7 +15,7 @@ spy-der dashboard-api  (read-only) ──────────▶ http://127.
 
 There are exactly two, and neither is new.
 
-**Stage artifacts** (`market/`, `candidates/`, `settlements/`) are JSONL records
+**Stage artifacts** (`market/`, `candidates/`, `features/`, `settlements/`) are JSONL records
 carrying `seq`, an identity, a schema version and a `record_hash` over the
 payload — the envelope `spy_der.market_data.recording` already wrote for market
 ticks. `ReplayFeed` verifies content hashes, sequence continuity and schema
@@ -44,8 +44,18 @@ restart resumes rather than duplicating.
 | Stage | State |
 |---|---|
 | `candidates` | **runs** — `generate_candidate_universe` is deterministic and complete |
-| `features` | unavailable — no `FeaturePipeline` implementation constructs a `FeatureBundle` |
+| `features` | **runs** — `SnapshotFeaturePipeline` builds a `FeatureBundle` per snapshot |
 | `forecast` | unavailable — no trained model group is configured |
+
+The feature stage assembles eight families — the multi-timeframe matrix, GEX,
+volatility, RND, flow, breadth, the volatility surface and session context —
+into a flat, sorted `(name, value)` map written to `features/` and journaled as
+`features_computed`. Families are independent: one that raises is recorded in
+`failed_families` and journaled as `feature_stage_failed` while the rest of the
+bundle still lands, because a pathological chain should cost the RND summary
+rather than the whole tick. A family with no usable inputs is reported in
+`missing_families` and its keys are simply absent — consumers distinguish
+"unknown" from a real reading by key presence, never by a sentinel value.
 
 `JournalEventType` carries `FORECAST_UNAVAILABLE` and `FEATURE_STAGE_FAILED` as
 first-class outcomes: the design already says a stage may legitimately not run.
@@ -71,10 +81,13 @@ fills populate the `traded` side later without changing this shape.
 Two choices worth knowing:
 
 - **Settlement price** is the underlying price on the session's final recorded
-  snapshot — `SettlementSource.SESSION_CLOSE`. The config template names a
-  dedicated `settlement_provider: yahoo`, but that adapter is unbuilt and this
-  service runs offline. Deriving it from the tape keeps settlement deterministic
-  and reproducible.
+  snapshot — `SettlementSource.SESSION_CLOSE`. The Yahoo adapter now exists and
+  runs in the market service's `settlement_provider` slot, where it marks the
+  `settlement` feed component live and backstops the volatility surface; this
+  service still derives the settlement *price* from the tape, because it runs
+  offline and deriving it there keeps settlement deterministic and reproducible.
+  `YahooProvider.settlement_price` is available for an online backfill after an
+  outage, which is the case the tape cannot cover.
 - **Candidates are regenerated from the tape**, not parsed back out of the
   engine's artifacts. Generation is deterministic and the snapshot round-trip is
   byte-identical, so regeneration yields the same universe by construction and

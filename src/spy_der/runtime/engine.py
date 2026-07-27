@@ -16,8 +16,10 @@ outcomes, which is the design saying a stage may legitimately not run. Today:
 
 * `candidates` runs for real — `generate_candidate_universe` is deterministic
   and complete
-* `features` has no `FeaturePipeline` implementation in the package; nothing
-  constructs a `FeatureBundle`
+* `features` runs for real — `SnapshotFeaturePipeline` assembles the GEX, MTF,
+  RND, volatility, flow, breadth and volatility-surface families into a
+  `FeatureBundle`, recorded under `features/` and journaled as
+  `FEATURES_COMPUTED`
 * `forecast` needs a trained model group from `spy_der.training.registry`.
   `ForecastServer` is fail-closed by design and `heuristic_bundle` is marked
   research-only, so with no registry configured the engine journals
@@ -41,7 +43,12 @@ from typing import Any
 from spy_der.candidates.factory import generate_candidate_universe
 from spy_der.contracts.candidates import FACTORY_VERSION
 from spy_der.contracts.events import AggregateType, JournalEvent, JournalEventType
+from spy_der.contracts.market import CanonicalMarketSnapshot
 from spy_der.contracts.market_parse import SnapshotParseError, snapshot_from_dict
+from spy_der.features.pipeline import (
+    FEATURE_PIPELINE_VERSION,
+    SnapshotFeaturePipeline,
+)
 from spy_der.journal.store import SqliteJournalStore
 from spy_der.market_data.replay import CorruptRecordingError, ReplayFeed
 from spy_der.runtime.artifacts import StageArtifactStore
@@ -82,12 +89,20 @@ def _stage_availability() -> dict[str, str]:
     """
     return {
         "candidates": "available",
-        "features": "unavailable: no FeaturePipeline implementation is registered",
+        "features": "available",
         "forecast": (
             "unavailable: no trained model group is configured; "
             "refusing the research-only heuristic path"
         ),
     }
+
+
+@dataclass(frozen=True, slots=True)
+class _Stores:
+    """The stage artifact stores, grouped so adding a stage is one field."""
+
+    candidates: StageArtifactStore
+    features: StageArtifactStore
 
 
 @dataclass
@@ -97,6 +112,7 @@ class EngineService:
     config: EngineConfig
     _stop: bool = False
     _seen: dict[str, set[str]] = field(default_factory=dict)
+    features: SnapshotFeaturePipeline = field(default_factory=SnapshotFeaturePipeline)
 
     def request_stop(self, *_args: object) -> None:
         self._stop = True
@@ -141,7 +157,10 @@ class EngineService:
             log.info("stage %s: %s", name, state)
 
         journal = self._open_journal()
-        artifacts = StageArtifactStore(cfg.state_root, "candidates")
+        stores = _Stores(
+            candidates=StageArtifactStore(cfg.state_root, "candidates"),
+            features=StageArtifactStore(cfg.state_root, "features"),
+        )
         # Startup is logged, not journaled: the journal's event types describe
         # pipeline outcomes, and borrowing one (SYSTEM_DECIDED) for a lifecycle
         # marker would corrupt any query for real decisions. Stage availability
@@ -149,7 +168,7 @@ class EngineService:
 
         passes = 0
         while not self._stop:
-            processed = self._pass(journal, artifacts, stages)
+            processed = self._pass(journal, stores, stages)
             passes += 1
             write_heartbeat(
                 cfg.state_root,
@@ -172,20 +191,20 @@ class EngineService:
     def _pass(
         self,
         journal: SqliteJournalStore,
-        artifacts: StageArtifactStore,
+        stores: _Stores,
         stages: dict[str, str],
     ) -> int:
         processed = 0
         for session in self._sessions():
             if self._stop:
                 break
-            processed += self._process_session(journal, artifacts, stages, session)
+            processed += self._process_session(journal, stores, stages, session)
         return processed
 
     def _process_session(
         self,
         journal: SqliteJournalStore,
-        artifacts: StageArtifactStore,
+        stores: _Stores,
         stages: dict[str, str],
         session: str,
     ) -> int:
@@ -202,7 +221,7 @@ class EngineService:
             return 0
 
         try:
-            done = self._already_processed(artifacts, session)
+            done = self._already_processed(stores.candidates, session)
         except CorruptRecordingError:
             return 0
 
@@ -213,15 +232,86 @@ class EngineService:
             snapshot_id = str(payload.get("snapshot_id", ""))
             if not snapshot_id or snapshot_id in done:
                 continue
-            if self._process_snapshot(journal, artifacts, stages, session, payload):
+            if self._process_snapshot(journal, stores, stages, session, payload):
                 done.add(snapshot_id)
                 processed += 1
         return processed
 
+    def _run_feature_stage(
+        self,
+        journal: SqliteJournalStore,
+        stores: _Stores,
+        session: str,
+        snapshot: CanonicalMarketSnapshot,
+    ) -> None:
+        """Build and record the feature bundle for ``snapshot``.
+
+        Never raises: a feature failure is journaled as `FEATURE_STAGE_FAILED`
+        and the snapshot still gets its candidate universe. Features inform the
+        decision; candidates *are* the decision surface, and losing them to a
+        feature defect would be the more expensive failure.
+        """
+        try:
+            result = self.features.build_detailed(snapshot)
+        except Exception as exc:
+            log.exception("feature stage failed for %s", snapshot.snapshot_id)
+            journal.append(
+                JournalEvent(
+                    event_type=JournalEventType.FEATURE_STAGE_FAILED.value,
+                    aggregate_type=AggregateType.SYSTEM.value,
+                    aggregate_id=snapshot.snapshot_id,
+                    occurred_at=snapshot.timestamp,
+                    payload={"error": f"{type(exc).__name__}: {exc}"},
+                    deployment_id=DEPLOYMENT_ID,
+                    snapshot_id=snapshot.snapshot_id,
+                )
+            )
+            return
+
+        stores.features.append(
+            session,
+            artifact_id=result.bundle.bundle_id,
+            schema_version=FEATURE_PIPELINE_VERSION,
+            payload=result.bundle,
+        )
+        journal.append(
+            JournalEvent(
+                event_type=JournalEventType.FEATURES_COMPUTED.value,
+                aggregate_type=AggregateType.SYSTEM.value,
+                aggregate_id=snapshot.snapshot_id,
+                occurred_at=snapshot.timestamp,
+                payload={
+                    "session_date": session,
+                    "pipeline_version": FEATURE_PIPELINE_VERSION,
+                    "bundle_id": result.bundle.bundle_id,
+                    "feature_count": len(result.bundle.features),
+                    # Recorded per snapshot rather than summarized: which
+                    # families were unavailable varies tick to tick with the
+                    # data, and that variation is the diagnostic.
+                    "missing_families": list(result.missing_families),
+                    "failed_families": list(result.failed_families),
+                },
+                deployment_id=DEPLOYMENT_ID,
+                snapshot_id=snapshot.snapshot_id,
+            )
+        )
+        if result.failed_families:
+            journal.append(
+                JournalEvent(
+                    event_type=JournalEventType.FEATURE_STAGE_FAILED.value,
+                    aggregate_type=AggregateType.SYSTEM.value,
+                    aggregate_id=snapshot.snapshot_id,
+                    occurred_at=snapshot.timestamp,
+                    payload={"failed_families": list(result.failed_families)},
+                    deployment_id=DEPLOYMENT_ID,
+                    snapshot_id=snapshot.snapshot_id,
+                )
+            )
+
     def _process_snapshot(
         self,
         journal: SqliteJournalStore,
-        artifacts: StageArtifactStore,
+        stores: _Stores,
         stages: dict[str, str],
         session: str,
         payload: dict[str, Any],
@@ -242,6 +332,8 @@ class EngineService:
                 )
             )
             return False
+
+        self._run_feature_stage(journal, stores, session, snapshot)
 
         # The forecast stage is fail-closed: unavailable is journaled, never
         # replaced with a neutral value downstream would read as a forecast.
@@ -276,7 +368,7 @@ class EngineService:
             )
             return False
 
-        artifacts.append(
+        stores.candidates.append(
             session,
             artifact_id=universe.snapshot_id,
             schema_version=FACTORY_VERSION,

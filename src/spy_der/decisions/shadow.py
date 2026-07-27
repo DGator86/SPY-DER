@@ -17,9 +17,10 @@ temporary compatibility surface and is deleted at cutover — see
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -44,12 +45,15 @@ from spy_der.contracts.agents import (
     DeploymentContext,
     ExitPolicySummary,
     FamilyRecord,
+    ForecastContext,
+    MarketContext,
     SnapshotSummary,
     TrackRecordSummary,
     make_packet_id,
     packet_hash,
 )
 from spy_der.contracts.positions import ApprovedExitPolicyId
+from spy_der.contracts.serialization import to_canonical_json
 
 __all__ = [
     "PARALLEL_TRACK_ID",
@@ -119,6 +123,150 @@ def _coerce_track_record(raw: Any) -> TrackRecordSummary | None:
         return None
 
 
+#: Market-context fields accepted from the bridge, and the type each coerces to.
+#: Anything not listed is ignored rather than passed through, so the packet
+#: cannot grow untyped fields from an upstream caller.
+_MARKET_DECIMAL_FIELDS = (
+    "underlying_bid",
+    "underlying_ask",
+    "gamma_flip",
+    "call_wall",
+    "put_wall",
+    "atm_straddle",
+    "expected_move",
+)
+_MARKET_FLOAT_FIELDS = (
+    "net_gex_bn",
+    "flip_cushion",
+    "call_wall_distance",
+    "put_wall_distance",
+    "gex_pct_rank",
+    "expected_move_pct",
+    "expected_move_consumed",
+    "vix",
+    "vix9d",
+    "vix3m",
+    "vvix",
+    "vix_contango",
+    "rnd_skew",
+    "rnd_prob_below_spot",
+    "pcr_volume",
+    "volume_oi_ratio",
+    "rsp_spy_div",
+    "sector_align",
+    "top10_pressure",
+)
+_MARKET_INT_FIELDS = ("gamma_sign", "minutes_from_open", "minutes_to_close")
+
+
+def _coerce_market_context(raw: Any, *, underlying_price: Decimal) -> MarketContext:
+    """Build :class:`MarketContext` from a caller-supplied plain dict.
+
+    Same contract as ``_coerce_track_record``: the 0DTE bridge stays decoupled
+    from contract classes by passing a dict, and anything malformed degrades to
+    an absent field rather than failing the tick. Per-field rather than
+    all-or-nothing, because a bad VIX should not cost the agent its view of the
+    walls.
+
+    Unknown keys are dropped. A field the caller cannot supply stays ``None``
+    and is omitted from the prompt, which the system prompt defines as "not
+    observed".
+    """
+    body: dict[str, Any] = {"underlying_price": underlying_price}
+    if isinstance(raw, dict):
+        for name in _MARKET_DECIMAL_FIELDS:
+            value = raw.get(name)
+            if value is not None:
+                with suppress(ValueError, TypeError, ArithmeticError):
+                    body[name] = Decimal(str(value))
+        for name in _MARKET_FLOAT_FIELDS:
+            value = raw.get(name)
+            if value is not None:
+                with suppress(ValueError, TypeError):
+                    parsed = float(value)
+                    if math.isfinite(parsed):
+                        body[name] = parsed
+        for name in _MARKET_INT_FIELDS:
+            value = raw.get(name)
+            if value is not None:
+                with suppress(ValueError, TypeError):
+                    body[name] = int(value)
+        body["technicals"] = _coerce_numeric_map(raw.get("technicals"))
+        flags = raw.get("data_quality_flags")
+        if isinstance(flags, (list, tuple)):
+            body["data_quality_flags"] = tuple(str(f) for f in flags if f)
+    return MarketContext(**body)
+
+
+def _coerce_forecast(raw: Any) -> ForecastContext | None:
+    """Build :class:`ForecastContext` from the bridge's forecast dict.
+
+    The bridge has carried a forecast dictionary all along and the prompt
+    discarded it. ``None`` when nothing usable is present, so the agent can tell
+    "no forecast" from "a forecast with nothing in it".
+    """
+    if not isinstance(raw, dict) or not raw:
+        return None
+    horizons = _coerce_numeric_map(
+        {k: v for k, v in raw.items() if k not in {"forecast_id", "model_group_id"}}
+    )
+    if not horizons:
+        return None
+    return ForecastContext(
+        forecast_id=str(raw.get("forecast_id") or ""),
+        model_group_id=str(raw.get("model_group_id") or ""),
+        horizons=horizons,
+    )
+
+
+def _coerce_numeric_map(raw: Any) -> tuple[tuple[str, float], ...]:
+    """Sorted ``(name, finite float)`` pairs; non-numeric entries are dropped."""
+    if not isinstance(raw, dict):
+        return ()
+    out: list[tuple[str, float]] = []
+    for key, value in raw.items():
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            parsed = float(value)
+        except (ValueError, TypeError):
+            continue
+        if math.isfinite(parsed):
+            out.append((str(key), parsed))
+    return tuple(sorted(out))
+
+
+def _round(value: float | None, digits: int) -> float | None:
+    return None if value is None else round(value, digits)
+
+
+def _market_fingerprint(market: MarketContext | None) -> dict[str, object] | None:
+    """Coarse regime markers, at the granularity a decision would actually turn on.
+
+    Gamma sign and the walls are already discrete. The cushion is rounded to
+    0.1% of spot, expected-move consumption to 10%, and VIX to a whole
+    volatility point — each a step big enough to mean something and big enough
+    that ordinary tick noise does not cross it.
+    """
+    if market is None:
+        return None
+    return {
+        "gamma_sign": market.gamma_sign,
+        "flip_cushion": _round(market.flip_cushion, 3),
+        "call_wall": str(market.call_wall) if market.call_wall is not None else None,
+        "put_wall": str(market.put_wall) if market.put_wall is not None else None,
+        "expected_move_consumed": _round(market.expected_move_consumed, 1),
+        "vix": _round(market.vix, 0),
+    }
+
+
+def _forecast_fingerprint(forecast: ForecastContext | None) -> dict[str, float] | None:
+    """Forecast horizons rounded to two decimals — a 1% probability move is noise."""
+    if forecast is None:
+        return None
+    return {name: round(value, 2) for name, value in forecast.horizons}
+
+
 def _decision_cache_key(
     *,
     symbol: str,
@@ -129,10 +277,19 @@ def _decision_cache_key(
     data_quality: float,
     forecast_uncertainty: float,
     track_record: TrackRecordSummary | None = None,
+    market_context: MarketContext | None = None,
+    forecast_context: ForecastContext | None = None,
 ) -> str:
     body: dict[str, object] = {
         "symbol": symbol,
         "session_date": session_date.isoformat(),
+        # A regime change must invalidate the unchanged-candidates cache, for
+        # the same reason a settled trade does: the same geometry deserves a
+        # different answer once the market around it has moved. Deliberately
+        # *coarse* — the raw technical vector moves every tick, so keying on it
+        # would make the cache never hit and turn every tick into a paid call.
+        "market": _market_fingerprint(market_context),
+        "forecast": _forecast_fingerprint(forecast_context),
         # A newly settled trade changes the record and must invalidate the
         # unchanged-candidates cache — the whole point of feedback is that the
         # same market can deserve a different answer after a loss.
@@ -380,8 +537,18 @@ def decide_shadow_tick(
     data_quality: float = 1.0,
     forecast_uncertainty: float = 0.0,
     track_record: dict[str, Any] | None = None,
+    market_context: dict[str, Any] | None = None,
+    forecast: dict[str, Any] | None = None,
 ) -> SpyDerShadowDecision:
     """Run AI entry decision over 0DTE shadow candidates.
+
+    ``market_context`` is the measured market state the decision is made
+    against — dealer positioning, the volatility surface, flow, breadth and
+    per-timeframe technicals — and ``forecast`` is the model forecast the bridge
+    has always carried and the prompt used to discard. Both are plain dicts for
+    the same reason ``track_record`` is: the 0DTE bridge stays decoupled from
+    contract classes. Unknown or malformed fields degrade to absent, and an
+    absent field is omitted from the prompt rather than sent as zero.
 
     ``track_record`` is the agent's own realized paper history (plain dict from
     the caller's trade journal: n_trades / win_rate / total_pnl /
@@ -431,6 +598,10 @@ def decide_shadow_tick(
         return decision
 
     record = _coerce_track_record(track_record)
+    market = _coerce_market_context(
+        market_context, underlying_price=Decimal(str(underlying_price))
+    )
+    forecast_view = _coerce_forecast(forecast)
     cache_key = _decision_cache_key(
         symbol=symbol,
         session_date=session_date,
@@ -440,6 +611,8 @@ def decide_shadow_tick(
         data_quality=data_quality,
         forecast_uncertainty=forecast_uncertainty,
         track_record=record,
+        market_context=market,
+        forecast_context=forecast_view,
     )
     if (
         _LAST_DECISION is not None
@@ -466,6 +639,8 @@ def decide_shadow_tick(
             data_quality=data_quality,
             forecast_uncertainty=forecast_uncertainty,
             track_record=record,
+            market_context=market,
+            forecast_context=forecast_view,
         )
         result = authority.decide_entry(packet, now=now)
         resp = result.response
@@ -614,6 +789,8 @@ def _build_packet(
     data_quality: float,
     forecast_uncertainty: float,
     track_record: TrackRecordSummary | None = None,
+    market_context: MarketContext | None = None,
+    forecast_context: ForecastContext | None = None,
 ) -> AgentDecisionPacket:
     views = tuple(
         AgentCandidateView(
@@ -648,6 +825,14 @@ def _build_packet(
         "risk_max_size_scalar": risk_max_size_scalar,
         "hard_vetoes": list(hard_vetoes),
         "deployment_id": deployment_id,
+        # Same rule as the canonical builder: the context is part of what makes
+        # this decision distinct, so it belongs in the hash.
+        "market_context": (
+            to_canonical_json(market_context) if market_context is not None else None
+        ),
+        "forecast_context": (
+            to_canonical_json(forecast_context) if forecast_context is not None else None
+        ),
     }
     # Security: processed-output body must never carry secrets, same guard the
     # canonical builder applies before hashing.
@@ -679,4 +864,6 @@ def _build_packet(
         forecast_uncertainty=forecast_uncertainty,
         evidence_ids=tuple(sorted({eid for v in views for eid in v.evidence_ids})),
         track_record=track_record,
+        market_context=market_context,
+        forecast_context=forecast_context,
     )
