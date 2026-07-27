@@ -40,6 +40,7 @@ __all__ = [
     "default_catalog",
     "default_provider",
     "run_universe_phase",
+    "seed_weights",
 ]
 
 
@@ -66,14 +67,17 @@ def _catalog_for(cfg: DojoConfig, generation: int) -> UniverseCatalog:
     )
 
 
-def cfg_weights(
-    cfg: DojoConfig, archetype_weights: dict[str, float] | None = None
+def seed_weights(
+    archetype_weights: dict[str, float] | None = None,
 ) -> dict[str, float]:
-    """Seed sampling weights for generation 0 — uniform unless told otherwise."""
-    del cfg  # reserved: config-pinned priors
-    if archetype_weights:
-        return {a: float(archetype_weights.get(a, 1.0)) for a in ARCHETYPES}
-    return dict.fromkeys(ARCHETYPES, 1.0)
+    """Generation 0's sampling weights — uniform unless gaps say otherwise.
+
+    Every archetype is present so a gap-weighted dict never silently drops the
+    archetypes it does not mention down to zero draws.
+    """
+    if not archetype_weights:
+        return dict.fromkeys(ARCHETYPES, 1.0)
+    return {a: float(archetype_weights.get(a, 1.0)) for a in ARCHETYPES}
 
 
 def default_catalog(
@@ -240,7 +244,7 @@ def run_universe_phase(
     n_packets = 0
     n_scored_universes = 0
     n_catalog_specs = 0
-    weights = cfg_weights(cfg, archetype_weights)
+    weights = seed_weights(archetype_weights)
     weights_seed = dict(weights)
     applied_plans: list[dict[str, Any]] = []
 

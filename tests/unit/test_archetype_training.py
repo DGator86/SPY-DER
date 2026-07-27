@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from spy_der.dojo.config import DojoConfig
-from spy_der.dojo.universe import cfg_weights, default_catalog
+from spy_der.dojo.universe import default_catalog, seed_weights
 from spy_der.learning.gaps import (
     ArchetypeGap,
     load_archetype_gaps,
@@ -131,8 +131,8 @@ def test_gaps_bias_the_lattice_toward_the_weak_archetypes() -> None:
     assert weights["crash"] > weights["range_chop"] > 1.0
 
     cfg = DojoConfig(universes_per_gen=40, universe_days=1)
-    unweighted = default_catalog(cfg, 0, archetype_weights=cfg_weights(cfg))
-    weighted = default_catalog(cfg, 0, archetype_weights={**cfg_weights(cfg), **weights})
+    unweighted = default_catalog(cfg, 0, archetype_weights=seed_weights())
+    weighted = default_catalog(cfg, 0, archetype_weights={**seed_weights(), **weights})
     crash_before = sum(1 for s in unweighted if s.start_archetype == "crash")
     crash_after = sum(1 for s in weighted if s.start_archetype == "crash")
     assert crash_after > crash_before, (crash_before, crash_after)
