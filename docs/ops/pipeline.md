@@ -81,8 +81,16 @@ Deliberately **not** a service. Training on a timer would silently replace the
 model behind a running engine, and swapping the thing that makes predictions is
 a decision someone should take on purpose.
 
-Two gates worth knowing:
+Three gates worth knowing:
 
+- **Every loss is paired with a baseline-relative skill.** A raw loss is not
+  evidence: a Brier of 0.257 reads as respectable until you notice that always
+  predicting the base rate scores 0.248 on the same data — the model is *worse
+  than guessing*, and nothing about the number says so. Each role therefore
+  reports a `*_skill` term, the fractional improvement over a baseline that uses
+  no features at all, and `spy-der-train` prints a per-role verdict plus
+  `has_edge` for the group. **Servable is not the same as useful**: a group can
+  train, register and serve while forecasting nothing of value.
 - **Metrics are out-of-fold or absent.** Scores come from walk-forward folds
   over whole sessions with an embargo, because intraday rows within a session
   are heavily autocorrelated and a random split reports skill that does not

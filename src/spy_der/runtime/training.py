@@ -111,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
         "n_observations": result.n_observations,
         "fold_count": result.fold_count,
         "is_servable": result.is_servable,
+        "has_edge": result.has_edge,
+        "edge_roles": list(result.edge_roles),
         "roles": [
             {
                 "role": r.role,
@@ -118,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
                 "model_id": r.model_id,
                 "n_rows": r.n_rows,
                 "reason": r.reason,
+                "skill": r.skill,
+                "has_edge": r.has_edge,
                 "metrics": r.metrics,
             }
             for r in result.roles
@@ -147,6 +151,15 @@ def main(argv: list[str] | None = None) -> int:
         log.warning(
             "group %s has no walk-forward folds — metrics are absent, not zero; "
             "record more sessions before trusting it",
+            result.group_id,
+        )
+    elif not result.has_edge:
+        # The distinction that matters, and the one a raw loss value hides: this
+        # group trains, registers and serves, and forecasts nothing of value.
+        log.warning(
+            "group %s shows NO EDGE — no component beat a baseline that uses no "
+            "features at all. It will serve, but its forecasts carry no "
+            "information. Do not promote it past 'research'.",
             result.group_id,
         )
     # The registry gates which load modes a status allows, so the hint has to

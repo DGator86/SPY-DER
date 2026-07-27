@@ -35,6 +35,8 @@ from spy_der.market_data.recording import build_record
 from spy_der.training.observations import build_observations
 from spy_der.training.pipeline import (
     COMPONENT_ROLES,
+    MIN_SKILL,
+    RoleOutcome,
     TrainingResult,
     train_model_group,
 )
@@ -661,3 +663,95 @@ def test_a_single_class_target_is_named_plainly(tmp_path: Path) -> None:
     assert "always 1" in _degenerate_target("classifier", [1, 1])
     assert _degenerate_target("classifier", [0, 1]) == ""
     assert _degenerate_target("regressor", [0.0, 0.0]) == ""
+
+
+# --------------------------------------------------------------------------- #
+# Skill: the difference between "it ran" and "it predicts"                    #
+# --------------------------------------------------------------------------- #
+def test_a_raw_loss_is_paired_with_a_baseline_relative_skill(
+    trained: tuple[Path, TrainingResult],
+) -> None:
+    """A Brier of 0.257 looks fine until you know the baseline scores 0.248."""
+    _root, result = trained
+    scored = [r for r in result.roles if r.trained and r.metrics]
+    assert scored
+    for outcome in scored:
+        assert outcome.skill is not None, f"{outcome.role} reported a loss with no skill"
+
+
+def test_the_verdict_separates_edge_from_no_edge(
+    trained: tuple[Path, TrainingResult],
+) -> None:
+    """On a random walk the directional models must NOT claim edge.
+
+    This is the sanity check on the metric itself. A random walk carries no
+    directional signal, so direction/quantile/volatility should score at or
+    below their no-feature baselines. The barrier and range models legitimately
+    *can* score — "will price travel far enough to touch a level 2% away" is
+    predictable from how far the level is, and that distance is a real feature.
+    A skill metric that blessed all six, or none, would be measuring nothing.
+    """
+    _root, result = trained
+    by_role = {r.role: r for r in result.roles}
+
+    assert by_role["direction_30m"].has_edge is False
+    assert (by_role["direction_30m"].skill or 0.0) < MIN_SKILL
+
+    barrier = by_role["touch_put_wall"]
+    if barrier.trained and barrier.skill is not None:
+        assert barrier.has_edge, "distance-to-wall carries real information"
+
+
+def test_no_edge_is_stated_in_the_description(trained: tuple[Path, TrainingResult]) -> None:
+    _root, result = trained
+    text = result.describe()
+    assert "NO EDGE" in text
+    assert "VERDICT" in text
+
+
+def test_skill_is_the_worst_component_not_the_best() -> None:
+    """A q50 that beats its baseline while the tails do not is not tradeable."""
+    outcome = RoleOutcome(
+        role="return_quantiles_30m",
+        trained=True,
+        metrics={
+            "oof_pinball_q10_skill": -0.20,
+            "oof_pinball_q50_skill": 0.30,
+            "oof_pinball_q90_skill": 0.10,
+        },
+    )
+    assert outcome.skill == pytest.approx(-0.20)
+    assert outcome.has_edge is False
+
+
+def test_marginal_skill_does_not_count_as_edge() -> None:
+    """+0.001 over a handful of folds is noise, not a working model."""
+    assert RoleOutcome(role="r", trained=True, metrics={"oof_brier_skill": 0.001}).has_edge is False
+    assert RoleOutcome(role="r", trained=True, metrics={"oof_brier_skill": 0.5}).has_edge is True
+
+
+def test_an_unscored_role_is_not_an_edge_claim() -> None:
+    """No fold means no evidence — which is not the same as no skill."""
+    outcome = RoleOutcome(role="r", trained=True, metrics={})
+    assert outcome.skill is None
+    assert outcome.has_edge is False
+    assert "UNSCORED" in outcome.verdict()
+
+
+def test_servable_is_not_the_same_as_useful(trained: tuple[Path, TrainingResult]) -> None:
+    """A group can serve perfectly well and forecast nothing of value."""
+    _root, result = trained
+    assert result.is_servable
+    # These are independent questions and must stay independently answerable.
+    assert isinstance(result.has_edge, bool)
+
+
+def test_the_train_cli_reports_edge_in_its_json(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    from spy_der.runtime.training import main
+
+    _record(tmp_path, sessions=12)
+    assert main(["--state-root", str(tmp_path), "--min-rows", "50", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "has_edge" in payload
+    assert "edge_roles" in payload
+    assert all("skill" in role for role in payload["roles"])

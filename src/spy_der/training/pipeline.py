@@ -84,6 +84,13 @@ MIN_ROWS_PER_ROLE = 200
 MIN_SESSIONS_FOR_FOLDS = 11
 
 
+#: Skill below this is treated as no demonstrated edge. Deliberately a hair
+#: above zero rather than at it: a skill of +0.001 over a few folds is noise,
+#: and rounding it up to "this model works" is the exact mistake the skill
+#: metric exists to prevent.
+MIN_SKILL = 0.01
+
+
 @dataclass(frozen=True, slots=True)
 class RoleOutcome:
     """What happened to one component role."""
@@ -94,6 +101,33 @@ class RoleOutcome:
     n_rows: int = 0
     reason: str = ""
     metrics: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def skill(self) -> float | None:
+        """Held-out skill over a no-feature baseline; ``None`` when unscored.
+
+        Each role reports one skill term, so the worst of them is the honest
+        summary for a multi-quantile model — a q50 that beats its baseline while
+        the tails do not is not a model you would trade the tails on.
+        """
+        values = [v for k, v in self.metrics.items() if k.endswith("_skill")]
+        return min(values) if values else None
+
+    @property
+    def has_edge(self) -> bool:
+        """Whether this component beat a model that uses no features at all."""
+        skill = self.skill
+        return skill is not None and skill >= MIN_SKILL
+
+    def verdict(self) -> str:
+        if not self.trained:
+            return f"skipped ({self.reason})"
+        skill = self.skill
+        if skill is None:
+            return "trained, UNSCORED (no walk-forward fold could be formed)"
+        if skill >= MIN_SKILL:
+            return f"trained, edge +{skill:.3f} over baseline"
+        return f"trained, NO EDGE ({skill:+.3f} vs baseline)"
 
 
 @dataclass
@@ -113,18 +147,41 @@ class TrainingResult:
 
     @property
     def is_servable(self) -> bool:
-        """Serving needs at least one of the components `predict` reads."""
+        """Serving needs at least one of the components `predict` reads.
+
+        Servable is *not* the same as useful — see :attr:`has_edge`. A group can
+        serve perfectly well and forecast nothing of value.
+        """
         return bool(
             {"direction_30m", "return_quantiles_30m", "volatility"}
             & set(self.trained_roles)
         )
 
+    @property
+    def edge_roles(self) -> tuple[str, ...]:
+        return tuple(r.role for r in self.roles if r.has_edge)
+
+    @property
+    def has_edge(self) -> bool:
+        """Whether any component beat a model that uses no features.
+
+        The question that separates "the pipeline ran" from "the model predicts".
+        A group that trains cleanly, registers, and serves can still be worthless,
+        and nothing about a raw loss value would tell you.
+        """
+        return bool(self.edge_roles)
+
     def describe(self) -> str:
-        trained = ", ".join(self.trained_roles) or "none"
-        text = f"group {self.group_id or '(none)'}: trained {trained}"
-        skipped = [f"{r.role} ({r.reason})" for r in self.roles if not r.trained]
-        if skipped:
-            text += "; skipped: " + ", ".join(skipped)
+        text = f"group {self.group_id or '(none)'}"
+        for outcome in self.roles:
+            text += f"\n  {outcome.role:22s} {outcome.verdict()}"
+        if not self.has_edge:
+            text += (
+                "\n  VERDICT: no component demonstrated edge over a no-feature "
+                "baseline — this group forecasts nothing of value yet"
+            )
+        else:
+            text += f"\n  VERDICT: edge in {', '.join(self.edge_roles)}"
         return text
 
 
@@ -205,25 +262,56 @@ def _fit(
 def _score(
     kind: str, model: Any, rows: Sequence[dict[str, float]], y: Sequence[Any]
 ) -> dict[str, float]:
-    """Score a fitted model on held-out rows, by kind."""
+    """Score a fitted model on held-out rows against a no-edge baseline.
+
+    **A raw loss is not evidence.** A Brier score of 0.257 reads as respectable
+    until you notice that always predicting the base rate scores 0.248 on the
+    same data — the model is *worse than guessing*, and nothing about the number
+    says so. Every metric here is therefore paired with a ``*_skill`` term:
+    the fractional improvement over a baseline that uses no features at all.
+
+    Positive skill means the features carried information. Zero means they did
+    not. Negative means the fitted model is actively worse than the constant it
+    replaced. The baselines are deliberately computed on the *held-out* targets,
+    which is the strictest fair comparison: the baseline is allowed to know the
+    held-out distribution, so beating it cannot be an artifact of drift.
+    """
     if not rows:
         return {}
+    truth = np.asarray(y, dtype=float)
+
     if kind == "classifier":
         p = np.asarray(model.predict_proba(rows), dtype=float)
-        truth = np.asarray(y, dtype=float)
-        return {"brier": float(brier_score(truth, p)), "base_rate": float(truth.mean())}
+        brier = float(brier_score(truth, p))
+        base_rate = float(truth.mean())
+        out = {"brier": brier, "base_rate": base_rate}
+        reference = float(brier_score(truth, np.full_like(truth, base_rate)))
+        if reference > 0.0:
+            out["brier_skill"] = 1.0 - brier / reference
+        return out
+
     if kind == "quantile":
         pred = model.predict(rows)
-        truth = np.asarray(y, dtype=float)
-        return {
-            "pinball_q10": float(pinball_loss(truth, np.asarray(pred["q10"], float), 0.1)),
-            "pinball_q50": float(pinball_loss(truth, np.asarray(pred["q50"], float), 0.5)),
-            "pinball_q90": float(pinball_loss(truth, np.asarray(pred["q90"], float), 0.9)),
-        }
+        out = {}
+        for name, level in (("q10", 0.1), ("q50", 0.5), ("q90", 0.9)):
+            loss = float(pinball_loss(truth, np.asarray(pred[name], float), level))
+            out[f"pinball_{name}"] = loss
+            # Baseline: the unconditional quantile of the held-out targets.
+            flat = float(np.quantile(truth, level))
+            reference = float(pinball_loss(truth, np.full_like(truth, flat), level))
+            if reference > 0.0:
+                out[f"pinball_{name}_skill"] = 1.0 - loss / reference
+        return out
+
     pred = model.predict(rows)
-    truth = np.asarray(y, dtype=float)
     expected = np.asarray(pred["expected_move"], dtype=float)
-    return {"mae": float(np.mean(np.abs(expected - truth)))}
+    mae = float(np.mean(np.abs(expected - truth)))
+    out = {"mae": mae}
+    # Baseline: the unconditional median, which minimizes MAE with no features.
+    reference = float(np.mean(np.abs(float(np.median(truth)) - truth)))
+    if reference > 0.0:
+        out["mae_skill"] = 1.0 - mae / reference
+    return out
 
 
 def _out_of_fold_metrics(
