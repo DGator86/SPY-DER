@@ -18,13 +18,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from dojo_tape import seed_tape
 
 from spy_der.contracts.integration import (
-    MARKET_PACKET_SCHEMA,
-    OUTCOME_PACKET_SCHEMA,
     MarketCandidateView,
-    MarketPacket,
-    OutcomePacket,
 )
 from spy_der.decisions.champion import (
     champion_provenance,
@@ -72,54 +69,12 @@ def _seed_ood_tape(root: Path, *, ticks: int = 40) -> FileMarketExperienceProvid
     when ``forecast_uncertainty`` is high keeps only the winners. That is a real
     edge the trial can measure, rather than one asserted by a hypothesis.
     """
-    (root / "snapshots").mkdir(parents=True)
-    (root / "outcomes").mkdir(parents=True)
-    for session in SESSIONS:
-        for tick in range(ticks):
-            ood = tick % 2 == 0
-            pnl = -0.30 if ood else 0.10
-            snap_id = f"snap-{session}-{tick}"
-            packet = MarketPacket(
-                schema_version=MARKET_PACKET_SCHEMA,
-                snapshot_id=snap_id,
-                session_date=date.fromisoformat(session),
-                symbol="SPY",
-                underlying_price=Decimal("600"),
-                data_quality=1.0,
-                forecast_uncertainty=0.9 if ood else 0.1,
-                candidates=(_candidate(),),
-                forecast={
-                    "labels": {
-                        "realized_pnl": pnl,
-                        "true_direction": "bullish",
-                        "realized_pnl_by_candidate": {"c1": pnl},
-                    }
-                },
-                generated_at=datetime(2026, 7, 22, 15, 0, tzinfo=UTC),
-            )
-            (root / "snapshots" / f"{snap_id}.json").write_text(
-                json.dumps(packet.to_dict()), encoding="utf-8"
-            )
-            outcome = OutcomePacket(
-                schema_version=OUTCOME_PACKET_SCHEMA,
-                snapshot_id=snap_id,
-                session_date=date.fromisoformat(session),
-                symbol="SPY",
-                candidate_id="c1",
-                action="TRADE",
-                realized_pnl=Decimal(str(pnl)),
-                settled=True,
-                labels={
-                    "true_direction": "bullish",
-                    "realized_pnl_by_candidate": {"c1": pnl},
-                },
-                settled_at=datetime(2026, 7, 22, 20, 0, tzinfo=UTC),
-            )
-            (root / "outcomes" / f"{snap_id}.json").write_text(
-                json.dumps(outcome.to_dict()), encoding="utf-8"
-            )
-    (root / "sessions.json").write_text(json.dumps(SESSIONS), encoding="utf-8")
-    return FileMarketExperienceProvider(root)
+    return seed_tape(
+        root,
+        pnl_for_tick=lambda tick: -0.30 if tick % 2 == 0 else 0.10,
+        uncertainty_for_tick=lambda tick: 0.9 if tick % 2 == 0 else 0.1,
+        ticks=ticks,
+    )
 
 
 def _cfg(tmp_path: Path, **kwargs: Any) -> DojoConfig:
@@ -224,6 +179,7 @@ def test_trial_validates_a_change_that_beats_the_champion(tmp_path: Path) -> Non
         "forward_transfer",
         "retention",
         "universe",
+        "archetype_repair",
         "cooldown",
     }
 

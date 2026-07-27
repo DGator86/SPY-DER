@@ -10,12 +10,17 @@ not staged at all — there would be nothing to promote.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from spy_der.decisions.knobs import actionable_knobs
-from spy_der.learning.hypotheses import diagnose, generate_hypotheses
+from spy_der.learning.hypotheses import (
+    WEAK_ARCHETYPE_PREFIX,
+    diagnose,
+    generate_hypotheses,
+)
 from spy_der.learning.optimization import optimize_with_holdout
 from spy_der.learning.promotion import stage_pending_review
 
@@ -83,8 +88,15 @@ def run_learning_cycle(
     evaluator: CandidateEvaluator | None = None,
     sequential_result: dict[str, Any] | None = None,
     recorded_result: dict[str, Any] | None = None,
+    weak_archetypes: Sequence[str] = (),
 ) -> dict[str, Any]:
-    """One adaptive-learning cycle. Stages pending_review only after gates pass."""
+    """One adaptive-learning cycle. Stages pending_review only after gates pass.
+
+    ``weak_archetypes`` are the robustness gaps earlier runs recorded (worst
+    first). They are diagnoses in their own right: a tape that is profitable
+    overall while the panel shows crash underwater is not a system with nothing
+    to learn, and treating it as one is how the gaps stayed open.
+    """
     from spy_der.dojo.config import DojoConfig
     from spy_der.dojo.recorded import run_recorded_phase
 
@@ -100,7 +112,10 @@ def run_learning_cycle(
         authorities=authorities,
         evaluator=evaluator,
     )
-    diagnoses = diagnose(summary if summary.get("status") != "skipped" else None)
+    diagnoses = diagnose(
+        summary if summary.get("status") != "skipped" else None,
+        weak_archetypes=weak_archetypes,
+    )
     hypotheses = generate_hypotheses(diagnoses)
     optimization = optimize_with_holdout(
         hypotheses,
@@ -117,6 +132,7 @@ def run_learning_cycle(
     staged_path: str | None = None
     staged_candidate_id: str | None = None
     staged_changes: dict[str, Any] = {}
+    staged_target: str | None = None
     outcome = "no_change"
     if optimization.status == "ok" and optimization.selected is not None:
         knobs = actionable_knobs(optimization.selected.change)
@@ -134,6 +150,7 @@ def run_learning_cycle(
             )
             staged_candidate_id = candidate_id
             staged_changes = knobs
+            staged_target = optimization.selected.target_archetype
             path = stage_pending_review(
                 configs_dir,
                 candidate_id=candidate_id,
@@ -141,6 +158,7 @@ def run_learning_cycle(
                 payload={
                     "knobs": knobs,
                     "mode": mode,
+                    "target_archetype": staged_target,
                     "hypothesis": optimization.selected.to_dict(),
                     "diagnoses": diagnoses,
                     "optimization": optimization.to_dict(),
@@ -174,14 +192,41 @@ def run_learning_cycle(
         "staged_path": staged_path,
         "staged_candidate_id": staged_candidate_id,
         "staged_changes": staged_changes,
+        "staged_target_archetype": staged_target,
+        "weak_archetypes": list(weak_archetypes),
         "configs_dir": str(Path(configs_dir)),
-        "note": (
-            "challenger staged — promotion trial re-runs the system with it"
-            if outcome == "promotion_recommended"
-            else (
-                "staging blocked by promotion gates"
-                if outcome == "gated"
-                else "no challenger staged"
-            )
-        ),
+        "note": _outcome_note(outcome, staged_target, optimization, diagnoses),
     }
+
+
+def _outcome_note(
+    outcome: str,
+    target: str | None,
+    optimization: Any,
+    diagnoses: Sequence[str],
+) -> str:
+    if outcome == "promotion_recommended":
+        if target:
+            return (
+                f"challenger staged to repair {target} — the promotion trial "
+                "re-runs the system with it and holds it to that archetype"
+            )
+        return "challenger staged — promotion trial re-runs the system with it"
+    if outcome == "gated":
+        return "staging blocked by promotion gates"
+    # "no challenger staged" on its own reads as "nothing to fix" even when the
+    # panel just diagnosed four weak archetypes. Say which wall it hit.
+    gaps = [d for d in diagnoses if d.startswith(WEAK_ARCHETYPE_PREFIX)]
+    reason = "; ".join(getattr(optimization, "notes", ()) or ())
+    status = getattr(optimization, "status", "")
+    if gaps:
+        # Including status == "ok": the optimizer can succeed and still select a
+        # hypothesis with no live knob, which is the case most likely to read as
+        # "nothing to fix" while the panel says otherwise.
+        return (
+            f"{len(gaps)} gap(s) diagnosed but nothing staged — "
+            f"{reason or status or 'no actionable knob'}"
+        )
+    if status != "ok" and reason:
+        return f"no challenger staged — {reason}"
+    return "no challenger staged"

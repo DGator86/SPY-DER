@@ -19,6 +19,7 @@ import argparse
 import datetime as dt
 import json
 import time
+from pathlib import Path as _Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -38,6 +39,11 @@ from spy_der.dojo.recorded import run_recorded_phase
 from spy_der.dojo.reports import persist_dojo_report
 from spy_der.dojo.sequential import SequentialDojoConfig, run_sequential_dojo
 from spy_der.dojo.universe import run_universe_phase
+from spy_der.learning.gaps import (
+    load_archetype_gaps,
+    record_archetype_gaps,
+    weakest_archetypes,
+)
 from spy_der.learning.learner import run_learning_cycle
 from spy_der.learning.memories import append_failure_episode, append_lesson
 from spy_der.learning.promotion import (
@@ -92,6 +98,11 @@ def _run_promotion_phase(
         current_champion=current_champion(cfg.configs_dir),
         thresholds=cfg.promotion_thresholds(),
         incumbent_authority=incumbent,
+        target_archetype=(
+            str(learner.get("staged_target_archetype"))
+            if learner.get("staged_target_archetype")
+            else None
+        ),
     )
     report = trial.to_dict()
     report["enacted"] = False
@@ -317,6 +328,7 @@ def _persist_lessons(
     recorded: dict[str, Any],
     sequential: dict[str, Any],
     universe: dict[str, Any],
+    report_date: str = "",
 ) -> list[str]:
     """Write AI lessons / failure episodes from scored phases."""
     written: list[str] = []
@@ -355,20 +367,22 @@ def _persist_lessons(
         )
         written.append(lesson.lesson_id)
 
-    for arch, metrics in (universe.get("archetype_matrix") or {}).items():
-        mean = metrics.get("mean_session_pnl")
-        if (
-            metrics.get("n_sessions", 0) >= 3
-            and mean is not None
-            and float(mean) < 0
-        ):
-            lesson = append_lesson(
-                state_root,
-                lesson_id=f"weak-archetype-{arch}",
-                text=f"Weak synthetic archetype {arch}: mean session P&L {float(mean):+.4f}",
-                tags=("universe", "weak_archetype", arch),
-            )
-            written.append(lesson.lesson_id)
+    # Robustness gaps are recorded as structured episodes, not only prose: the
+    # next cycle reads them back as diagnoses (spy_der.learning.gaps) and trains
+    # against them. A lesson is kept alongside for the human-readable trail.
+    for gap in record_archetype_gaps(
+        state_root, universe, report_date=str(report_date or "")
+    ):
+        lesson = append_lesson(
+            state_root,
+            lesson_id=f"weak-archetype-{gap.archetype}",
+            text=(
+                f"Weak synthetic archetype {gap.archetype}: mean session P&L "
+                f"{gap.mean_session_pnl:+.4f} over {gap.n_sessions} session(s)"
+            ),
+            tags=("universe", "weak_archetype", gap.archetype),
+        )
+        written.append(lesson.lesson_id)
     return written
 
 
@@ -423,6 +437,13 @@ def _run_dojo_phases(
         configs_dir=cfg.configs_dir,
     )
 
+    # What earlier runs found the system losing money in. These drive what the
+    # learner diagnoses and which archetype a staged change is held to. How many
+    # worlds a weak archetype gets drawn is a separate mechanism — the curriculum
+    # weights the universe phase persists (spy_der.dojo.curriculum_weights).
+    state_root = str(_Path(cfg.configs_dir).parent)
+    remembered_gaps = load_archetype_gaps(state_root)
+
     recorded = run_recorded_phase(
         cfg,
         experience,
@@ -454,6 +475,7 @@ def _run_dojo_phases(
             evaluator=scorer,
             sequential_result=sequential,
             recorded_result=recorded,
+            weak_archetypes=weakest_archetypes(remembered_gaps),
         )
     )
     # If learner staged a challenger, re-score universe with those changes too.
@@ -510,10 +532,9 @@ def _run_dojo_phases(
         incumbent=authority_set.get("champion"),
     )
 
-    from pathlib import Path
-
-    state_root = str(Path(cfg.configs_dir).parent)
-    lessons = _persist_lessons(state_root, recorded, sequential, universe)
+    lessons = _persist_lessons(
+        state_root, recorded, sequential, universe, report_date
+    )
 
     flags = _build_flags(recorded, sequential, learner, universe, promotion)
     summary = _summary_text(recorded, sequential, learner, universe, flags)
@@ -535,6 +556,19 @@ def _run_dojo_phases(
             "learner": learner,
             "universe": universe,
             "promotion": promotion,
+        },
+        "training_targets": {
+            "remembered_gaps": [
+                {
+                    "archetype": gap.archetype,
+                    "mean_session_pnl": round(gap.mean_session_pnl, 6),
+                    "n_sessions": gap.n_sessions,
+                    "observed_at": gap.observed_at.isoformat(),
+                }
+                for gap in remembered_gaps
+            ],
+            "diagnosed": list(learner.get("diagnoses") or []),
+            "targeted_archetype": learner.get("staged_target_archetype"),
         },
         "lessons_written": lessons,
         "elapsed_s": round(time.time() - started, 1),

@@ -17,7 +17,7 @@ persist under ``configs/curriculum_weights.json``.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from spy_der.contracts.integration import MarketPacket, OutcomePacket
@@ -55,6 +55,7 @@ __all__ = [
     "default_catalog",
     "default_provider",
     "run_universe_phase",
+    "seed_weights",
 ]
 
 #: Human labels for archetype ids shown in reports / dashboard copy.
@@ -101,8 +102,24 @@ def _catalog_for(
     return UniverseCatalog(**kwargs)
 
 
+def seed_weights(
+    archetype_weights: dict[str, float] | None = None,
+) -> dict[str, float]:
+    """Generation 0's sampling weights — uniform unless gaps say otherwise.
+
+    Every archetype is present so a gap-weighted dict never silently drops the
+    archetypes it does not mention down to zero draws.
+    """
+    if not archetype_weights:
+        return dict.fromkeys(ARCHETYPES, 1.0)
+    return {a: float(archetype_weights.get(a, 1.0)) for a in ARCHETYPES}
+
+
 def default_catalog(
-    cfg: DojoConfig, generation: int = 0
+    cfg: DojoConfig,
+    generation: int = 0,
+    *,
+    archetype_weights: dict[str, float] | None = None,
 ) -> list[SyntheticUniverseSpec]:
     """The generation's universe specs: full lattice or a weighted sample.
 
@@ -111,6 +128,8 @@ def default_catalog(
     a one-shot sample.
     """
     catalog = _catalog_for(cfg, generation)
+    if archetype_weights:
+        catalog = replace(catalog, archetype_weights=dict(archetype_weights))
     if cfg.full_lattice:
         return catalog.full_lattice()
     return catalog.sample(max(1, cfg.universes_per_gen))
@@ -135,19 +154,47 @@ def _empty_bucket() -> dict[str, Any]:
     }
 
 
+def _outcome_archetype(outcome: OutcomePacket) -> str | None:
+    """The truth archetype the world was actually in when this tick settled.
+
+    A universe is *named* for the archetype it starts in, but the world walks
+    between archetypes as it runs — so bucketing a whole universe's P&L under
+    its starting name attributes crash losses to whatever regime happened to
+    open the session. The outcome labels carry the per-tick truth; use it.
+    """
+    label = (outcome.labels or {}).get("archetype")
+    return str(label) if label else None
+
+
 def _score_packets(
     packets: list[MarketPacket],
     outcomes: list[OutcomePacket],
     authorities: dict[str, DecisionAuthority],
     evaluator: CandidateEvaluator,
-) -> dict[str, dict[str, Any]]:
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, dict[str, Any]]]]:
+    """Score each authority over the universe, and again per truth archetype.
+
+    Deciding is the expensive half and happens once per authority; the
+    per-archetype reports are re-evaluations of those same decisions against
+    outcome subsets, which is what lets the Dojo answer "does this challenger
+    fix *crash*" rather than only "is it better on average".
+    """
+    by_archetype_outcomes: dict[str, list[OutcomePacket]] = {}
+    for outcome in outcomes:
+        archetype = _outcome_archetype(outcome)
+        if archetype:
+            by_archetype_outcomes.setdefault(archetype, []).append(outcome)
+
     scored: dict[str, dict[str, Any]] = {}
+    per_archetype: dict[str, dict[str, dict[str, Any]]] = {}
     for name, authority in authorities.items():
         reset_shadow_tick_cache()
         decisions = [authority.decide(p) for p in packets]
-        report = evaluator.evaluate(decisions, outcomes)
-        scored[name] = report.to_dict()
-    return scored
+        scored[name] = evaluator.evaluate(decisions, outcomes).to_dict()
+        for archetype, subset in by_archetype_outcomes.items():
+            report = evaluator.evaluate(decisions, subset).to_dict()
+            per_archetype.setdefault(archetype, {})[name] = report
+    return scored, per_archetype
 
 
 def _generate(
@@ -310,6 +357,7 @@ def run_universe_phase(
     # Cumulative across the whole phase — robustness matrix / flags / lessons.
     per_archetype: dict[str, dict[str, Any]] = {}
     authority_totals: dict[str, dict[str, Any]] = {}
+    archetype_authorities: dict[str, dict[str, dict[str, Any]]] = {}
     coverage: dict[str, dict[str, int]] = {}
     n_packets = 0
     n_scored_universes = 0
@@ -359,7 +407,9 @@ def run_universe_phase(
             if not outcomes:
                 continue
 
-            scored = _score_packets(packets, outcomes, authorities, scorer)
+            scored, scored_by_archetype = _score_packets(
+                packets, outcomes, authorities, scorer
+            )
             n_scored_universes += 1
             champ = scored.get("champion") or next(iter(scored.values()))
             pnl = float(champ.get("total_pnl") or 0.0)
@@ -386,6 +436,21 @@ def run_universe_phase(
                     report.get("trades") or report.get("n_matched") or 0
                 )
                 tot["n_universes"] += 1
+
+            # Per-archetype, per-authority: the panel the promotion trial's
+            # archetype_repair gate reads to ask "did this candidate fix crash",
+            # rather than only "is it better on average".
+            for archetype, reports in scored_by_archetype.items():
+                slot = archetype_authorities.setdefault(archetype, {})
+                for name, report in reports.items():
+                    tot = slot.setdefault(
+                        name, {"total_pnl": 0.0, "trades": 0, "wins": 0.0}
+                    )
+                    tot["total_pnl"] += float(report.get("total_pnl") or 0.0)
+                    matched = int(report.get("trades") or report.get("n_matched") or 0)
+                    tot["trades"] += matched
+                    if report.get("win_rate") is not None and matched:
+                        tot["wins"] += float(report["win_rate"]) * matched
 
         # Coverage stays cumulative (unvisited means never seen this run).
         # Performance scores for the next draw are generation-local.
@@ -440,6 +505,22 @@ def run_universe_phase(
         "generation_plans": generation_plans,
         "curriculum_inertia": CURRICULUM_INERTIA,
     }
+    if archetype_authorities:
+        result["archetype_authorities"] = {
+            archetype: {
+                name: {
+                    "total_pnl": round(float(tot["total_pnl"]), 6),
+                    "trades": int(tot["trades"]),
+                    "win_rate": (
+                        round(float(tot["wins"]) / int(tot["trades"]), 6)
+                        if int(tot["trades"])
+                        else None
+                    ),
+                }
+                for name, tot in sorted(reports.items())
+            }
+            for archetype, reports in sorted(archetype_authorities.items())
+        }
     if coverage_matrix is not None:
         result["coverage"] = coverage_matrix.to_dict()
         result["coverage_cells_visited"] = coverage_matrix.visited_cells
@@ -452,8 +533,13 @@ def run_universe_phase(
             "use spy_der.synthetic for the (archetype x regime) matrix"
         )
 
+    # An unscored phase produces a plan with no evidence behind it. Persisting
+    # that would dilute the pressure earlier scored runs accumulated, so the
+    # plan is still reported — it just does not become the next run's seed.
+    scored_this_run = n_scored_universes > 0
     if latest_plan is not None:
         result["evolution"] = latest_plan.to_dict()
+    if latest_plan is not None and scored_this_run:
         losing = _losing_archetypes(matrix, min_sessions=1)
         saved = save_curriculum_weights(
             cfg.configs_dir,
@@ -468,6 +554,10 @@ def run_universe_phase(
         )
         if saved is not None:
             result["curriculum_weights_path"] = str(saved)
+    elif latest_plan is not None:
+        result["curriculum_weights_note"] = (
+            "plan not persisted — no universe scored this run"
+        )
 
     result["remediation"] = _remediation_block(
         latest_plan,
