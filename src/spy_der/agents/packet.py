@@ -5,12 +5,18 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from decimal import Decimal
 
+from spy_der.agents.market_context import (
+    build_forecast_context,
+    build_market_context,
+)
 from spy_der.agents.security import assert_no_secrets
 from spy_der.contracts.agents import (
     AgentCandidateView,
     AgentDecisionPacket,
     DeploymentContext,
     ExitPolicySummary,
+    ForecastContext,
+    MarketContext,
     ReadOnlyLegSummary,
     SnapshotSummary,
     make_packet_id,
@@ -18,7 +24,9 @@ from spy_der.contracts.agents import (
 )
 from spy_der.contracts.candidates import Candidate, CandidateUniverse
 from spy_der.contracts.economics import CandidateEconomics
+from spy_der.contracts.forecasts import MarketForecastBundle
 from spy_der.contracts.market import CanonicalMarketSnapshot
+from spy_der.contracts.models import FeatureBundle
 from spy_der.contracts.policies import PolicyDecisionView, PolicyDisagreement
 from spy_der.contracts.serialization import to_canonical_json
 from spy_der.contracts.value import CandidateValueForecast, SnapshotRanking
@@ -115,6 +123,10 @@ def build_agent_decision_packet(
     deployment: DeploymentContext | None = None,
     data_quality: float = 1.0,
     forecast_uncertainty: float = 0.0,
+    features: FeatureBundle | None = None,
+    forecast: MarketForecastBundle | None = None,
+    market_context: MarketContext | None = None,
+    forecast_context: ForecastContext | None = None,
 ) -> AgentDecisionPacket:
     """Assemble a processed-output packet. Raises if secrets leak into payload."""
     eco = economics or {}
@@ -144,7 +156,16 @@ def build_agent_decision_packet(
         underlying_price=snapshot.underlying_price,
         minutes_to_close=snapshot.minutes_to_close,
     )
+    # The market state the decision is actually made against. Built here rather
+    # than required from the caller so every existing call site gains it.
+    market = market_context or build_market_context(snapshot, features=features)
+    forecast_view = forecast_context or build_forecast_context(forecast)
+
     evidence = tuple(sorted({eid for v in views for eid in v.evidence_ids}))
+    if features is not None:
+        evidence = tuple(sorted({*evidence, f"features:{features.bundle_id}"}))
+    if forecast_view is not None and forecast_view.forecast_id:
+        evidence = tuple(sorted({*evidence, f"forecast:{forecast_view.forecast_id}"}))
     body = {
         "snapshot_id": summary.snapshot_id,
         "symbol": summary.symbol,
@@ -155,6 +176,13 @@ def build_agent_decision_packet(
         "risk_max_size_scalar": risk_max_size_scalar,
         "policy_names": [p.policy_name for p in policy_views],
         "deployment_id": (deployment or DeploymentContext()).deployment_id,
+        # The context participates in the packet hash: two packets with the same
+        # candidates but different market state are different decisions, and an
+        # identical hash would make them indistinguishable in the journal.
+        "market_context": to_canonical_json(market),
+        "forecast_context": (
+            to_canonical_json(forecast_view) if forecast_view is not None else None
+        ),
     }
     # Security: packet body must not carry secrets.
     assert_no_secrets(body)
@@ -178,4 +206,6 @@ def build_agent_decision_packet(
         data_quality=data_quality,
         forecast_uncertainty=forecast_uncertainty,
         evidence_ids=evidence,
+        market_context=market,
+        forecast_context=forecast_view,
     )
