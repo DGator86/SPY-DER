@@ -1,0 +1,46 @@
+--- app.js
++++ app.js
+@@ -4067,18 +4067,32 @@
+     return ["No change", "dim"];
+   }
+ 
+-  /* ---- why the run stopped where it did ----
+-     SPY-DER attaches a `human` block to every report (headline / data_story /
+-     stop_reason / next_step). The stop reason is the one thing this renderer
+-     cannot derive: "it stopped because the nightly budget ran out, not because
+-     everything is fixed" is a fact about the schedule, not about the numbers.
+-     Read it rather than restate it, so the two repos do not drift apart. */
++  /* ---- purpose + data story (always visible) ----
++     Prefer SPY-DER's `human` block so the two repos do not drift. Fall back to
++     the product truth when an older report lacks it: stored tape + synthetic
++     worlds, fixed nightly budget, no grind-until-green. */
+   function renderDojoStopReason(human) {
+-    if (!human || typeof human !== "object") return "";
+-    const lines = [human.stop_reason, human.next_step, human.data_story]
+-      .filter((s) => typeof s === "string" && s.trim());
+-    if (!lines.length) return "";
+-    return `<p class="dojo-stop">${lines.map((s) => esc(s)).join(" ")}</p>`;
++    const h = (human && typeof human === "object") ? human : {};
++    const what = (typeof h.what_ran === "string" && h.what_ran.trim())
++      ? h.what_ran.trim()
++      : "Checked stored real market sessions, then synthetic stress worlds.";
++    const data = (typeof h.data_story === "string" && h.data_story.trim())
++      ? h.data_story.trim()
++      : "Used stored real market sessions plus generated stress worlds. Did not trade or score against the live market during this run.";
++    const stop = (typeof h.stop_reason === "string" && h.stop_reason.trim())
++      ? h.stop_reason.trim()
++      : "Finished its fixed nightly budget. It does not keep running until results look great.";
++    const next = (typeof h.next_step === "string" && h.next_step.trim())
++      ? h.next_step.trim()
++      : "";
++    const rows = [
++      ["What this checked", what],
++      ["Data used", data],
++      ["Why it stopped", stop],
++    ];
++    if (next) rows.push(["Next", next]);
++    return `<div class="dojo-stop">${rows.map(([label, body]) =>
++      `<p class="tj-sub"><b>${esc(label)}.</b> ${esc(body)}</p>`).join("")}</div>`;
+   }
+ 
+   /* ---- where the system is weak ---- */
