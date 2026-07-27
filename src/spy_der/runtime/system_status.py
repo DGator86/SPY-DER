@@ -34,6 +34,10 @@ EXPECTED_SERVICES: dict[str, str] = {
     "market": "provider ingestion → market/",
     "engine": "deterministic stages → candidates/ + journal",
     "settlement": "session settlement → settlements/ + journal",
+    # Decision boundary that 0DTE POSTs to. Without this, market/engine/settlement
+    # can all read "OK" while SPY-DER is offline on the dashboard — the exact
+    # failure mode the System panel exists to catch.
+    "agent": "decision HTTP boundary → :8787 + live_state",
 }
 
 

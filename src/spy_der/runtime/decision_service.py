@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import threading
+import time
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -33,11 +35,12 @@ from spy_der.decisions.shadow import (
     ShadowCandidateView,
     decide_shadow_tick,
 )
-from spy_der.dojo.config import DEFAULT_LIVE_STATE, DEFAULT_REPORTS_DIR
+from spy_der.dojo.config import DEFAULT_LIVE_STATE, DEFAULT_REPORTS_DIR, DEFAULT_STATE_ROOT
 from spy_der.integrations.zerodte.result_publisher import (
     enrich_with_dojo_status,
     publish_dashboard_packet,
 )
+from spy_der.runtime.heartbeat import write_heartbeat
 
 __all__ = [
     "DEFAULT_HOST",
@@ -49,6 +52,37 @@ __all__ = [
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
+
+#: How often the idle listener republishes liveness. Request handling also
+#: refreshes the heartbeat, so a busy agent stays well inside 3x freshness.
+AGENT_HEARTBEAT_INTERVAL = 15.0
+
+
+def _publish_agent_heartbeat(
+    *, detail: str = "listening", extra: dict[str, Any] | None = None
+) -> None:
+    """Surface agent liveness on /v1/system. Best-effort — never raises."""
+    write_heartbeat(
+        DEFAULT_STATE_ROOT,
+        "agent",
+        interval_seconds=AGENT_HEARTBEAT_INTERVAL,
+        detail=detail,
+        extra=extra,
+    )
+
+
+def _start_agent_heartbeat_loop() -> None:
+    """Keep publishing while idle so a silent listener is not never_seen."""
+
+    def _loop() -> None:
+        while True:
+            _publish_agent_heartbeat(detail="listening")
+            time.sleep(AGENT_HEARTBEAT_INTERVAL)
+
+    thread = threading.Thread(
+        target=_loop, name="spy-der-agent-heartbeat", daemon=True
+    )
+    thread.start()
 
 
 def market_packet_to_decision(market: MarketPacket) -> DashboardPacket:
@@ -155,6 +189,14 @@ def handle_decision_request(payload: dict[str, Any]) -> dict[str, Any]:
         publish_dashboard_packet(decision, path=DEFAULT_LIVE_STATE)
     except OSError:
         pass
+    _publish_agent_heartbeat(
+        detail=f"last={decision.action}",
+        extra={
+            "last_action": decision.action,
+            "snapshot_id": decision.snapshot_id,
+            "symbol": decision.symbol,
+        },
+    )
     response = DecisionResponse(
         schema_version=DECISION_RESPONSE_SCHEMA,
         decision=decision,
@@ -181,6 +223,7 @@ class _DecisionHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path in {"/health", "/v1/health"}:
+            _publish_agent_heartbeat(detail="health_ok")
             self._send(200, {"status": "ok", "service": "spy-der-decision"})
             return
         self._send(404, {"error": "not_found"})
@@ -213,6 +256,8 @@ class _DecisionHandler(BaseHTTPRequestHandler):
 
 
 def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
+    _publish_agent_heartbeat(detail="starting")
+    _start_agent_heartbeat_loop()
     server = ThreadingHTTPServer((host, port), _DecisionHandler)
     print(f"spy-der decision service listening on http://{host}:{port}")
     server.serve_forever()

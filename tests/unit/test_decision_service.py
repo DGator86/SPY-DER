@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from pathlib import Path
 
 from spy_der.contracts.integration import (
     DECISION_REQUEST_SCHEMA,
@@ -16,6 +17,7 @@ from spy_der.contracts.integration import (
 from spy_der.decisions.shadow import reset_shadow_tick_cache
 from spy_der.integrations.zerodte.client import HttpDecisionClient
 from spy_der.runtime.decision_service import handle_decision_request
+from spy_der.runtime.heartbeat import read_heartbeats
 
 
 def setup_function() -> None:
@@ -86,3 +88,25 @@ def test_http_client_with_injected_transport() -> None:
     decision = client.decide(_market())
     assert decision.schema_version == "spyder.dashboard.v1"
     assert decision.mode == "shadow"
+
+
+def test_decision_request_publishes_agent_heartbeat(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A dead agent must show up on /v1/system — so every decision refreshes it."""
+    monkeypatch.setattr(
+        "spy_der.runtime.decision_service.DEFAULT_STATE_ROOT", str(tmp_path)
+    )
+    monkeypatch.setattr(
+        "spy_der.runtime.decision_service.DEFAULT_LIVE_STATE",
+        str(tmp_path / "live_state.json"),
+    )
+    monkeypatch.setattr(
+        "spy_der.runtime.decision_service.DEFAULT_REPORTS_DIR",
+        str(tmp_path / "reports" / "dojo"),
+    )
+    handle_decision_request(_market(with_candidate=False).to_dict())
+    entries = {e["service"]: e for e in read_heartbeats(tmp_path)}
+    assert "agent" in entries
+    assert entries["agent"]["state"] == "ok"
+    assert str(entries["agent"].get("detail", "")).startswith("last=")

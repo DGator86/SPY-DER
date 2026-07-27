@@ -87,8 +87,9 @@ def test_unreadable_heartbeat_is_unknown_not_missing(tmp_path: Path) -> None:
 def test_a_service_that_never_ran_is_reported_not_omitted(tmp_path: Path) -> None:
     """Silence about a service that should exist is the failure being hidden."""
     names = {s["service"]: s for s in _status(tmp_path)["services"]}
-    assert set(names) >= {"market", "engine", "settlement"}
+    assert set(names) >= {"market", "engine", "settlement", "agent"}
     assert names["market"]["state"] == "never_seen"
+    assert names["agent"]["state"] == "never_seen"
 
 
 def test_each_service_carries_its_purpose(tmp_path: Path) -> None:
@@ -113,7 +114,12 @@ def test_an_unexpected_service_is_still_reported(tmp_path: Path) -> None:
 # Overall banner — worst-of                                                   #
 # --------------------------------------------------------------------------- #
 def _healthy(root: Path) -> None:
-    for name, interval in (("market", 60), ("engine", 30), ("settlement", 300)):
+    for name, interval in (
+        ("market", 60),
+        ("engine", 30),
+        ("settlement", 300),
+        ("agent", 15),
+    ):
         write_heartbeat(root, name, interval_seconds=interval, now=NOW)
     market = root / "market"
     market.mkdir(parents=True, exist_ok=True)
@@ -159,9 +165,31 @@ def test_a_late_service_warns(tmp_path: Path) -> None:
 
 def test_no_recordings_warns_even_with_live_heartbeats(tmp_path: Path) -> None:
     """A running feed recording nothing is exactly the failure worth surfacing."""
-    for name, interval in (("market", 60), ("engine", 30), ("settlement", 300)):
+    for name, interval in (
+        ("market", 60),
+        ("engine", 30),
+        ("settlement", 300),
+        ("agent", 15),
+    ):
         write_heartbeat(tmp_path, name, interval_seconds=interval, now=NOW)
     assert _status(tmp_path)["overall"] == "warn"
+
+
+def test_missing_agent_heartbeat_degrades_even_when_pipeline_is_green(
+    tmp_path: Path,
+) -> None:
+    """market/engine/settlement OK must not hide a dead decision service."""
+    for name, interval in (("market", 60), ("engine", 30), ("settlement", 300)):
+        write_heartbeat(tmp_path, name, interval_seconds=interval, now=NOW)
+    market = tmp_path / "market"
+    market.mkdir(parents=True, exist_ok=True)
+    (market / "2026-07-22.jsonl").write_text(
+        json.dumps({"snapshot": {"timestamp": NOW.isoformat()}}) + "\n", encoding="utf-8"
+    )
+    status = _status(tmp_path)
+    names = {s["service"]: s for s in status["services"]}
+    assert names["agent"]["state"] == "never_seen"
+    assert status["overall"] == "degraded"
 
 
 # --------------------------------------------------------------------------- #
