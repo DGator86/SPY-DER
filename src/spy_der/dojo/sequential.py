@@ -162,8 +162,8 @@ def run_sequential_dojo(
         result["champion_scores"] = computed_champion
         result["baseline_scores"] = computed_baseline
         result["note"] = (
-            "sequential scoring ran DecisionAuthority over blind days "
-            "(leak-free warm/test split)"
+            "Scored on held-out days the model had not trained on "
+            "(leak-free blind-day check)."
         )
 
     # Retention panel: re-score early sessions after the curriculum walk.

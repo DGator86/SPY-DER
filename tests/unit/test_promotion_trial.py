@@ -422,7 +422,7 @@ def test_run_dojo_promotes_without_a_human(tmp_path: Path) -> None:
     assert promotion["status"] == "validated", promotion["note"]
     assert promotion["enacted"] is True
     assert any(f["flag"] == "champion_promoted" for f in out["flags"])
-    assert "learner: promoted" in out["summary"]
+    assert "Learner promoted a safer setting" in out["summary"]
 
     champion = current_champion(tmp_path / "configs")
     assert champion is not None

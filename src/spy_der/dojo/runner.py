@@ -28,6 +28,7 @@ from spy_der.decisions.shadow import ai_context
 from spy_der.dojo.authority import default_authorities
 from spy_der.dojo.config import DEFAULT_CONFIGS_DIR, DEFAULT_REPORTS_DIR, DojoConfig
 from spy_der.dojo.evaluation import OutcomeCandidateEvaluator
+from spy_der.dojo.human import build_human_report
 from spy_der.dojo.protocols import (
     CandidateEvaluator,
     DecisionAuthority,
@@ -41,7 +42,6 @@ from spy_der.dojo.universe import run_universe_phase
 from spy_der.learning.gaps import (
     load_archetype_gaps,
     record_archetype_gaps,
-    sampling_weights,
     weakest_archetypes,
 )
 from spy_der.learning.learner import run_learning_cycle
@@ -251,6 +251,17 @@ def _build_flags(
     return flags
 
 
+def _human_status(value: Any, *, ok: str = "OK", bad: str = "needs attention") -> str:
+    status = str(value or "unknown").lower()
+    if status in {"ok", "passed", "pass"}:
+        return ok
+    if status in {"skipped", "insufficient_data"}:
+        return "skipped"
+    if status in {"unscored", "failed", "fail", "error"}:
+        return bad
+    return status.replace("_", " ")
+
+
 def _summary_text(
     recorded: dict[str, Any],
     sequential: dict[str, Any],
@@ -258,28 +269,57 @@ def _summary_text(
     universe: dict[str, Any],
     flags: list[dict[str, str]],
 ) -> str:
+    """Plain-English one-liner for dashboards — not a dump of phase tokens."""
     promoted = any(f["flag"] == "champion_promoted" for f in flags)
     rejected = next(
         (f for f in flags if f["flag"].startswith("promotion_rejected")), None
     )
-    learner_state = str(learner.get("outcome", learner.get("status")))
+
     if promoted:
-        learner_state = "promoted"
+        learner_part = "Learner promoted a safer setting"
     elif rejected:
-        learner_state = f"{learner_state} → rejected ({rejected['flag'].split(':')[-1]})"
-    parts = [
-        f"recorded tape: {recorded.get('status')}",
-        f"sequential: {sequential.get('status')}",
-        f"learner: {learner_state}",
-    ]
-    if universe.get("status") == "ok":
-        weak = sum(1 for f in flags if f["flag"].startswith("weak_archetype"))
-        parts.append(
-            f"universe sparring: {universe.get('n_universes', 0)} universes, "
-            f"{weak} weak archetype(s)"
-        )
+        gate = rejected["flag"].split(":")[-1].replace("_", " ")
+        learner_part = f"Learner change blocked ({gate})"
     else:
-        parts.append(f"universe sparring: {universe.get('status')}")
+        outcome = str(learner.get("outcome", learner.get("status") or "idle"))
+        if outcome in {"promotion_recommended", "staged"}:
+            learner_part = "Learner staged a change"
+        elif outcome in {"no_change", "gated", "hold"}:
+            learner_part = "Learner held the champion"
+        else:
+            learner_part = f"Learner: {outcome.replace('_', ' ')}"
+
+    parts = [
+        f"Real tape {_human_status(recorded.get('status'))}",
+        f"Blind days {_human_status(sequential.get('status'))}",
+        learner_part,
+    ]
+
+    remediation = universe.get("remediation") or {}
+    headline = remediation.get("headline")
+    if universe.get("status") == "ok":
+        focus_rows = remediation.get("focus") or []
+        if not isinstance(focus_rows, list):
+            focus_rows = []
+        n_univ = int(universe.get("n_universes") or 0)
+        if focus_rows:
+            labels = [
+                str(row.get("label") or row.get("archetype") or "?").replace("_", " ")
+                for row in focus_rows[:2]
+                if isinstance(row, dict)
+            ]
+            focus = ", ".join(labels) if labels else f"{len(focus_rows)} market type(s)"
+            parts.append(
+                f"Sparring: {n_univ} worlds, next focus {focus}"
+            )
+        elif headline:
+            parts.append(f"Sparring: {n_univ} worlds — {headline.rstrip('.')}")
+        else:
+            parts.append(f"Sparring: {n_univ} worlds, no elevated sampling targets")
+    elif universe.get("status") == "skipped":
+        parts.append("Sparring skipped (no tape yet)")
+    else:
+        parts.append(f"Sparring {_human_status(universe.get('status'))}")
     return " · ".join(parts)
 
 
@@ -476,7 +516,6 @@ def _run_dojo_phases(
             synthetic,
             authorities=universe_authorities,
             evaluator=scorer,
-            archetype_weights=sampling_weights(remembered_gaps),
         )
 
     # Phase 5 — the recommendation has to earn itself: re-run recorded tape and
@@ -498,6 +537,17 @@ def _run_dojo_phases(
 
     flags = _build_flags(recorded, sequential, learner, universe, promotion)
     summary = _summary_text(recorded, sequential, learner, universe, flags)
+    config_blob = {
+        "wf_folds": cfg.wf_folds,
+        "learn_trials": cfg.learn_trials,
+        "universes_per_gen": cfg.universes_per_gen,
+        "generations": cfg.generations,
+        "full_lattice": cfg.full_lattice,
+        "universe_days": cfg.universe_days,
+        "recent_days": cfg.recent_days,
+        "catalog_seed": cfg.catalog_seed,
+        "authorities": sorted(authority_set.keys()),
+    }
     metrics = {
         "phases": {
             "recorded": recorded,
@@ -521,29 +571,31 @@ def _run_dojo_phases(
         },
         "lessons_written": lessons,
         "elapsed_s": round(time.time() - started, 1),
-        "config": {
-            "wf_folds": cfg.wf_folds,
-            "learn_trials": cfg.learn_trials,
-            "universes_per_gen": cfg.universes_per_gen,
-            "generations": cfg.generations,
-            "full_lattice": cfg.full_lattice,
-            "universe_days": cfg.universe_days,
-            "recent_days": cfg.recent_days,
-            "catalog_seed": cfg.catalog_seed,
-            "authorities": sorted(authority_set.keys()),
-        },
+        "config": config_blob,
     }
+    human = build_human_report(
+        recorded=recorded,
+        sequential=sequential,
+        learner=learner,
+        universe=universe,
+        promotion=promotion,
+        flags=flags,
+        summary=summary,
+        config=config_blob,
+    )
     paths = persist_dojo_report(
         cfg.reports_dir,
         report_date=report_date,
         summary=summary,
         flags=flags,
         metrics=metrics,
+        human=human,
     )
     return {
         "report_date": report_date,
         "summary": summary,
         "flags": flags,
+        "human": human,
         "metrics": metrics,
         **paths,
     }

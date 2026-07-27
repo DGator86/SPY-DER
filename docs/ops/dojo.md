@@ -3,6 +3,21 @@
 > Migrated ownership: the Dojo belongs to SPY-DER, not 0DTE.
 > See `docs/OWNERSHIP_BOUNDARY.md` and `docs/DOJO_MIGRATION.md`.
 
+## What it is (read this first)
+
+The Vercel **Dojo** tab shows SPY-DER Dojo reports. Dojo is a **nightly exam +
+study plan**, not an open-ended trainer:
+
+| Question | Answer |
+|---|---|
+| What data? | **Stored real sessions** (`inbox/experience`) plus **synthetic stress worlds**. Not the live market feed. |
+| Does it trade live? | **No.** Live knobs change only after a validated promotion writes `champion.json`. |
+| Why stop before “great”? | Fixed timer budgets (e.g. daily: 6 worlds × 1 generation). Weak market types raise weights for the **next** generation / next night — the run does not loop until every archetype is green. |
+
+Each report includes a `human` block (`headline`, `data_story`, `stop_reason`,
+`next_step`) for dashboards. The Vercel tab rewrite lives in
+[`integrations/zerodte/dojo-tab-human-ui.patch`](../../integrations/zerodte/dojo-tab-human-ui.patch).
+
 The Dojo compresses market experience into one run:
 
 1. **recorded** — walk `MarketExperienceProvider`; score champion / challenger / baseline via `CandidateEvaluator`
@@ -122,6 +137,32 @@ sudo systemctl enable --now spy-der-dojo-daily.timer \
                             spy-der-dojo-weekly.timer
 ```
 
+## Gap-driven sparring
+
+Universe sparring builds a per-archetype robustness matrix (P&L / win rate by
+market type). After each generation the Dojo re-weights the catalog toward the
+weakest and least-visited archetypes (`spy_der.synthetic.evolution`), so the
+next draws spend time where the champion is worst — that is the point of the
+Dojo.
+
+- **Intra-run:** with `--generations N` (N > 1), generation *k+1* samples from
+  weights evolved from generation *k*'s **local** scores (not the cumulative
+  matrix). Coverage/unvisited cells stay cumulative across the run.
+- **Curriculum inertia:** each new plan blends with the prior
+  (`w = (1-a)*w_hat + a*w_prior`, a ≈ 0.35) so a large measurement pass cannot
+  erase accumulated gap pressure.
+- **Across runs:** the final plan is written to
+  `configs/curriculum_weights.json` and loaded as the seed weights of the next
+  Dojo run.
+- **Weekly full lattice:** generation 0 still enumerates every cell
+  (measurement — sampling weights do not apply). The plan after that
+  measurement still blends in the prior curriculum; generations ≥ 1 then
+  sample with those blended weights.
+
+The report’s `metrics.phases.universe.remediation` block lists focus
+archetypes ranked by the evolution plan, each with reasons (negative P&L,
+low directional accuracy, unvisited regimes, prior curriculum carry, …).
+
 ## Reports
 
 A run writes a stamped report plus a `latest.json` pointer:
@@ -129,10 +170,11 @@ A run writes a stamped report plus a `latest.json` pointer:
 ```
 /var/lib/spy-der/reports/dojo/dojo_YYYYMMDD_HHMMSS.json
 /var/lib/spy-der/reports/dojo/latest.json
+/var/lib/spy-der/configs/curriculum_weights.json
 ```
 
-Both are published world-readable (0644, minus the operator umask) because the
-dashboard API and the 0DTE adapter read them as different users.
+Both report files are published world-readable (0644, minus the operator umask)
+because the dashboard API and the 0DTE adapter read them as different users.
 
 ## Serving the report
 

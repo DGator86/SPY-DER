@@ -461,50 +461,370 @@ function renderHealth(body) {
   return box;
 }
 
-function renderDojo(dojo, validation) {
-  const box = panel("Dojo & parity");
-  if (dojo) {
-    box.appendChild(
-      kv([
-        ["Dojo run", dojo.report_date],
-        ["Generated", dojo.generated_at ? ageLabel(dojo.generated_at) : null],
-        ["Summary", dojo.summary],
-      ])
+/* Human labels for synthetic market archetypes. Keep in sync with
+ * spy_der.synthetic.archetypes.ARCHETYPES — unknown ids fall back to spaces. */
+const ARCHETYPE_LABELS = {
+  calm_pin: "Calm pin",
+  grind_up: "Grind up",
+  grind_down: "Grind down",
+  range_chop: "Range chop",
+  vol_expansion: "Vol expansion",
+  squeeze_melt_up: "Squeeze melt-up",
+  crash: "Crash",
+  gap_shock: "Gap shock",
+};
+
+function humanLabel(raw) {
+  const key = text(raw, "");
+  if (!key || key === "—") return "—";
+  if (ARCHETYPE_LABELS[key]) return ARCHETYPE_LABELS[key];
+  return key.replace(/_/g, " ");
+}
+
+function phasesOf(dojo) {
+  const metrics = dojo && dojo.metrics && typeof dojo.metrics === "object" ? dojo.metrics : {};
+  const phases = metrics.phases && typeof metrics.phases === "object" ? metrics.phases : {};
+  return {
+    recorded: phases.recorded && typeof phases.recorded === "object" ? phases.recorded : {},
+    sequential: phases.sequential && typeof phases.sequential === "object" ? phases.sequential : {},
+    learner: phases.learner && typeof phases.learner === "object" ? phases.learner : {},
+    universe: phases.universe && typeof phases.universe === "object" ? phases.universe : {},
+    promotion: phases.promotion && typeof phases.promotion === "object" ? phases.promotion : {},
+  };
+}
+
+function dojoVerdict(dojo, phases) {
+  const flags = Array.isArray(dojo.flags) ? dojo.flags : [];
+  const flagNames = flags.map((f) => text(f && f.flag ? f.flag : f));
+  const promoted = flagNames.some((f) => /^champion_promoted/.test(f));
+  const rejected = flagNames.find((f) => /^promotion_rejected/.test(f));
+  const remediation = phases.universe.remediation || {};
+  const focus = Array.isArray(remediation.focus) ? remediation.focus : [];
+
+  if (promoted) {
+    return ["ok", "Promoted a safer setting", "The re-run beat the champion on every gate."];
+  }
+  if (rejected) {
+    const gate = rejected.split(":").slice(1).join(" ").replace(/_/g, " ") || "a gate";
+    return ["warn", "Change held back", `Blocked by ${gate} — champion unchanged.`];
+  }
+  if (focus.length) {
+    const names = focus
+      .slice(0, 2)
+      .map((row) => humanLabel(row.label || row.archetype))
+      .join(", ");
+    return [
+      "warn",
+      "Gaps found — next sparring will focus there",
+      remediation.headline || `Sampling will overweight ${names}.`,
+    ];
+  }
+  if (phases.universe.status === "skipped") {
+    return ["", "Sparring skipped", "Need more real market tape before synthetic worlds run."];
+  }
+  if (dojo.summary) {
+    return ["ok", "Dojo run complete", text(dojo.summary)];
+  }
+  return ["", "Dojo run complete", "No major flags this run."];
+}
+
+function stageCard(name, value, detail, tone) {
+  const card = el("div", "spyder-tab__stage" + (tone ? ` spyder-tab__stage--${tone}` : ""));
+  card.appendChild(el("div", "spyder-tab__stage-name", name));
+  card.appendChild(el("div", "spyder-tab__stage-value", text(value)));
+  if (detail) card.appendChild(el("div", "spyder-tab__stage-detail", detail));
+  return card;
+}
+
+function recordedStage(recorded) {
+  const status = text(recorded.status, "unknown");
+  if (status === "insufficient_data" || status === "skipped") {
+    return stageCard("Real market tape", "Not enough yet", "Need more settled sessions.", "warn");
+  }
+  const evaluation = recorded.evaluation && typeof recorded.evaluation === "object" ? recorded.evaluation : {};
+  const pnl = evaluation.total_pnl;
+  const wr = evaluation.win_rate;
+  const trades = evaluation.trades != null ? evaluation.trades : evaluation.n_matched;
+  const tone = num(pnl) != null && num(pnl) < 0 ? "bad" : status === "ok" ? "ok" : "warn";
+  const value =
+    num(pnl) != null ? money(pnl) : status === "ok" ? "OK" : humanLabel(status);
+  const detail = [
+    wr != null ? `win rate ${pct(wr)}` : null,
+    trades != null ? `${trades} trades` : null,
+    recorded.n_sessions != null ? `${recorded.n_sessions} sessions` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return stageCard("Real market tape", value, detail || "Scored against settled outcomes.", tone);
+}
+
+function sequentialStage(sequential) {
+  const status = text(sequential.status, "unknown");
+  if (status === "skipped" || status === "insufficient_data") {
+    return stageCard("Blind-day check", "Skipped", "Not enough days for a leak-free walk.", "");
+  }
+  const ft = num(sequential.mean_forward_transfer);
+  const retention = sequential.retention && typeof sequential.retention === "object" ? sequential.retention : {};
+  const retentionOk = retention.ok !== false;
+  let tone = "ok";
+  let value = "Held up";
+  if (ft != null && ft < 0) {
+    tone = "bad";
+    value = "Behind baseline";
+  } else if (!retentionOk) {
+    tone = "bad";
+    value = "Forgot prior days";
+  } else if (status !== "ok") {
+    tone = "warn";
+    value = humanLabel(status);
+  }
+  const detail = [
+    ft != null ? `transfer ${ft >= 0 ? "+" : ""}${ft.toFixed(2)}` : null,
+    retentionOk ? "retention OK" : "retention slipped",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return stageCard("Blind-day check", value, detail || "Leak-free forward walk.", tone);
+}
+
+function learnerStage(learner, promotion) {
+  const outcome = text(learner.outcome || learner.status, "idle");
+  const enacted = promotion && promotion.enacted === true;
+  if (enacted || outcome === "promoted") {
+    const knobs = promotion && promotion.staged_changes ? Object.keys(promotion.staged_changes) : [];
+    return stageCard(
+      "Adaptive change",
+      "Promoted",
+      knobs.length ? `Now live: ${knobs.map(humanLabel).join(", ")}` : "Champion updated after a winning re-run.",
+      "ok"
     );
-    const flags = Array.isArray(dojo.flags) ? dojo.flags : [];
-    if (flags.length) {
-      box.appendChild(
-        tags(
-          flags.map((f) => text(f && f.flag ? f.flag : f)),
-          // champion_promoted is the Dojo enacting a validated change — a good
-          // outcome. Amber-ing it alongside a retention regression would read
-          // as "something is wrong" on the one flag that means the opposite.
-          (label) => {
-            if (/promotion_write_failed|regress|fail/i.test(label)) return "bad";
-            if (/^champion_promoted/.test(label)) return "ok";
-            return "warn";
-          }
-        )
-      );
-    } else {
-      box.appendChild(note("No Dojo flags."));
+  }
+  if (/^promotion_rejected/.test(outcome) || (promotion && promotion.status === "rejected")) {
+    return stageCard("Adaptive change", "Held back", "Re-run did not clear every gate.", "warn");
+  }
+  if (outcome === "promotion_recommended" || outcome === "staged") {
+    return stageCard("Adaptive change", "Staged", "Waiting for a validating re-run.", "warn");
+  }
+  if (outcome === "no_change" || outcome === "gated" || outcome === "hold") {
+    return stageCard("Adaptive change", "No change", "Champion left alone this run.", "ok");
+  }
+  return stageCard("Adaptive change", humanLabel(outcome), "Diagnose → hypothesize → stage.", "");
+}
+
+function sparringStage(universe) {
+  const status = text(universe.status, "unknown");
+  if (status === "skipped") {
+    return stageCard("Synthetic sparring", "Skipped", "Refused until real tape is thick enough.", "warn");
+  }
+  if (status === "unscored") {
+    return stageCard("Synthetic sparring", "Unscored", "Worlds generated but not scored.", "bad");
+  }
+  const remediation = universe.remediation || {};
+  const weak = Array.isArray(remediation.weak_archetypes) ? remediation.weak_archetypes : [];
+  const n = universe.n_universes != null ? universe.n_universes : 0;
+  const tone = weak.length ? "warn" : status === "ok" ? "ok" : "warn";
+  const value = weak.length ? `${weak.length} weak type${weak.length === 1 ? "" : "s"}` : `${n} worlds`;
+  const detail = weak.length
+    ? `${n} worlds · next run overweighting the losers`
+    : status === "ok"
+      ? `${n} worlds · no losing market types`
+      : humanLabel(status);
+  return stageCard("Synthetic sparring", value, detail, tone);
+}
+
+function renderFocus(universe) {
+  const remediation = universe.remediation || {};
+  const focus = Array.isArray(remediation.focus) ? remediation.focus : [];
+  const wrap = el("div", "spyder-tab__focus");
+  wrap.appendChild(el("h4", "spyder-tab__subhead", "Tonight’s focus"));
+  const headline = text(remediation.headline, "");
+  if (headline && headline !== "—") {
+    wrap.appendChild(el("p", "spyder-tab__focus-headline", headline));
+  } else if (!focus.length) {
+    wrap.appendChild(note("No elevated sampling targets — sparring stays balanced."));
+    return wrap;
+  }
+  if (focus.length) {
+    const list = el("ul", "spyder-tab__focus-list");
+    for (const row of focus) {
+      const label = humanLabel(row.label || row.archetype);
+      const reasons = Array.isArray(row.reasons) ? row.reasons.filter(Boolean) : [];
+      const reasonText = reasons.length ? reasons.join("; ") : null;
+      const item = el("li", "spyder-tab__focus-item");
+      item.appendChild(el("div", "spyder-tab__focus-name", label));
+      if (reasonText) {
+        item.appendChild(el("div", "spyder-tab__focus-reason", reasonText));
+      }
+      list.appendChild(item);
     }
-  } else {
-    box.appendChild(note("No Dojo report yet."));
+    wrap.appendChild(list);
+  }
+  const priorNote = text(remediation.prior_note, "");
+  if (priorNote && priorNote !== "—") {
+    wrap.appendChild(note(priorNote));
+  } else if (remediation.prior_influenced_sampling) {
+    wrap.appendChild(note("This run sampled with last night’s gap weights."));
+  } else if (remediation.prior_blended_into_plan) {
+    wrap.appendChild(
+      note("Prior curriculum was blended into the next-run plan (lattice measurement does not re-sample).")
+    );
+  }
+  return wrap;
+}
+
+function renderRobustness(universe) {
+  const matrix = universe.archetype_matrix && typeof universe.archetype_matrix === "object"
+    ? universe.archetype_matrix
+    : null;
+  const wrap = el("div", "spyder-tab__robustness");
+  wrap.appendChild(el("h4", "spyder-tab__subhead", "Where we’re weak"));
+  if (!matrix || !Object.keys(matrix).length) {
+    wrap.appendChild(note("No robustness matrix yet — sparring has not produced scored worlds."));
+    return wrap;
   }
 
-  if (validation) {
-    const gates = Array.isArray(validation.gates) ? validation.gates.length : null;
+  const scroll = el("div", "spyder-tab__scroll");
+  const table = el("table", "spyder-tab__matrix");
+  const head = el("thead");
+  const headRow = el("tr");
+  for (const label of ["Market type", "P&L", "Win rate", "Sessions"]) {
+    headRow.appendChild(el("th", null, label));
+  }
+  head.appendChild(headRow);
+  table.appendChild(head);
+
+  const tbody = el("tbody");
+  const rows = Object.entries(matrix).sort((a, b) => {
+    const pa = num(a[1] && a[1].mean_session_pnl);
+    const pb = num(b[1] && b[1].mean_session_pnl);
+    if (pa == null && pb == null) return a[0].localeCompare(b[0]);
+    if (pa == null) return 1;
+    if (pb == null) return -1;
+    return pa - pb;
+  });
+
+  for (const [arch, metrics] of rows) {
+    const tr = el("tr");
+    const mean = num(metrics.mean_session_pnl);
+    const weak = mean != null && mean < 0;
+    if (weak) tr.className = "spyder-tab__matrix-row--weak";
+    tr.appendChild(el("td", null, humanLabel(arch)));
+    tr.appendChild(
+      el("td", signClass("spyder-tab__bar-value", mean), mean != null ? money(mean) : "—")
+    );
+    tr.appendChild(el("td", null, pct(metrics.session_win_rate)));
+    tr.appendChild(el("td", null, text(metrics.n_sessions, "0")));
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  scroll.appendChild(table);
+  wrap.appendChild(scroll);
+
+  const visited = universe.coverage_cells_visited;
+  const total = universe.coverage_cells_total;
+  if (visited != null && total != null) {
+    const unvisited = universe.remediation && universe.remediation.unvisited_count;
+    const coverageNote =
+      unvisited != null && unvisited > 0
+        ? `Situation coverage: ${visited} of ${total} cells visited · ${unvisited} still unseen.`
+        : `Situation coverage: ${visited} of ${total} cells visited.`;
+    wrap.appendChild(note(coverageNote));
+  }
+  return wrap;
+}
+
+function renderHumanStory(human) {
+  if (!human || typeof human !== "object") return null;
+  const wrap = el("div", "spyder-tab__story");
+  const lines = [
+    ["What this checked", human.what_ran],
+    ["Data used", human.data_story],
+    ["Why it stopped", human.stop_reason],
+    ["What changes", human.change],
+    ["Next", human.next_step],
+  ];
+  for (const [label, value] of lines) {
+    if (!value) continue;
+    const row = el("div", "spyder-tab__story-row");
+    row.appendChild(el("div", "spyder-tab__story-label", label));
+    row.appendChild(el("div", "spyder-tab__story-body", text(value)));
+    wrap.appendChild(row);
+  }
+  return wrap.firstChild ? wrap : null;
+}
+
+function renderDojo(dojo, validation) {
+  const box = panel("Dojo training room", true);
+  if (!dojo) {
+    box.appendChild(note("No Dojo report yet. The nightly run will fill this in."));
+  } else {
+    const phases = phasesOf(dojo);
+    const human = dojo.human && typeof dojo.human === "object" ? dojo.human : null;
+    const [tone, title, blurb] = dojoVerdict(dojo, phases);
+
+    const verdict = el("p", "spyder-tab__pill" + (tone ? ` spyder-tab__pill--${tone}` : ""));
+    verdict.textContent = human && human.headline ? text(human.headline) : title;
+    box.appendChild(verdict);
+    if (blurb && !(human && human.headline)) box.appendChild(note(blurb));
+
     box.appendChild(
       kv([
-        ["Parity", validation.ok === true ? "PASS" : validation.ok === false ? "FAIL" : "unknown"],
-        ["Gates", gates],
+        ["Run date", dojo.report_date],
+        ["Generated", dojo.generated_at ? ageLabel(dojo.generated_at) : null],
+      ])
+    );
+
+    const story = renderHumanStory(human);
+    if (story) box.appendChild(story);
+
+    if (phases.universe && (phases.universe.remediation || phases.universe.archetype_matrix)) {
+      box.appendChild(renderFocus(phases.universe));
+    }
+
+    const chain = el("div", "spyder-tab__chain spyder-tab__chain--dojo");
+    chain.appendChild(recordedStage(phases.recorded));
+    chain.appendChild(sequentialStage(phases.sequential));
+    chain.appendChild(learnerStage(phases.learner, phases.promotion));
+    chain.appendChild(sparringStage(phases.universe));
+    box.appendChild(chain);
+
+    if (phases.universe && phases.universe.archetype_matrix) {
+      box.appendChild(renderRobustness(phases.universe));
+    }
+
+    const flags = Array.isArray(dojo.flags) ? dojo.flags : [];
+    const humanFlags = flags
+      .map((f) => text(f && f.flag ? f.flag : f))
+      .filter((label) => label && label !== "—")
+      .map((label) => humanLabel(label.replace(/^weak_archetype:/, "weak: ")));
+    if (humanFlags.length) {
+      box.appendChild(el("h4", "spyder-tab__subhead", "Flags"));
+      box.appendChild(
+        tags(humanFlags, (label) => {
+          if (/promotion write failed|regress|fail|weak:/i.test(label)) return "bad";
+          if (/champion promoted|promoted/i.test(label)) return "ok";
+          return "warn";
+        })
+      );
+    }
+  }
+
+  const parity = el("div", "spyder-tab__parity");
+  parity.appendChild(el("h4", "spyder-tab__subhead", "Parity check"));
+  if (validation) {
+    const ok = validation.ok === true;
+    const fail = validation.ok === false;
+    parity.appendChild(
+      kv([
+        ["Result", ok ? "PASS" : fail ? "FAIL" : "unknown"],
+        ["Gates", Array.isArray(validation.gates) ? validation.gates.length : null],
         ["Checked", validation.generated_at ? ageLabel(validation.generated_at) : null],
       ])
     );
   } else {
-    box.appendChild(note("No parity-validation report yet."));
+    parity.appendChild(note("No parity-validation report yet."));
   }
+  box.appendChild(parity);
   return box;
 }
 

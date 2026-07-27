@@ -7,6 +7,10 @@ gap did not exist. This module is the missing hop — gaps are persisted as
 structured failure episodes and read back as diagnoses, so a weakness found on
 one run is what the next run trains against.
 
+Lattice *sampling* pressure is a separate mechanism
+(:mod:`spy_der.dojo.curriculum_weights`): that decides how many worlds a weak
+archetype gets drawn, this decides whether the learner tries to fix it.
+
 Gaps live in the episode store (:mod:`spy_der.learning.memories`) rather than in
 the Dojo report, because they have to outlive a single report and accumulate:
 an archetype that is weak three runs running is a different problem from one
@@ -31,7 +35,6 @@ __all__ = [
     "ArchetypeGap",
     "load_archetype_gaps",
     "record_archetype_gaps",
-    "sampling_weights",
     "weakest_archetypes",
 ]
 
@@ -45,9 +48,6 @@ DEFAULT_MIN_SESSIONS = 3
 
 #: How long a remembered gap stays actionable.
 DEFAULT_MAX_AGE_DAYS = 14
-
-#: Extra sampling weight a remembered gap earns in the next lattice.
-_GAP_WEIGHT = 2.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,17 +176,3 @@ def weakest_archetypes(
     up as the ones ahead of them are repaired.
     """
     return tuple(gap.archetype for gap in gaps[: max(0, limit)])
-
-
-def sampling_weights(
-    gaps: Sequence[ArchetypeGap], *, base: float = 1.0
-) -> dict[str, float]:
-    """Lattice draw weights that spend the next run where the gaps are."""
-    if not gaps:
-        return {}
-    worst = max((g.severity for g in gaps), default=0.0)
-    weights: dict[str, float] = {}
-    for gap in gaps:
-        share = (gap.severity / worst) if worst > 0 else 0.0
-        weights[gap.archetype] = base + (_GAP_WEIGHT - base) * share
-    return weights

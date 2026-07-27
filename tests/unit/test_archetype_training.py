@@ -15,12 +15,10 @@ from typing import Any
 import pytest
 
 from spy_der.dojo.config import DojoConfig
-from spy_der.dojo.universe import default_catalog, seed_weights
 from spy_der.learning.gaps import (
     ArchetypeGap,
     load_archetype_gaps,
     record_archetype_gaps,
-    sampling_weights,
     weakest_archetypes,
 )
 from spy_der.learning.hypotheses import (
@@ -122,22 +120,6 @@ def test_a_repaired_archetype_leaves_the_training_set(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # Spending the lattice where the gaps are                                     #
 # --------------------------------------------------------------------------- #
-def test_gaps_bias_the_lattice_toward_the_weak_archetypes() -> None:
-    gaps = [
-        ArchetypeGap("crash", -102.0, -307.0, 3, 3, datetime.now(UTC)),
-        ArchetypeGap("range_chop", -13.5, -67.5, 5, 5, datetime.now(UTC)),
-    ]
-    weights = sampling_weights(gaps)
-    assert weights["crash"] > weights["range_chop"] > 1.0
-
-    cfg = DojoConfig(universes_per_gen=40, universe_days=1)
-    unweighted = default_catalog(cfg, 0, archetype_weights=seed_weights())
-    weighted = default_catalog(cfg, 0, archetype_weights={**seed_weights(), **weights})
-    crash_before = sum(1 for s in unweighted if s.start_archetype == "crash")
-    crash_after = sum(1 for s in weighted if s.start_archetype == "crash")
-    assert crash_after > crash_before, (crash_before, crash_after)
-
-
 def test_generations_actually_re_weight(tmp_path: Path) -> None:
     """The report claimed each generation targets the weakest archetypes.
 
@@ -159,12 +141,11 @@ def test_generations_actually_re_weight(tmp_path: Path) -> None:
     )
     out = run_dojo(cfg)
     universe = out["metrics"]["phases"]["universe"]
-    applied = universe["evolution_applied"]
-    assert applied, "no re-weighting was applied between generations"
-    assert applied[0]["generation"] == 1
+    plans = universe["generation_plans"]
+    assert plans, "no re-weighting was applied between generations"
     # Weights are not all equal — some archetype earned more draws than others.
-    weights = applied[0]["weights"]
-    assert len(set(round(v, 4) for v in weights.values())) > 1
+    weights = plans[0]["weights"]
+    assert len(set(round(float(v), 4) for v in weights.values())) > 1
 
 
 # --------------------------------------------------------------------------- #

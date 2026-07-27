@@ -42,9 +42,12 @@ from spy_der.synthetic.calibration import (
 )
 from spy_der.synthetic.chains import VariableChain
 from spy_der.synthetic.evolution import (
+    CURRICULUM_INERTIA,
     ArchetypeScore,
     EvolutionPlan,
+    blend_weights,
     evolve_catalog,
+    focus_from_plan,
     next_generation_weights,
     scores_from_archetype_matrix,
 )
@@ -64,6 +67,7 @@ from spy_der.synthetic.world import MarkovWorld, SituationLabel, WorldTick
 __all__ = [
     "ARCHETYPES",
     "ARCH_TRANSITION",
+    "CURRICULUM_INERTIA",
     "REGIMES",
     "REGIME_TRANSITION",
     "SIMULATOR_VERSION",
@@ -80,10 +84,12 @@ __all__ = [
     "UniverseSpec",
     "VariableChain",
     "WorldTick",
+    "blend_weights",
     "calibrate_from_observations",
     "calibrate_from_world",
     "coerce_universe_spec",
     "evolve_catalog",
+    "focus_from_plan",
     "labeler_accuracy",
     "merge_coverage",
     "next_generation_weights",
