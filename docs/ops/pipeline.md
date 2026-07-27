@@ -44,8 +44,18 @@ restart resumes rather than duplicating.
 | Stage | State |
 |---|---|
 | `candidates` | **runs** — `generate_candidate_universe` is deterministic and complete |
-| `features` | unavailable — no `FeaturePipeline` implementation constructs a `FeatureBundle` |
+| `features` | **runs** — `SnapshotFeaturePipeline` builds a `FeatureBundle` per snapshot |
 | `forecast` | unavailable — no trained model group is configured |
+
+The feature stage assembles eight families — the multi-timeframe matrix, GEX,
+volatility, RND, flow, breadth, the volatility surface and session context —
+into a flat, sorted `(name, value)` map written to `features/` and journaled as
+`features_computed`. Families are independent: one that raises is recorded in
+`failed_families` and journaled as `feature_stage_failed` while the rest of the
+bundle still lands, because a pathological chain should cost the RND summary
+rather than the whole tick. A family with no usable inputs is reported in
+`missing_families` and its keys are simply absent — consumers distinguish
+"unknown" from a real reading by key presence, never by a sentinel value.
 
 `JournalEventType` carries `FORECAST_UNAVAILABLE` and `FEATURE_STAGE_FAILED` as
 first-class outcomes: the design already says a stage may legitimately not run.

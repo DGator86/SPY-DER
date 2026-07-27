@@ -15,6 +15,8 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from spy_der.contracts.candidates import FACTORY_VERSION
 from spy_der.contracts.events import JournalEventType
 from spy_der.contracts.market import (
@@ -368,3 +370,63 @@ def test_snapshot_unchanged_by_replace_helper() -> None:
     """Guard the fixture itself: `replace` must not drop the option chain."""
     base = _snapshot("s", status=SessionStatus.OPEN)
     assert replace(base, snapshot_id="t").option_chain == base.option_chain
+
+
+# --------------------------------------------------------------------------- #
+# Feature stage                                                               #
+# --------------------------------------------------------------------------- #
+def test_engine_writes_a_feature_bundle_per_snapshot(tmp_path: Path) -> None:
+    _closed_session(tmp_path)
+    _run_engine(tmp_path)
+    artifact = tmp_path / "features" / f"{SESSION}.jsonl"
+    assert artifact.is_file()
+    assert len(ReplayFeed.from_file(artifact)) == 2
+
+
+def test_engine_journals_features_computed(tmp_path: Path) -> None:
+    """The stage is no longer reported unavailable — it produces real events."""
+    _closed_session(tmp_path)
+    _run_engine(tmp_path)
+    assert _types(tmp_path)[JournalEventType.FEATURES_COMPUTED.value] == 2
+    assert _types(tmp_path)[JournalEventType.FEATURE_STAGE_FAILED.value] == 0
+
+
+def test_feature_bundles_verify_through_replayfeed(tmp_path: Path) -> None:
+    _closed_session(tmp_path)
+    _run_engine(tmp_path)
+    feed = ReplayFeed.from_file(tmp_path / "features" / f"{SESSION}.jsonl")
+    bundles = list(feed.replay())
+    assert all(b["snapshot_id"] for b in bundles)
+    assert all(b["features"] for b in bundles)
+
+
+def test_the_journal_records_which_families_were_unavailable(tmp_path: Path) -> None:
+    """Which families are absent varies with the data; that variation is the diagnostic."""
+    _closed_session(tmp_path)
+    _run_engine(tmp_path)
+    events = [
+        e
+        for e in _journal(tmp_path).iter_events()
+        if e.event_type == JournalEventType.FEATURES_COMPUTED.value
+    ]
+    assert events
+    assert "missing_families" in events[0].payload
+    assert events[0].payload["feature_count"] > 0
+
+
+def test_a_feature_failure_does_not_cost_the_candidate_universe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Candidates are the decision surface; losing them to a feature defect is worse."""
+
+    def boom(_self: object, _snapshot: object) -> object:
+        raise ValueError("feature stage exploded")
+
+    monkeypatch.setattr(
+        "spy_der.features.pipeline.SnapshotFeaturePipeline.build_detailed", boom
+    )
+    _closed_session(tmp_path)
+    _run_engine(tmp_path)
+    types = _types(tmp_path)
+    assert types[JournalEventType.FEATURE_STAGE_FAILED.value] == 2
+    assert types[JournalEventType.CANDIDATES_GENERATED.value] == 2
