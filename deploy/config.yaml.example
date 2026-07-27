@@ -34,10 +34,15 @@ market_data:
   # where the Massive snapshot plan often has no last_quote and falls back to
   # day.close. Listing a provider with no credential is not an error — it is
   # skipped with a note, so this list is safe on a host holding either key.
-  # tastytrade and yahoo adapters are not ported yet; naming one here fails loudly.
+  # The tastytrade adapter is not ported yet; naming it here fails loudly.
+  # yahoo is ported but serves no option chain, so it is skipped with a note if
+  # listed here — it belongs in settlement_provider below.
   providers:
     - tradier
     - massive
+  # Dedicated settlement source. Without one, `settlement` is a required-but-
+  # missing component on every tick and the 0.5 quality penalty puts every
+  # snapshot under min_data_quality below. Yahoo needs no credential.
   settlement_provider: yahoo
   freshness_limit_seconds: 60
   # Data-quality gate. Below this, the deterministic layers refuse to trade

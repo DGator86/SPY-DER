@@ -4,7 +4,7 @@ The service set and what each stage reads and writes under `/var/lib/spy-der`.
 
 ```
 spy-der market       providers ──────────────▶ market/<session>.jsonl
-spy-der engine       market/ ────────────────▶ candidates/<session>.jsonl + journal
+spy-der engine       market/ ────────────────▶ candidates/ + features/ + journal
 spy-der settlement   market/ + journal ──────▶ settlements/<session>.jsonl + journal
 spy-der dojo         experience ─────────────▶ reports/dojo/
 spy-der validate     market/ ────────────────▶ reports/validation/
@@ -15,7 +15,7 @@ spy-der dashboard-api  (read-only) ──────────▶ http://127.
 
 There are exactly two, and neither is new.
 
-**Stage artifacts** (`market/`, `candidates/`, `settlements/`) are JSONL records
+**Stage artifacts** (`market/`, `candidates/`, `features/`, `settlements/`) are JSONL records
 carrying `seq`, an identity, a schema version and a `record_hash` over the
 payload — the envelope `spy_der.market_data.recording` already wrote for market
 ticks. `ReplayFeed` verifies content hashes, sequence continuity and schema
@@ -81,10 +81,13 @@ fills populate the `traded` side later without changing this shape.
 Two choices worth knowing:
 
 - **Settlement price** is the underlying price on the session's final recorded
-  snapshot — `SettlementSource.SESSION_CLOSE`. The config template names a
-  dedicated `settlement_provider: yahoo`, but that adapter is unbuilt and this
-  service runs offline. Deriving it from the tape keeps settlement deterministic
-  and reproducible.
+  snapshot — `SettlementSource.SESSION_CLOSE`. The Yahoo adapter now exists and
+  runs in the market service's `settlement_provider` slot, where it marks the
+  `settlement` feed component live and backstops the volatility surface; this
+  service still derives the settlement *price* from the tape, because it runs
+  offline and deriving it there keeps settlement deterministic and reproducible.
+  `YahooProvider.settlement_price` is available for an online backfill after an
+  outage, which is the case the tape cannot cover.
 - **Candidates are regenerated from the tape**, not parsed back out of the
   engine's artifacts. Generation is deterministic and the snapshot round-trip is
   byte-identical, so regeneration yields the same universe by construction and
