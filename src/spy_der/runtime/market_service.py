@@ -16,10 +16,11 @@ records nothing.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import signal
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -74,16 +75,83 @@ class MarketServiceConfig:
         return self.market_dir / f"{session.date().isoformat()}.jsonl"
 
 
+def _last_seq(path: Path) -> int:
+    """Highest sequence already recorded in ``path``; ``-1`` when there is none.
+
+    Tolerant by design. A recording whose tail is unreadable — a crash mid-write
+    leaves a partial final line — still yields the highest *parsable* sequence,
+    so the service resumes rather than restarting at 0 and guaranteeing a gap.
+    """
+    if not path.is_file():
+        return -1
+    highest = -1
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    seq = int(json.loads(line)["seq"])
+                except (ValueError, TypeError, KeyError):
+                    continue
+                highest = max(highest, seq)
+    except OSError as exc:
+        # Unreadable is not the same as empty; refusing to guess a sequence is
+        # safer than appending one that may collide.
+        log.error("cannot read %s to resume its sequence: %s", path, exc)
+        raise
+    return highest
+
+
+def _ensure_trailing_newline(path: Path) -> None:
+    """Terminate a partial final line before appending after it.
+
+    A crash mid-write leaves a record with no trailing newline. Appending then
+    concatenates the next record onto that fragment, producing one unparseable
+    line *and* losing the new record. Closing the fragment first costs one byte
+    and confines the damage to the record that was actually interrupted.
+    """
+    if not path.is_file() or path.stat().st_size == 0:
+        return
+    with path.open("rb+") as handle:
+        handle.seek(-1, 2)
+        if handle.read(1) != b"\n":
+            handle.write(b"\n")
+
+
 @dataclass
 class MarketService:
     """Poll providers, canonicalize, append to the session recording."""
 
     config: MarketServiceConfig
     _stop: bool = False
-    _seq: int = 0
+    #: Next sequence number per session file, resumed from disk on first touch.
+    _seq_by_session: dict[str, int] = field(default_factory=dict)
 
     def request_stop(self, *_args: object) -> None:
         self._stop = True
+
+    def _next_seq(self, path: Path) -> int:
+        """Sequence number for the next record appended to ``path``.
+
+        Resumed from the file rather than counted in memory. The recording is
+        append-only and `ReplayFeed` requires a gap-free sequence, so a counter
+        that restarted at 0 would corrupt the whole session the first time this
+        process appended to a file it did not create — which happens on every
+        `Restart=always` recovery mid-session, and on the day a 0DTE import is
+        followed by SPY-DER taking over collection.
+
+        Only the last line is parsed: the file is written one record per line
+        with a monotonic sequence, so the tail is the whole answer and a full
+        read would cost the entire session on every restart.
+        """
+        session = path.stem
+        cached = self._seq_by_session.get(session)
+        if cached is not None:
+            return cached
+        self._seq_by_session[session] = _last_seq(path) + 1
+        return self._seq_by_session[session]
 
     def run(self) -> int:
         cfg = self.config
@@ -189,12 +257,12 @@ class MarketService:
             log.warning("no provider returned a tick at %s", now.isoformat())
             return
 
-        record = build_record(self._seq, snapshot)
-        self._seq += 1
         path = self.config.recording_path(now)
+        seq = self._next_seq(path)
+        record = build_record(seq, snapshot)
+        self._seq_by_session[path.stem] = seq + 1
+        _ensure_trailing_newline(path)
         with path.open("a", encoding="utf-8") as handle:
-            import json
-
             handle.write(
                 json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
             )
