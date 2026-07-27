@@ -24,6 +24,7 @@ from spy_der.market_data.providers.factory import (
     build_provider_chain,
 )
 from spy_der.market_data.providers.massive import ET
+from spy_der.market_data.replay import ReplayFeed
 from spy_der.runtime.market_service import MarketService, MarketServiceConfig, main
 
 TS = datetime(2026, 7, 24, 17, 30, tzinfo=UTC)
@@ -310,7 +311,8 @@ def test_a_raising_feed_does_not_kill_the_service(
     )
     (tmp_path / "market").mkdir(parents=True, exist_ok=True)
     service._tick(_Boom())  # type: ignore[arg-type]
-    assert service._seq == 0  # nothing recorded, no exception escaped
+    # Nothing recorded and no exception escaped.
+    assert not list((tmp_path / "market").glob("*.jsonl"))
 
 
 def test_recording_path_is_per_session(tmp_path: Path) -> None:
@@ -328,7 +330,7 @@ def test_stop_signal_ends_the_loop(tmp_path: Path, stub_vendor: Any) -> None:
     )
     service.request_stop()
     assert service.run() == 0
-    assert service._seq == 0
+    assert not list((tmp_path / "market").glob("*.jsonl"))
 
 
 def test_settlement_provider_is_configured_by_default() -> None:
@@ -358,3 +360,116 @@ def test_settlement_provider_is_wired_into_the_feed(
     snapshot = _run(tmp_path, settlement="yahoo")[0]["snapshot"]
     assert snapshot["missing_components"] == []
     assert float(snapshot["data_quality"]["penalty"]) == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# Sequence continuity across restarts and the 0DTE handover                   #
+# --------------------------------------------------------------------------- #
+def _seqs(path: Path) -> list[int]:
+    return [json.loads(line)["seq"] for line in path.read_text().splitlines() if line.strip()]
+
+
+def test_a_restart_mid_session_does_not_break_the_sequence(
+    tmp_path: Path, stub_vendor: Any
+) -> None:
+    """`Restart=always` means this happens on any crash.
+
+    The recording is append-only and `ReplayFeed` requires a gap-free sequence,
+    so a counter restarting at 0 would corrupt the entire session — losing both
+    what was recorded before the crash and everything after it.
+    """
+    session = _current_session()
+    stub_vendor(session)
+    _run(tmp_path, ticks=2)          # first process
+    _run(tmp_path, ticks=2)          # restarted process, same session file
+
+    recording = tmp_path / "market" / f"{session}.jsonl"
+    assert _seqs(recording) == [0, 1, 2, 3]
+    assert len(ReplayFeed.from_file(recording)) == 4
+
+
+def test_taking_over_from_an_imported_session_keeps_the_sequence(
+    tmp_path: Path, stub_vendor: Any
+) -> None:
+    """The 0DTE handover: import catches us up, then SPY-DER collects onward.
+
+    Both write the same `market/<session>.jsonl`. Restarting the sequence would
+    make the imported history and the live continuation mutually unreadable.
+    """
+    session = _current_session()
+    market = tmp_path / "market"
+    market.mkdir(parents=True)
+    imported = market / f"{session}.jsonl"
+
+    # Stand in for the importer: three already-recorded snapshots.
+    from spy_der.contracts.market import CanonicalMarketSnapshot, SessionStatus
+    from spy_der.market_data.recording import build_record
+
+    lines = []
+    for seq in range(3):
+        snapshot = CanonicalMarketSnapshot(
+            snapshot_id=f"imported-{seq}",
+            content_hash=f"sha256:imported-{seq}",
+            timestamp=datetime.now(tz=UTC),
+            session_date=datetime.now(tz=UTC).astimezone(ET).date(),
+            underlying_symbol="SPY",
+            underlying_price=Decimal("500"),
+            session_status=SessionStatus.OPEN,
+        )
+        lines.append(json.dumps(build_record(seq, snapshot), sort_keys=True))
+    imported.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    stub_vendor(session)
+    _run(tmp_path, ticks=2)
+
+    assert _seqs(imported) == [0, 1, 2, 3, 4]
+    feed = ReplayFeed.from_file(imported)   # verifies hashes and continuity
+    assert len(feed) == 5
+
+
+def test_a_partial_final_line_still_resumes_rather_than_restarting(
+    tmp_path: Path, stub_vendor: Any
+) -> None:
+    """A crash mid-write leaves a truncated line; resuming beats guessing 0."""
+    session = _current_session()
+    stub_vendor(session)
+    _run(tmp_path, ticks=2)
+    recording = tmp_path / "market" / f"{session}.jsonl"
+    with recording.open("a", encoding="utf-8") as handle:
+        handle.write('{"seq": 2, "snapshot_id": "trunc')
+
+    service = MarketService(
+        config=MarketServiceConfig(
+            state_root=str(tmp_path),
+            interval_seconds=0.0,
+            max_ticks=1,
+            settlement_provider="",  # offline, like _run
+        )
+    )
+    assert service.run() == 0
+    seqs = _seqs_tolerant(recording)
+    assert seqs[-1] == 2  # continued from the last parsable sequence
+
+
+def _seqs_tolerant(path: Path) -> list[int]:
+    out = []
+    for line in path.read_text().splitlines():
+        try:
+            out.append(json.loads(line)["seq"])
+        except (ValueError, KeyError):
+            continue
+    return out
+
+
+def test_sequences_are_tracked_per_session(tmp_path: Path) -> None:
+    """A service spanning midnight must not carry one session's count into the next."""
+    from spy_der.runtime.market_service import MarketService, MarketServiceConfig
+
+    service = MarketService(config=MarketServiceConfig(state_root=str(tmp_path)))
+    market = tmp_path / "market"
+    market.mkdir(parents=True)
+    (market / "2026-07-27.jsonl").write_text(
+        json.dumps({"seq": 41, "snapshot_id": "x"}) + "\n", encoding="utf-8"
+    )
+    assert service._next_seq(market / "2026-07-27.jsonl") == 42
+    assert service._next_seq(market / "2026-07-28.jsonl") == 0

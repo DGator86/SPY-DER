@@ -74,6 +74,7 @@ from spy_der.market_data.recording import build_record
 __all__ = [
     "FLAG_IMPORTED",
     "ImportResult",
+    "LiveRecordingError",
     "import_directory",
     "import_session_file",
     "iter_session_snapshots",
@@ -91,6 +92,37 @@ FLAG_IMPORTED = "source:zerodte_import"
 DEFAULT_BAR_WINDOW = 420
 
 _PROVIDER = "zerodte_import"
+
+
+class LiveRecordingError(RuntimeError):
+    """An overwrite would have destroyed snapshots SPY-DER recorded live."""
+
+
+def _holds_live_records(path: Path) -> bool:
+    """Whether ``path`` contains any snapshot this importer did not write.
+
+    Every imported snapshot carries `FLAG_IMPORTED`; a live one does not. One
+    unflagged record is enough — the file is then a mix, and replacing it would
+    lose the live half.
+    """
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                    flags = record["snapshot"]["data_quality"]["flags"]
+                except (ValueError, KeyError, TypeError):
+                    # Unreadable is not proof of safety; treat it as live so the
+                    # overwrite is refused rather than guessed at.
+                    return True
+                if FLAG_IMPORTED not in flags:
+                    return True
+    except OSError:
+        return True
+    return False
 
 
 @dataclass
@@ -428,6 +460,15 @@ def import_session_file(
     target = destination_dir / f"{session}.jsonl"
     if target.exists() and not overwrite:
         return session, 0, 0
+    if target.exists() and overwrite and _holds_live_records(target):
+        # `--overwrite` is for re-importing a session this tool produced, not
+        # for replacing one SPY-DER recorded itself. Once the market service is
+        # collecting, an overwrite would silently and irreversibly delete live
+        # history, so it is refused rather than confirmed after the fact.
+        raise LiveRecordingError(
+            f"{target.name} contains records SPY-DER recorded live; refusing to "
+            "overwrite. Move the file aside first if you really mean to replace it."
+        )
 
     written = 0
     without_chain = 0
@@ -488,6 +529,11 @@ def import_directory(
                 path, destination, bar_window=bar_window, overwrite=overwrite
             )
             settlements.update(_settlements(path))
+        except LiveRecordingError as exc:
+            # Refusing one session must not abort the rest of the import.
+            log.error("%s", exc)
+            skipped.append((session, "holds live records; not overwritten"))
+            continue
         except (OSError, EOFError, gzip.BadGzipFile) as exc:
             # A corrupt archive costs its session, not the run.
             log.error("recording %s is unreadable: %s", path.name, exc)

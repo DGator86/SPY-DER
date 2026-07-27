@@ -134,6 +134,15 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
 
+    refused = [s for s, why in result.skipped if "live records" in why]
+    if refused:
+        log.warning(
+            "%d session(s) were not overwritten because SPY-DER recorded them "
+            "live: %s. Move those files aside if you really mean to replace them.",
+            len(refused),
+            ", ".join(refused),
+        )
+
     if result.sessions_written:
         log.info(
             "now train on it: spy-der-train --state-root %s", args.state_root
