@@ -28,6 +28,15 @@ spy-der-engine --forecast-group <id> --forecast-load-mode research
 Re-running the import is cheap: sessions already under `<state-root>/market` are
 skipped unless `--overwrite` is given.
 
+**`--overwrite` will not replace a session SPY-DER recorded itself.** Once
+`spy-der-market` is collecting, the two write the same `market/<session>.jsonl`,
+and overwriting would silently delete live history. The importer detects any
+snapshot lacking the `source:zerodte_import` flag and refuses that session,
+reporting it rather than aborting the rest of the run. Move the file aside if
+you genuinely mean to replace it.
+
+Import first, then start the market service, and the situation never arises.
+
 **The path is not baked into the package.** `--source` has no default because
 SPY-DER must deploy without 0DTE present, and
 `tests/unit/test_deploy_independence.py` fails on any legacy path in package

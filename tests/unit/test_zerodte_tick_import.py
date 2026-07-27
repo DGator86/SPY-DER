@@ -468,3 +468,76 @@ def test_cli_exits_two_when_the_source_holds_no_recordings(tmp_path: Path) -> No
 
     (tmp_path / "ticks").mkdir()
     assert main(["--source", str(tmp_path / "ticks"), "--state-root", str(tmp_path)]) == 2
+
+
+# --------------------------------------------------------------------------- #
+# --overwrite must not destroy live recordings                                #
+# --------------------------------------------------------------------------- #
+def test_overwrite_refuses_a_session_spy_der_recorded_live(tmp_path: Path) -> None:
+    """The handover footgun: import, collect for weeks, then re-import.
+
+    `--overwrite` is for re-importing a session this tool produced. Once the
+    market service is collecting, replacing the file would silently and
+    irreversibly delete live history.
+    """
+    from datetime import date as _date
+
+    from spy_der.contracts.market import CanonicalMarketSnapshot, SessionStatus
+    from spy_der.market_data.recording import build_record
+
+    _write(tmp_path / "ticks")
+    import_directory(tmp_path / "ticks", tmp_path / "state")
+    recording = tmp_path / "state" / "market" / f"{SESSION}.jsonl"
+
+    # The market service appends a live snapshot (no import flag).
+    from decimal import Decimal as _Decimal
+
+    live = CanonicalMarketSnapshot(
+        snapshot_id="live-1",
+        content_hash="sha256:live-1",
+        timestamp=OPEN_UTC,
+        session_date=_date(2026, 1, 5),
+        underlying_symbol="SPY",
+        underlying_price=_Decimal("500"),
+        session_status=SessionStatus.OPEN,
+    )
+    with recording.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(build_record(6, live), sort_keys=True) + "\n")
+
+    before = recording.read_text()
+    result = import_directory(tmp_path / "ticks", tmp_path / "state", overwrite=True)
+
+    assert recording.read_text() == before, "live records were destroyed"
+    assert result.snapshots_written == 0
+    assert any("live records" in why for _, why in result.skipped)
+
+
+def test_overwrite_still_works_on_a_purely_imported_session(tmp_path: Path) -> None:
+    """Re-importing this tool's own output stays cheap and allowed."""
+    _write(tmp_path / "ticks")
+    import_directory(tmp_path / "ticks", tmp_path / "state")
+    result = import_directory(tmp_path / "ticks", tmp_path / "state", overwrite=True)
+    assert result.snapshots_written == 6
+
+
+def test_an_unreadable_target_is_treated_as_live_not_as_safe(tmp_path: Path) -> None:
+    """Unreadable is not proof of safety; refuse rather than guess."""
+    _write(tmp_path / "ticks")
+    market = tmp_path / "state" / "market"
+    market.mkdir(parents=True)
+    (market / f"{SESSION}.jsonl").write_text("not json at all\n", encoding="utf-8")
+
+    result = import_directory(tmp_path / "ticks", tmp_path / "state", overwrite=True)
+    assert result.snapshots_written == 0
+    assert any("live records" in why for _, why in result.skipped)
+
+
+def test_one_refused_session_does_not_abort_the_rest(tmp_path: Path) -> None:
+    _write(tmp_path / "ticks", session="2026-01-05")
+    _write(tmp_path / "ticks", session="2026-01-06")
+    market = tmp_path / "state" / "market"
+    market.mkdir(parents=True)
+    (market / "2026-01-05.jsonl").write_text("garbage\n", encoding="utf-8")
+
+    result = import_directory(tmp_path / "ticks", tmp_path / "state", overwrite=True)
+    assert result.sessions_written == ("2026-01-06",)
