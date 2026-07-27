@@ -23,7 +23,16 @@ __all__ = ["MarketDataProvider", "RawTick"]
 
 @dataclass(frozen=True, slots=True)
 class RawTick:
-    """A single provider observation, before canonicalization."""
+    """A single provider observation, before canonicalization.
+
+    ``quality_flags`` carries provenance the adapter knows and nothing
+    downstream can re-derive — chiefly *how* the underlying price was obtained.
+    A spot read from a vendor quote and a spot recovered from put-call parity
+    are both a ``Decimal`` in ``underlying_price``; only the adapter can say
+    which. The composite feed merges these into the snapshot's
+    ``DataQuality.flags`` so the distinction survives into the journal (spec
+    §13.4: bad data is flagged, never silently repaired).
+    """
 
     provider: str
     symbol: str
@@ -34,6 +43,7 @@ class RawTick:
     bars_1m: tuple[Bar, ...] = ()
     option_chain: tuple[OptionQuote, ...] = ()
     has_chain: bool = True
+    quality_flags: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         require_tz_aware(self.observed_at, "RawTick.observed_at")

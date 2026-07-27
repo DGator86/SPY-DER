@@ -69,7 +69,17 @@ def _missing_components(observations: tuple[FeedObservation, ...]) -> tuple[str,
 def _data_quality(
     missing: tuple[str, ...],
     observations: tuple[FeedObservation, ...],
+    provider_flags: tuple[str, ...] = (),
 ) -> DataQuality:
+    """Flags and a penalty describing how trustworthy this snapshot is.
+
+    ``provider_flags`` are the adapter's own provenance notes — chiefly which
+    rung of the spot ladder produced the underlying price. They are recorded but
+    deliberately do **not** move the penalty: the penalty measures component
+    availability, and a measured-vs-inferred spot is a question of *quality* that
+    downstream policy weighs for itself. Folding it in here would double-count
+    against the same snapshot in every consumer.
+    """
     flags: list[str] = [f"missing:{name}" for name in missing]
     degraded = [
         f"{obs.component.value}:{obs.status.value}"
@@ -77,6 +87,7 @@ def _data_quality(
         if obs.status in (FeedStatus.STALE, FeedStatus.DELAYED)
     ]
     flags.extend(degraded)
+    flags.extend(provider_flags)
     penalty = min(1.0, 0.5 * len(missing) + 0.1 * len(degraded))
     return DataQuality(is_healthy=not missing, penalty=penalty, flags=tuple(flags))
 
@@ -100,6 +111,7 @@ class CanonicalSnapshotAssembler:
         underlying_bid: Decimal | None = None,
         underlying_ask: Decimal | None = None,
         catalyst_state: CatalystState | None = None,
+        provider_flags: tuple[str, ...] = (),
     ) -> CanonicalMarketSnapshot:
         require_tz_aware(timestamp, "timestamp")
         session_date = self.calendar.session_date(timestamp)
@@ -108,7 +120,7 @@ class CanonicalSnapshotAssembler:
         minutes_to_close = self.calendar.minutes_to_close(timestamp)
         coverage = _chain_coverage(option_chain)
         missing = _missing_components(feed_observations)
-        quality = _data_quality(missing, feed_observations)
+        quality = _data_quality(missing, feed_observations, provider_flags)
         catalyst = catalyst_state or CatalystState()
 
         # Identity payload: everything that defines the snapshot except the

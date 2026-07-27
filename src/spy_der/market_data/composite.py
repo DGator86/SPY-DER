@@ -76,7 +76,7 @@ class CompositeFeed:
         observations: list[FeedObservation] = []
         selections: list[ProviderSelection] = []
         for component in _CHAIN_COMPONENTS:
-            if component is FeedComponent.OPTION_CHAIN and not tick.has_chain:
+            if not self._component_present(component, tick):
                 observations.append(
                     build_observation(
                         component,
@@ -119,7 +119,24 @@ class CompositeFeed:
             option_chain=tick.option_chain,
             feed_observations=tuple(observations),
             selected_providers=tuple(selections),
+            provider_flags=tick.quality_flags,
         )
+
+    @staticmethod
+    def _component_present(component: FeedComponent, tick: RawTick) -> bool:
+        """Whether ``tick`` actually carries data for ``component``.
+
+        Bars are checked against the series rather than assumed: a provider that
+        returns no bars must not let the snapshot report ``bars`` as LIVE, or
+        ``is_live`` becomes a claim about which adapter ran instead of about what
+        data arrived — and every history-dependent feature would then be silently
+        absent from a snapshot advertising itself as complete.
+        """
+        if component is FeedComponent.OPTION_CHAIN:
+            return tick.has_chain
+        if component is FeedComponent.BARS:
+            return bool(tick.bars_1m)
+        return True
 
     def _settlement_observation(
         self,

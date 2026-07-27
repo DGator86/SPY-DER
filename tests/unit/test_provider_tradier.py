@@ -17,12 +17,18 @@ from typing import Any
 import pytest
 
 from spy_der.contracts.market import OptionType
+from spy_der.market_data.providers._http import ProviderHttpError
 from spy_der.market_data.providers.factory import (
     AVAILABLE_PROVIDERS,
     PENDING_PROVIDERS,
     build_provider_chain,
 )
-from spy_der.market_data.providers.tradier import TradierProvider
+from spy_der.market_data.providers.tradier import (
+    FLAG_BARS_UNAVAILABLE,
+    FLAG_SPOT_PARITY,
+    FLAG_SPOT_VENDOR_QUOTE,
+    TradierProvider,
+)
 
 TS = datetime(2026, 7, 22, 16, 30, tzinfo=UTC)  # 12:30 ET, a live session
 SESSION = "2026-07-22"
@@ -66,15 +72,51 @@ def _chain_payload(options: Any) -> dict[str, Any]:
     return {"options": {"option": options}}
 
 
-def _quote_payload(last: Any = 100.05, symbol: str = "SPY") -> dict[str, Any]:
-    return {"quotes": {"quote": {"symbol": symbol, "last": last}}}
+def _quote_payload(
+    last: Any = 100.05,
+    symbol: str = "SPY",
+    *,
+    bid: Any = None,
+    ask: Any = None,
+) -> dict[str, Any]:
+    quote: dict[str, Any] = {"symbol": symbol, "last": last}
+    if bid is not None:
+        quote["bid"] = bid
+    if ask is not None:
+        quote["ask"] = ask
+    return {"quotes": {"quote": quote}}
+
+
+def _timesales_payload(points: Any) -> dict[str, Any]:
+    return {"series": {"data": points}}
+
+
+def _minute_points(count: int = 3, *, close: float = 100.0) -> list[dict[str, Any]]:
+    """``count`` consecutive 1-minute bars ending at TS. Epoch seconds, per vendor."""
+    base = int(TS.timestamp()) - count * 60
+    return [
+        {
+            "timestamp": base + i * 60,
+            "open": close - 0.10,
+            "high": close + 0.15,
+            "low": close - 0.20,
+            "close": close,
+            "volume": 1_000 + i,
+        }
+        for i in range(count)
+    ]
 
 
 @pytest.fixture
 def transport(monkeypatch: pytest.MonkeyPatch):
-    """Route the two endpoints to canned payloads; record the URLs called."""
+    """Route the three endpoints to canned payloads; record the URLs called."""
 
-    def _install(*, chain: dict[str, Any], quote: dict[str, Any] | None = None) -> list[str]:
+    def _install(
+        *,
+        chain: dict[str, Any],
+        quote: dict[str, Any] | None = None,
+        timesales: dict[str, Any] | None = None,
+    ) -> list[str]:
         calls: list[str] = []
 
         def fake(url: str, *, headers: Any = None, config: Any = None) -> dict[str, Any]:
@@ -83,6 +125,8 @@ def transport(monkeypatch: pytest.MonkeyPatch):
                 return quote if quote is not None else _quote_payload()
             if "/markets/options/chains" in url:
                 return chain
+            if "/markets/timesales" in url:
+                return timesales if timesales is not None else _timesales_payload([])
             raise AssertionError(f"unexpected URL {url}")
 
         monkeypatch.setattr("spy_der.market_data.providers.tradier.get_json", fake)
@@ -359,3 +403,162 @@ def test_failover_order_is_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MASSIVE_API_KEY", "key")
     chain = build_provider_chain(["tradier", "massive"])
     assert [p.name for p in chain.providers] == ["tradier", "massive"]
+
+
+# --------------------------------------------------------------------------- #
+# 1-minute bars                                                               #
+# --------------------------------------------------------------------------- #
+def test_bars_are_fetched_and_mapped(transport: Any) -> None:
+    transport(
+        chain=_chain_payload([_option()]),
+        timesales=_timesales_payload(_minute_points(3, close=100.0)),
+    )
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert len(tick.bars_1m) == 3
+    last = tick.bars_1m[-1]
+    assert last.close == Decimal("100.0")
+    assert last.high == Decimal("100.15")
+    assert last.volume == 1002
+
+
+def test_bar_timestamps_come_from_the_epoch_field_and_are_tz_aware(
+    transport: Any,
+) -> None:
+    """The sibling `time` field is naive ET; reading it would shift the session."""
+    transport(
+        chain=_chain_payload([_option()]),
+        timesales=_timesales_payload(
+            [
+                {
+                    "timestamp": int(TS.timestamp()),
+                    "time": "2026-07-22T12:30:00",  # naive ET, deliberately wrong
+                    "open": 1.0,
+                    "high": 1.0,
+                    "low": 1.0,
+                    "close": 1.0,
+                    "volume": 1,
+                }
+            ]
+        ),
+    )
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert tick.bars_1m[0].timestamp.tzinfo is not None
+    assert tick.bars_1m[0].timestamp == TS
+
+
+def test_bars_are_sorted_and_deduplicated(transport: Any) -> None:
+    points = _minute_points(3, close=100.0)
+    scrambled = [points[2], points[0], points[1], points[2]]
+    transport(
+        chain=_chain_payload([_option()]),
+        timesales=_timesales_payload(scrambled),
+    )
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    stamps = [b.timestamp for b in tick.bars_1m]
+    assert stamps == sorted(stamps)
+    assert len(stamps) == len(set(stamps)) == 3
+
+
+def test_a_bars_failure_degrades_the_tick_but_keeps_the_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """History entitlement is separate from quoting; a tradeable chain survives."""
+
+    def fake(url: str, *, headers: Any = None, config: Any = None) -> dict[str, Any]:
+        if "/markets/timesales" in url:
+            raise ProviderHttpError("HTTP 403", status=403)
+        if "/markets/quotes" in url:
+            return _quote_payload()
+        return _chain_payload([_option()])
+
+    monkeypatch.setattr("spy_der.market_data.providers.tradier.get_json", fake)
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert tick.option_chain  # the chain is still usable
+    assert tick.bars_1m == ()
+    assert FLAG_BARS_UNAVAILABLE in tick.quality_flags
+
+
+def test_unusable_bar_rows_are_dropped_not_defaulted(transport: Any) -> None:
+    good = _minute_points(1, close=100.0)[0]
+    transport(
+        chain=_chain_payload([_option()]),
+        timesales=_timesales_payload(
+            [
+                good,
+                {"timestamp": 1, "open": None, "high": 1, "low": 1, "close": 1, "volume": 1},
+                {"timestamp": 2, "open": 1, "high": 1, "low": 1, "close": 0, "volume": 1},
+                {"open": 1, "high": 1, "low": 1, "close": 1, "volume": 1},  # no timestamp
+            ]
+        ),
+    )
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert len(tick.bars_1m) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Underlying NBBO and spot provenance                                         #
+# --------------------------------------------------------------------------- #
+def test_underlying_bid_and_ask_are_populated(transport: Any) -> None:
+    transport(chain=_chain_payload([_option()]), quote=_quote_payload(bid=100.03, ask=100.07))
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert tick.underlying_bid == Decimal("100.03")
+    assert tick.underlying_ask == Decimal("100.07")
+
+
+@pytest.mark.parametrize(
+    ("bid", "ask"),
+    [(100.10, 100.05), (0, 100.05), (100.03, 0)],
+    ids=["crossed", "zero_bid", "zero_ask"],
+)
+def test_an_unusable_book_is_not_reported_as_a_market(
+    transport: Any, bid: float, ask: float
+) -> None:
+    transport(chain=_chain_payload([_option()]), quote=_quote_payload(bid=bid, ask=ask))
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert tick.underlying_bid is None
+    assert tick.underlying_ask is None
+    assert tick.underlying_price == Decimal("100.05")  # `last` still stands
+
+
+def test_a_missing_book_does_not_discard_the_price(transport: Any) -> None:
+    """Outside regular hours bid/ask vanish while `last` stays valid."""
+    transport(chain=_chain_payload([_option()]))
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert tick.underlying_price == Decimal("100.05")
+    assert tick.underlying_bid is None
+
+
+def test_spot_provenance_is_recorded(transport: Any) -> None:
+    transport(chain=_chain_payload([_option()]))
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert FLAG_SPOT_VENDOR_QUOTE in tick.quality_flags
+    assert FLAG_SPOT_PARITY not in tick.quality_flags
+
+
+def test_parity_recovery_is_flagged_as_such(transport: Any) -> None:
+    """A derived spot must be distinguishable from a measured one downstream."""
+    rows = []
+    for strike in (596.0, 598.0, 600.0, 602.0, 604.0):
+        call_mid = max(600.0 - strike, 0.0) + 1.0
+        put_mid = max(strike - 600.0, 0.0) + 1.0
+        rows.append(
+            _option(option_type="call", strike=strike, bid=call_mid - 0.05, ask=call_mid + 0.05)
+        )
+        rows.append(
+            _option(option_type="put", strike=strike, bid=put_mid - 0.05, ask=put_mid + 0.05)
+        )
+    transport(chain=_chain_payload(rows), quote={"quotes": {}})
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert FLAG_SPOT_PARITY in tick.quality_flags
+    assert FLAG_SPOT_VENDOR_QUOTE not in tick.quality_flags
+    assert abs(float(tick.underlying_price) - 600.0) < 1.0

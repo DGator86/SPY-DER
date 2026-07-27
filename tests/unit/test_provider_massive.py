@@ -25,8 +25,13 @@ from spy_der.market_data.providers._http import (
     redact,
 )
 from spy_der.market_data.providers.massive import (
+    FLAG_BARS_UNAVAILABLE,
     FLAG_DAY_CLOSE_FALLBACK,
     FLAG_LIVE_QUOTE,
+    FLAG_SPOT_MINUTE_BAR,
+    FLAG_SPOT_OPTIONS_SNAPSHOT,
+    FLAG_SPOT_PARITY,
+    FLAG_SPOT_UNDERLYING_QUOTE,
     MassiveProvider,
 )
 from spy_der.market_data.providers.spot import ChainQuoteView, estimate_spot_from_chain
@@ -84,17 +89,80 @@ def _live_chain() -> list[dict[str, Any]]:
     return rows
 
 
-class _FakeTransport:
-    """Records requested URLs and serves canned pages."""
+def _aggs(bars: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """An aggregates page. Polygon bar keys: t (epoch ms), o/h/l/c, v."""
+    return {"results": bars if bars is not None else []}
 
-    def __init__(self, pages: list[dict[str, Any]]) -> None:
+
+def _minute_bars(count: int = 3, *, close: float = 600.0) -> list[dict[str, Any]]:
+    """``count`` consecutive minute bars ending at TS, closing at ``close``."""
+    base_ms = int(TS.timestamp() * 1000) - count * 60_000
+    return [
+        {
+            "t": base_ms + i * 60_000,
+            "o": close - 0.10,
+            "h": close + 0.15,
+            "l": close - 0.20,
+            "c": close,
+            "v": 1_000 + i,
+        }
+        for i in range(count)
+    ]
+
+
+def _underlying(
+    *,
+    last: float | None = None,
+    minute_close: float | None = None,
+    day_close: float | None = None,
+    prev_close: float | None = None,
+    bid: float | None = None,
+    ask: float | None = None,
+) -> dict[str, Any]:
+    """A single-ticker underlying snapshot; every section independently absent."""
+    ticker: dict[str, Any] = {"ticker": "SPY"}
+    if last is not None:
+        ticker["lastTrade"] = {"p": last}
+    if minute_close is not None:
+        ticker["min"] = {"c": minute_close}
+    if day_close is not None:
+        ticker["day"] = {"c": day_close}
+    if prev_close is not None:
+        ticker["prevDay"] = {"c": prev_close}
+    if bid is not None and ask is not None:
+        ticker["lastQuote"] = {"p": bid, "P": ask}
+    return {"ticker": ticker}
+
+
+class _FakeTransport:
+    """Routes by endpoint and serves canned pages.
+
+    ``urls``/``headers`` record the *option-chain* requests only, which is what
+    the chain assertions are about; ``all_urls`` sees every endpoint.
+    """
+
+    def __init__(
+        self,
+        pages: list[dict[str, Any]],
+        *,
+        underlying: dict[str, Any] | None = None,
+        aggs: dict[str, Any] | None = None,
+    ) -> None:
         self.pages = pages
+        self.underlying = underlying if underlying is not None else {}
+        self.aggs = aggs if aggs is not None else _aggs()
         self.urls: list[str] = []
         self.headers: list[dict[str, str]] = []
+        self.all_urls: list[str] = []
 
     def __call__(
         self, url: str, *, headers: Any = None, config: Any = None
     ) -> dict[str, Any]:
+        self.all_urls.append(url)
+        if "/v2/snapshot/locale/" in url:
+            return self.underlying
+        if "/range/1/minute/" in url:
+            return self.aggs
         self.urls.append(url)
         self.headers.append(dict(headers or {}))
         return self.pages[min(len(self.urls) - 1, len(self.pages) - 1)]
@@ -102,8 +170,13 @@ class _FakeTransport:
 
 @pytest.fixture
 def transport(monkeypatch: pytest.MonkeyPatch):
-    def _install(pages: list[dict[str, Any]]) -> _FakeTransport:
-        fake = _FakeTransport(pages)
+    def _install(
+        pages: list[dict[str, Any]],
+        *,
+        underlying: dict[str, Any] | None = None,
+        aggs: dict[str, Any] | None = None,
+    ) -> _FakeTransport:
+        fake = _FakeTransport(pages, underlying=underlying, aggs=aggs)
         monkeypatch.setattr("spy_der.market_data.providers.massive.get_json", fake)
         return fake
 
@@ -555,3 +628,182 @@ def test_fixture_matches_the_documented_live_absences() -> None:
         assert "underlying_asset" not in row
     fallback = _contract(600.0, "call", close=1.0)
     assert "last_quote" not in fallback
+
+
+# --------------------------------------------------------------------------- #
+# 1-minute bars                                                               #
+# --------------------------------------------------------------------------- #
+def test_bars_are_fetched_and_mapped(transport: Any) -> None:
+    transport([{"results": _live_chain()}], aggs=_aggs(_minute_bars(3, close=600.0)))
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert len(tick.bars_1m) == 3
+    assert tick.bars_1m[-1].close == Decimal("600.0")
+    assert tick.bars_1m[-1].volume == 1002
+
+
+def test_bar_timestamps_are_parsed_from_epoch_milliseconds(transport: Any) -> None:
+    """Polygon `t` is ms; reading it as seconds lands in 1970."""
+    transport([{"results": _live_chain()}], aggs=_aggs(_minute_bars(1)))
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    stamp = tick.bars_1m[0].timestamp
+    assert stamp.tzinfo is not None
+    assert stamp.year == TS.year
+
+
+def test_a_bars_failure_degrades_the_tick_but_keeps_the_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake(url: str, *, headers: Any = None, config: Any = None) -> dict[str, Any]:
+        if "/range/1/minute/" in url:
+            raise ProviderHttpError("HTTP 403", status=403)
+        if "/v2/snapshot/locale/" in url:
+            return _underlying(last=600.25)
+        return {"results": _live_chain()}
+
+    monkeypatch.setattr("spy_der.market_data.providers.massive.get_json", fake)
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert tick.option_chain
+    assert tick.bars_1m == ()
+    assert FLAG_BARS_UNAVAILABLE in tick.quality_flags
+
+
+def test_aggregate_pagination_is_followed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A lookback longer than one page must not silently truncate history."""
+    bars = _minute_bars(4)
+
+    def fake(url: str, *, headers: Any = None, config: Any = None) -> dict[str, Any]:
+        if "/v2/snapshot/locale/" in url:
+            return {}
+        if "aggs-page2" in url:
+            return _aggs(bars[2:])
+        if "/range/1/minute/" in url:
+            return {"results": bars[:2], "next_url": "https://api.example.com/aggs-page2"}
+        return {"results": _live_chain()}
+
+    monkeypatch.setattr("spy_der.market_data.providers.massive.get_json", fake)
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert len(tick.bars_1m) == 4
+
+
+# --------------------------------------------------------------------------- #
+# Spot ladder                                                                 #
+# --------------------------------------------------------------------------- #
+def test_options_snapshot_price_wins_when_present(transport: Any) -> None:
+    rows = _live_chain()
+    rows[0] = _contract(596.0, "call", bid=4.95, ask=5.05, include_underlying_price=True)
+    transport(
+        [{"results": rows}],
+        underlying=_underlying(last=610.0),
+        aggs=_aggs(_minute_bars(1, close=620.0)),
+    )
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert tick.underlying_price == Decimal("640.12")
+    assert FLAG_SPOT_OPTIONS_SNAPSHOT in tick.quality_flags
+
+
+def test_underlying_quote_is_used_before_parity(transport: Any) -> None:
+    """The whole point of the ladder: measure spot rather than infer it."""
+    transport([{"results": _live_chain()}], underlying=_underlying(last=600.37))
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert tick.underlying_price == Decimal("600.3700")
+    assert FLAG_SPOT_UNDERLYING_QUOTE in tick.quality_flags
+    assert FLAG_SPOT_PARITY not in tick.quality_flags
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({"last": 600.11}, "600.1100"),
+        ({"minute_close": 600.22}, "600.2200"),
+        ({"day_close": 600.33}, "600.3300"),
+        ({"prev_close": 600.44}, "600.4400"),
+    ],
+    ids=["last_trade", "minute_close", "day_close", "prev_close"],
+)
+def test_underlying_price_precedence_walks_newest_to_oldest(
+    transport: Any, kwargs: dict[str, float], expected: str
+) -> None:
+    transport([{"results": _live_chain()}], underlying=_underlying(**kwargs))
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert tick.underlying_price == Decimal(expected)
+
+
+def test_last_trade_outranks_the_older_sections(transport: Any) -> None:
+    transport(
+        [{"results": _live_chain()}],
+        underlying=_underlying(last=601.0, minute_close=602.0, day_close=603.0),
+    )
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert tick.underlying_price == Decimal("601.0000")
+
+
+def test_minute_bar_close_backstops_a_dark_underlying_quote(transport: Any) -> None:
+    transport(
+        [{"results": _live_chain()}],
+        underlying={},  # no ticker section at all
+        aggs=_aggs(_minute_bars(2, close=599.87)),
+    )
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert tick.underlying_price == Decimal("599.87")
+    assert FLAG_SPOT_MINUTE_BAR in tick.quality_flags
+
+
+def test_parity_is_the_last_resort_and_is_flagged(transport: Any) -> None:
+    """Preserved, but now clearly labelled as inferred rather than measured."""
+    transport([{"results": _live_chain()}])
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert FLAG_SPOT_PARITY in tick.quality_flags
+    assert abs(float(tick.underlying_price) - 600.0) < 1.0
+
+
+# --------------------------------------------------------------------------- #
+# Underlying NBBO                                                             #
+# --------------------------------------------------------------------------- #
+def test_underlying_bid_and_ask_are_populated(transport: Any) -> None:
+    transport(
+        [{"results": _live_chain()}],
+        underlying=_underlying(last=600.0, bid=599.98, ask=600.02),
+    )
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert tick.underlying_bid == Decimal("599.9800")
+    assert tick.underlying_ask == Decimal("600.0200")
+
+
+def test_a_crossed_underlying_book_is_not_reported_as_a_market(transport: Any) -> None:
+    transport(
+        [{"results": _live_chain()}],
+        underlying=_underlying(last=600.0, bid=600.10, ask=599.90),
+    )
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert tick.underlying_bid is None
+    assert tick.underlying_ask is None
+    assert tick.underlying_price == Decimal("600.0000")
+
+
+def test_an_underlying_quote_failure_does_not_discard_the_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake(url: str, *, headers: Any = None, config: Any = None) -> dict[str, Any]:
+        if "/v2/snapshot/locale/" in url:
+            raise ProviderHttpError("HTTP 500", status=500)
+        if "/range/1/minute/" in url:
+            return _aggs(_minute_bars(1, close=600.5))
+        return {"results": _live_chain()}
+
+    monkeypatch.setattr("spy_der.market_data.providers.massive.get_json", fake)
+    tick = _provider().fetch(TS)
+    assert tick is not None
+    assert tick.underlying_price == Decimal("600.5")
+    assert FLAG_SPOT_MINUTE_BAR in tick.quality_flags
