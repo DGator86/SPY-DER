@@ -105,6 +105,11 @@ class RangeSurvivalModel:
         )
         pipe.fit(x, y_arr)
         self.estimator = pipe
+        # Mark fitted before the calibration read: `predict_raw` guards on this
+        # flag, and setting it only at the end of `fit` made the two-class path
+        # — the real one — raise every time. The degenerate branch above already
+        # sets it before returning for the same reason.
+        self.fitted = True
         raw = self.predict_raw(rows)
         try:
             self.calibrator = fit_calibrator(raw, y_arr, method=self.config.calibration)

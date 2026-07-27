@@ -243,7 +243,11 @@ def _out_of_fold_metrics(
     scores: list[dict[str, float]] = []
     for fold in folds:
         train = set(fold.get("train_sessions", ()))
-        test = set(fold.get("validation_sessions", ()))
+        # `build_expanding_session_folds` emits `test_sessions`; `FoldDefinition`
+        # names the same thing `validation_sessions`. Accept both — reading only
+        # one silently yields an empty held-out set, and empty metrics are
+        # indistinguishable from "not enough data" at the call site.
+        test = set(fold.get("test_sessions", ())) | set(fold.get("validation_sessions", ()))
         train_idx = [i for i, s in enumerate(sessions) if s in train]
         test_idx = [i for i, s in enumerate(sessions) if s in test]
         if len(train_idx) < MIN_ROWS_PER_ROLE or not test_idx:
@@ -314,12 +318,20 @@ def train_model_group(
             )
             continue
 
+        degenerate = _degenerate_target(kind, y)
+        if degenerate:
+            # Checked up front so the reported reason names the data condition.
+            # Left to the model, this surfaces as "predict_raw before fit" from
+            # deep inside the calibration step — true, but it tells an operator
+            # nothing about why, and the fix is more data, not a code change.
+            outcomes.append(
+                RoleOutcome(role=role, trained=False, n_rows=len(rows), reason=degenerate)
+            )
+            continue
+
         try:
             model = _fit(_build_model(role), rows, y, row_sessions)
         except (ValueError, RuntimeError) as exc:
-            # Most often a single-class target: real, and the right answer is to
-            # ship the group without this component rather than a model that
-            # only ever says one thing.
             outcomes.append(
                 RoleOutcome(role=role, trained=False, n_rows=len(rows), reason=str(exc))
             )
@@ -390,6 +402,24 @@ def train_model_group(
         fold_count=len(folds),
         status=status,
     )
+
+
+def _degenerate_target(kind: str, y: Sequence[Any]) -> str:
+    """Why ``y`` cannot train ``kind``, or ``""`` when it can.
+
+    A classifier needs both outcomes to have occurred: a target that is always 1
+    over the training window carries no signal, and a model fitted on it would
+    answer 1 with confidence forever. That is a data condition — the outcome
+    genuinely never varied — so it is named plainly rather than surfaced as an
+    internal error.
+    """
+    if kind != "classifier":
+        return ""
+    classes = {int(v) for v in y}
+    if len(classes) < 2:
+        only = next(iter(classes)) if classes else "none"
+        return f"single-class target (always {only}) over the training window"
+    return ""
 
 
 def _calibration_artifact(model: Any, kind: str) -> dict[str, Any]:

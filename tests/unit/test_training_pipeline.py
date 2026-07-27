@@ -605,3 +605,59 @@ def test_training_can_register_directly_at_shadow_status(tmp_path: Path) -> None
     group = registry.load_group(groups[0].stem)
     assert group.status == "shadow"
     registry.validate_group(group, load_mode="shadow")
+
+
+# --------------------------------------------------------------------------- #
+# Regressions                                                                 #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("factory", ["range_survival", "barrier_touch"])
+def test_classifier_fit_succeeds_on_a_two_class_target(factory: str) -> None:
+    """`fit` used to call `predict_raw` before setting `fitted`.
+
+    `predict_raw` guards on that flag, so the two-class path — the only one that
+    matters on real data — raised every time, and both components were
+    structurally untrainable. Only the degenerate single-class branch worked,
+    because it sets the flag before returning.
+    """
+    from spy_der.forecasting.models.barrier_touch import BarrierTouchModel
+    from spy_der.forecasting.models.range_survival import RangeSurvivalModel
+
+    rng = np.random.default_rng(3)
+    rows = [{"a": float(rng.normal()), "b": float(rng.normal())} for _ in range(120)]
+    y = [i % 2 for i in range(120)]
+    sessions = [f"2026-01-{(i % 6) + 1:02d}" for i in range(120)]
+
+    model = RangeSurvivalModel() if factory == "range_survival" else BarrierTouchModel()
+    fitted = model.fit(rows, y, sessions)
+    assert fitted.fitted
+    assert fitted.estimator is not None
+    probabilities = fitted.predict_proba(rows)
+    assert len(probabilities) == len(rows)
+    assert all(0.0 <= float(p) <= 1.0 for p in probabilities)
+
+
+def test_out_of_fold_metrics_are_actually_populated(
+    trained: tuple[Path, TrainingResult],
+) -> None:
+    """The fold dicts key held-out sessions as `test_sessions`.
+
+    Reading only `validation_sessions` yielded an empty held-out set on every
+    fold, so metrics silently came back empty — indistinguishable at the call
+    site from "not enough data to score".
+    """
+    _root, result = trained
+    assert result.fold_count > 0
+    scored = [r for r in result.roles if r.trained and r.metrics]
+    assert scored, "folds existed but no role produced a held-out metric"
+    for outcome in scored:
+        assert all(name.startswith("oof_") for name in outcome.metrics)
+
+
+def test_a_single_class_target_is_named_plainly(tmp_path: Path) -> None:
+    """The fix is more data, so the reason must say that, not leak an internal error."""
+    from spy_der.training.pipeline import _degenerate_target
+
+    assert "single-class" in _degenerate_target("classifier", [0, 0, 0])
+    assert "always 1" in _degenerate_target("classifier", [1, 1])
+    assert _degenerate_target("classifier", [0, 1]) == ""
+    assert _degenerate_target("regressor", [0.0, 0.0]) == ""
