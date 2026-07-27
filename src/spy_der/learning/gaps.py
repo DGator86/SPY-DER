@@ -33,6 +33,7 @@ from spy_der.learning.memories import (
 __all__ = [
     "GAP_EPISODE_PREFIX",
     "ArchetypeGap",
+    "clear_archetype_gap",
     "load_archetype_gaps",
     "record_archetype_gaps",
     "weakest_archetypes",
@@ -108,15 +109,27 @@ def record_archetype_gaps(
     min_sessions: int = DEFAULT_MIN_SESSIONS,
     report_date: str = "",
 ) -> list[ArchetypeGap]:
-    """Persist every losing archetype from a universe panel. Worst first."""
+    """Persist every losing archetype from a universe panel. Worst first.
+
+    Also *clears* archetypes this panel scored that are no longer losing.
+    Without that a repaired archetype keeps steering diagnoses and the
+    ``archetype_repair`` target until it ages out — the Dojo would spend two
+    more weeks fixing something it already fixed.
+    """
     matrix = (universe_result or {}).get("archetype_matrix") or {}
     gaps: list[ArchetypeGap] = []
+    recovered: list[str] = []
     for archetype, metrics in matrix.items():
         if not isinstance(metrics, dict):
             continue
         mean = metrics.get("mean_session_pnl")
         n_sessions = int(metrics.get("n_sessions") or 0)
-        if mean is None or n_sessions < min_sessions or float(mean) >= 0:
+        if mean is None or n_sessions < min_sessions:
+            # Not scored deeply enough to say either way — leave any prior
+            # verdict standing rather than clearing a gap on thin evidence.
+            continue
+        if float(mean) >= 0:
+            recovered.append(str(archetype))
             continue
         gaps.append(
             ArchetypeGap(
@@ -140,7 +153,34 @@ def record_archetype_gaps(
             ),
             details=gap.to_details(),
         )
+    for archetype in recovered:
+        clear_archetype_gap(state_root, archetype, report_date=report_date)
     return gaps
+
+
+def clear_archetype_gap(
+    state_root: str | Path,
+    archetype: str,
+    *,
+    report_date: str = "",
+) -> None:
+    """Retire an archetype's gap by overwriting it with a ``recovered`` marker.
+
+    The episode store replaces by id, so writing a non-gap record in the same
+    slot both removes it from :func:`load_archetype_gaps` (which requires
+    ``kind == "weak_archetype"``) and leaves the recovery in the audit trail.
+    """
+    append_failure_episode(
+        state_root,
+        episode_id=f"{GAP_EPISODE_PREFIX}{archetype}",
+        summary=f"{archetype}: no longer losing — gap cleared",
+        details={
+            "phase": "universe",
+            "kind": "recovered_archetype",
+            "archetype": archetype,
+            "report_date": report_date,
+        },
+    )
 
 
 def load_archetype_gaps(

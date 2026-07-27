@@ -17,7 +17,8 @@ promote:
 ``forward_transfer``   positive mean transfer on leak-free blind days
 ``retention``          no forgetting regression on the retention panel
 ``universe``           no robustness collapse across synthetic archetypes
-``archetype_repair``   a change staged to fix crash has to fix *crash*
+``archetype_repair``   a change staged to fix crash has to fix *crash*, on that
+                       archetype's own ticks and with enough of them to mean it
 ``cooldown``           not promoting on top of a promotion that just landed
 
 A trial that fails any gate leaves ``champion.json`` exactly where it was and
@@ -47,11 +48,17 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 # dojo import here breaks `import spy_der.learning` on its own.
 
 __all__ = [
+    "MIN_TARGET_TRADES",
     "PromotionThresholds",
     "PromotionTrial",
     "TrialGate",
     "run_promotion_trial",
 ]
+
+
+#: Matched trades a targeted archetype needs before its panel is evidence.
+#: Mirrors the recorded-tape evidence floor's intent at archetype granularity.
+MIN_TARGET_TRADES = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,26 +327,45 @@ def _archetype_repair_gate(
     """
     if not target:
         return TrialGate("archetype_repair", True, "not an archetype-targeted change")
+    # Every absence below fails *closed*. "The lattice never drew crash" is a
+    # routine outcome — sampling is stochastic and the daily timers skip the
+    # universe phase entirely — so passing on missing evidence would rubber-stamp
+    # exactly the case this gate exists to catch. A repair the run cannot
+    # demonstrate waits for a run that can.
     panels = universe.get("archetype_authorities")
     if not isinstance(panels, dict):
         return TrialGate(
-            "archetype_repair", True, f"no per-archetype panel for {target}"
+            "archetype_repair",
+            False,
+            f"no per-archetype panel this run — {target} repair unproven",
         )
     panel = panels.get(target)
     if not isinstance(panel, dict):
         return TrialGate(
-            "archetype_repair", True, f"{target} not visited by this lattice"
+            "archetype_repair",
+            False,
+            f"{target} not visited by this lattice — repair unproven",
         )
     challenger = panel.get("challenger")
     champion = panel.get("champion")
     if not isinstance(challenger, dict) or not isinstance(champion, dict):
         return TrialGate(
-            "archetype_repair", True, f"{target} not scored for both authorities"
+            "archetype_repair", False, f"{target} not scored for both authorities"
         )
     cand = _as_float(challenger.get("total_pnl"))
     inc = _as_float(champion.get("total_pnl"))
     if cand is None or inc is None:
-        return TrialGate("archetype_repair", True, f"{target} P&L unmeasured")
+        return TrialGate("archetype_repair", False, f"{target} P&L unmeasured")
+    # A challenger that abstained into two lucky ticks beats a champion at -100
+    # on total P&L alone. Hold the target to its own evidence floor.
+    matched = int(challenger.get("trades") or 0)
+    if matched < MIN_TARGET_TRADES:
+        return TrialGate(
+            "archetype_repair",
+            False,
+            f"{target} scored on only {matched} trade(s) "
+            f"(need {MIN_TARGET_TRADES})",
+        )
     if cand <= inc:
         return TrialGate(
             "archetype_repair",

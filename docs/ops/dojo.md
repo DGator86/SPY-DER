@@ -44,8 +44,10 @@ archetype is recorded as a structured failure episode
    candidate on the target archetype's own ticks. A change that improves the
    average while leaving crash where it was does not promote.
 
-Gaps age out after 14 days and disappear as soon as an archetype stops losing,
-so the training set follows the system rather than the other way round. Two
+Gaps age out after 14 days, and a run that scores an archetype back above water
+clears its gap on the spot, so the training set follows the system rather than
+the other way around. A thin re-score never clears one — recovery needs the same
+3-session floor that opened it. Two
 sample-size rules keep noise out: an archetype needs 3+ scored sessions before
 it counts as a gap, and severity discounts thin evidence — a single -108
 session ranks below a repeated -13.
@@ -71,6 +73,7 @@ it only if the re-run beats the incumbent on **every** gate:
 | `forward_transfer` | mean forward transfer ≥ 0 on leak-free blind days |
 | `retention` | no forgetting regression on the retention panel |
 | `universe` | the synthetic panel does not disagree |
+| `archetype_repair` | a change staged to repair an archetype beats the incumbent on that archetype's own ticks, over at least 10 of them. Fails closed: a lattice that never drew the target proves nothing |
 | `cooldown` | ≥ 6h since the last automatic promotion (three timers fire daily) |
 
 A promotion writes `configs/champion.json` with the validation report attached,

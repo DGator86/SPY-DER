@@ -8,11 +8,13 @@ change staged to repair it is held to that archetype before it can promote.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
+from dojo_tape import seed_tape
 
 from spy_der.dojo.config import DojoConfig
 from spy_der.learning.gaps import (
@@ -27,7 +29,7 @@ from spy_der.learning.hypotheses import (
     target_archetype_of,
 )
 from spy_der.learning.memories import append_failure_episode
-from spy_der.learning.promotion_trial import run_promotion_trial
+from spy_der.learning.promotion_trial import MIN_TARGET_TRADES, run_promotion_trial
 
 # The panel from the production report the loop was failing on: profitable
 # overall, five archetypes underwater, and nothing being done about it.
@@ -93,11 +95,13 @@ def test_stale_gaps_stop_being_trained_on(tmp_path: Path) -> None:
             "mean_session_pnl": -50.0, "n_sessions": 9,
         },
     )
-    # Rewrite the stored timestamp to make it old.
+    # Rewrite the stored timestamp to make it old. Editing the field rather
+    # than swapping a date substring keeps the test correct across UTC midnight.
     store = tmp_path / "memories" / "failure_episodes.json"
-    store.write_text(store.read_text(encoding="utf-8").replace(
-        datetime.now(UTC).isoformat()[:10], old[:10]
-    ), encoding="utf-8")
+    records = json.loads(store.read_text(encoding="utf-8"))
+    for record in records:
+        record["created_at"] = old
+    store.write_text(json.dumps(records), encoding="utf-8")
     assert [g.archetype for g in load_archetype_gaps(tmp_path, max_age_days=14)] == []
 
 
@@ -113,8 +117,27 @@ def test_a_repaired_archetype_leaves_the_training_set(tmp_path: Path) -> None:
             },
         },
     }
-    still_weak = [g.archetype for g in record_archetype_gaps(tmp_path, repaired)]
-    assert "crash" not in still_weak
+    record_archetype_gaps(tmp_path, repaired)
+    # The store is what the next run reads — a recovered archetype must leave
+    # it, not linger for 14 days steering diagnoses at a problem already fixed.
+    assert "crash" not in {g.archetype for g in load_archetype_gaps(tmp_path)}
+    assert "range_chop" in {g.archetype for g in load_archetype_gaps(tmp_path)}
+
+
+def test_a_thin_re_score_does_not_clear_a_gap(tmp_path: Path) -> None:
+    """Recovery needs the same evidence floor that opened the gap."""
+    record_archetype_gaps(tmp_path, PANEL)
+    thin_positive = {
+        "status": "ok",
+        "archetype_matrix": {
+            "crash": {
+                "mean_session_pnl": 5.0, "total_pnl": 5.0,
+                "n_sessions": 1, "n_universes": 1,
+            },
+        },
+    }
+    record_archetype_gaps(tmp_path, thin_positive)
+    assert "crash" in {g.archetype for g in load_archetype_gaps(tmp_path)}
 
 
 # --------------------------------------------------------------------------- #
@@ -246,76 +269,12 @@ def _seed_profitable_tape(root: Path, *, ticks: int = 40) -> Any:
     The production case: the recorded average looks healthy, so nothing in the
     aggregate asks for a change — the only thing wrong is in the archetypes.
     """
-    import json
-    from datetime import date, datetime
-    from decimal import Decimal
-
-    from spy_der.contracts.integration import (
-        MARKET_PACKET_SCHEMA,
-        OUTCOME_PACKET_SCHEMA,
-        MarketCandidateView,
-        MarketPacket,
-        OutcomePacket,
+    return seed_tape(
+        root,
+        pnl_for_tick=lambda _tick: 0.10,
+        uncertainty_for_tick=lambda tick: 0.9 if tick % 2 == 0 else 0.1,
+        ticks=ticks,
     )
-    from spy_der.integrations.zerodte.recorded_feed import FileMarketExperienceProvider
-
-    sessions = ["2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23"]
-    (root / "snapshots").mkdir(parents=True)
-    (root / "outcomes").mkdir(parents=True)
-    candidate = MarketCandidateView(
-        candidate_id="c1",
-        family="long_call",
-        direction="bullish",
-        maximum_loss=Decimal("1"),
-        capital_required=Decimal("1"),
-        geometry_hash="sha256:c1",
-        expiration=date(2026, 7, 22),
-        utility=1.0,
-    )
-    for session in sessions:
-        for tick in range(ticks):
-            snap_id = f"snap-{session}-{tick}"
-            packet = MarketPacket(
-                schema_version=MARKET_PACKET_SCHEMA,
-                snapshot_id=snap_id,
-                session_date=date.fromisoformat(session),
-                symbol="SPY",
-                underlying_price=Decimal("600"),
-                data_quality=1.0,
-                forecast_uncertainty=0.9 if tick % 2 == 0 else 0.1,
-                candidates=(candidate,),
-                forecast={
-                    "labels": {
-                        "realized_pnl": 0.10,
-                        "true_direction": "bullish",
-                        "realized_pnl_by_candidate": {"c1": 0.10},
-                    }
-                },
-                generated_at=datetime(2026, 7, 22, 15, 0, tzinfo=UTC),
-            )
-            (root / "snapshots" / f"{snap_id}.json").write_text(
-                json.dumps(packet.to_dict()), encoding="utf-8"
-            )
-            outcome = OutcomePacket(
-                schema_version=OUTCOME_PACKET_SCHEMA,
-                snapshot_id=snap_id,
-                session_date=date.fromisoformat(session),
-                symbol="SPY",
-                candidate_id="c1",
-                action="TRADE",
-                realized_pnl=Decimal("0.10"),
-                settled=True,
-                labels={
-                    "true_direction": "bullish",
-                    "realized_pnl_by_candidate": {"c1": 0.10},
-                },
-                settled_at=datetime(2026, 7, 22, 20, 0, tzinfo=UTC),
-            )
-            (root / "outcomes" / f"{snap_id}.json").write_text(
-                json.dumps(outcome.to_dict()), encoding="utf-8"
-            )
-    (root / "sessions.json").write_text(json.dumps(sessions), encoding="utf-8")
-    return FileMarketExperienceProvider(root)
 
 
 def test_end_to_end_a_remembered_gap_stages_a_targeted_challenger(
@@ -354,3 +313,45 @@ def test_end_to_end_a_remembered_gap_stages_a_targeted_challenger(
     promotion = out["metrics"]["phases"]["promotion"]
     assert promotion["enacted"] is False
     assert promotion["blocking_gate"] == "pnl_edge"
+
+
+def test_repair_gate_fails_closed_without_evidence(tmp_path: Path) -> None:
+    """No panel, no visit, or too few trades must all refuse — not rubber-stamp.
+
+    The daily timers skip the universe phase and lattice sampling is stochastic,
+    so "crash was never drawn" is routine. Passing the gate on missing evidence
+    would wave through exactly the change it exists to check.
+    """
+    from test_promotion_trial import _cfg
+
+    experience = _seed_profitable_tape(tmp_path / "experience")
+    cases = {
+        "no panel at all": {"status": "ok", "n_scored_universes": 6},
+        "target never drawn": {
+            "status": "ok",
+            "archetype_authorities": {"calm_pin": {
+                "champion": {"total_pnl": 1.0, "trades": 50},
+                "challenger": {"total_pnl": 2.0, "trades": 50},
+            }},
+        },
+        "target barely traded": {
+            "status": "ok",
+            "archetype_authorities": {"crash": {
+                "champion": {"total_pnl": -100.0, "trades": 50},
+                # Two lucky abstain-heavy ticks beat -100 on total P&L alone.
+                "challenger": {"total_pnl": 0.01, "trades": 2},
+            }},
+        },
+    }
+    for label, panel in cases.items():
+        trial = run_promotion_trial(
+            _cfg(tmp_path),
+            changes={"prefer_abstain_on_ood": True},
+            candidate_id=f"dojo-{label.replace(' ', '-')}",
+            experience=experience,
+            universe_result=panel,
+            target_archetype="crash",
+        )
+        repair = next(g for g in trial.gates if g.name == "archetype_repair")
+        assert repair.passed is False, f"{label} passed the repair gate"
+    assert MIN_TARGET_TRADES >= 10, "the target evidence floor must be meaningful"

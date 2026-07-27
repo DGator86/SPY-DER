@@ -16,7 +16,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from spy_der.decisions.knobs import actionable_knobs
-from spy_der.learning.hypotheses import diagnose, generate_hypotheses
+from spy_der.learning.hypotheses import (
+    WEAK_ARCHETYPE_PREFIX,
+    diagnose,
+    generate_hypotheses,
+)
 from spy_der.learning.optimization import optimize_with_holdout
 from spy_der.learning.promotion import stage_pending_review
 
@@ -212,12 +216,16 @@ def _outcome_note(
         return "staging blocked by promotion gates"
     # "no challenger staged" on its own reads as "nothing to fix" even when the
     # panel just diagnosed four weak archetypes. Say which wall it hit.
-    gaps = [d for d in diagnoses if d.startswith("weak_archetype:")]
+    gaps = [d for d in diagnoses if d.startswith(WEAK_ARCHETYPE_PREFIX)]
     reason = "; ".join(getattr(optimization, "notes", ()) or ())
     status = getattr(optimization, "status", "")
-    if gaps and status != "ok":
+    if gaps:
+        # Including status == "ok": the optimizer can succeed and still select a
+        # hypothesis with no live knob, which is the case most likely to read as
+        # "nothing to fix" while the panel says otherwise.
         return (
-            f"{len(gaps)} gap(s) diagnosed but nothing staged — {reason or status}"
+            f"{len(gaps)} gap(s) diagnosed but nothing staged — "
+            f"{reason or status or 'no actionable knob'}"
         )
     if status != "ok" and reason:
         return f"no challenger staged — {reason}"
