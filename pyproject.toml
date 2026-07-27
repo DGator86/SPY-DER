@@ -36,6 +36,7 @@ spy-der-settlement = "spy_der.runtime.settlement:main"
 spy-der-dojo = "spy_der.runtime.dojo_runner:main"
 spy-der-market = "spy_der.runtime.market_service:main"
 spy-der-mcp = "spy_der.runtime.mcp_server:main"
+spy-der-train = "spy_der.runtime.training:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

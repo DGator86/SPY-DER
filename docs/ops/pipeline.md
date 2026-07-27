@@ -4,7 +4,8 @@ The service set and what each stage reads and writes under `/var/lib/spy-der`.
 
 ```
 spy-der market       providers ──────────────▶ market/<session>.jsonl
-spy-der engine       market/ ────────────────▶ candidates/ + features/ + journal
+spy-der train        market/ ────────────────▶ models/ (a registered model group)
+spy-der engine       market/ + models/ ──────▶ candidates/ + features/ + forecasts/ + journal
 spy-der settlement   market/ + journal ──────▶ settlements/<session>.jsonl + journal
 spy-der dojo         experience ─────────────▶ reports/dojo/
 spy-der validate     market/ ────────────────▶ reports/validation/
@@ -15,7 +16,7 @@ spy-der dashboard-api  (read-only) ──────────▶ http://127.
 
 There are exactly two, and neither is new.
 
-**Stage artifacts** (`market/`, `candidates/`, `features/`, `settlements/`) are JSONL records
+**Stage artifacts** (`market/`, `candidates/`, `features/`, `forecasts/`, `settlements/`) are JSONL records
 carrying `seq`, an identity, a schema version and a `record_hash` over the
 payload — the envelope `spy_der.market_data.recording` already wrote for market
 ticks. `ReplayFeed` verifies content hashes, sequence continuity and schema
@@ -45,7 +46,7 @@ restart resumes rather than duplicating.
 |---|---|
 | `candidates` | **runs** — `generate_candidate_universe` is deterministic and complete |
 | `features` | **runs** — `SnapshotFeaturePipeline` builds a `FeatureBundle` per snapshot |
-| `forecast` | unavailable — no trained model group is configured |
+| `forecast` | **runs** when `--forecast-group` names a registered group; fail-closed otherwise |
 
 The feature stage assembles eight families — the multi-timeframe matrix, GEX,
 volatility, RND, flow, breadth, the volatility surface and session context —
@@ -59,12 +60,50 @@ rather than the whole tick. A family with no usable inputs is reported in
 
 `JournalEventType` carries `FORECAST_UNAVAILABLE` and `FEATURE_STAGE_FAILED` as
 first-class outcomes: the design already says a stage may legitimately not run.
-With no model registry, the engine journals `forecast_unavailable` per snapshot
-rather than serving `heuristic_bundle`'s neutral 0.5, which is marked
-research-only and which downstream stages would read as a real forecast.
+Without a group — or when the configured group cannot load — the engine journals
+`forecast_unavailable` **with the reason** per snapshot, rather than serving
+`heuristic_bundle`'s neutral 0.5, which is marked research-only and which
+downstream stages would read as a real forecast. A group that fails to load
+degrades the stage; it never stops the engine.
 
-When a model group lands, the forecast stage starts producing
-`forecast_generated` and the events change accordingly. Nothing else moves.
+## `spy-der train`
+
+Turns recorded sessions into a registered model group. Offline and
+deterministic: it reads `market/`, recomputes features from each snapshot, and
+labels every observation against the *forward* path of its own session.
+
+```bash
+spy-der-train --state-root /var/lib/spy-der          # registers a `research` group
+spy-der-engine --forecast-group <id> --forecast-load-mode research
+```
+
+Deliberately **not** a service. Training on a timer would silently replace the
+model behind a running engine, and swapping the thing that makes predictions is
+a decision someone should take on purpose.
+
+Three gates worth knowing:
+
+- **Every loss is paired with a baseline-relative skill.** A raw loss is not
+  evidence: a Brier of 0.257 reads as respectable until you notice that always
+  predicting the base rate scores 0.248 on the same data — the model is *worse
+  than guessing*, and nothing about the number says so. Each role therefore
+  reports a `*_skill` term, the fractional improvement over a baseline that uses
+  no features at all, and `spy-der-train` prints a per-role verdict plus
+  `has_edge` for the group. **Servable is not the same as useful**: a group can
+  train, register and serve while forecasting nothing of value.
+- **Metrics are out-of-fold or absent.** Scores come from walk-forward folds
+  over whole sessions with an embargo, because intraday rows within a session
+  are heavily autocorrelated and a random split reports skill that does not
+  exist. Too few sessions to form a fold means the group is registered with no
+  metrics — absent, not zero. A group with no held-out score is not evidence.
+- **Training registers `research` and cannot promote itself.** The registry's
+  mode gates mean a `research` group only loads in `research` mode; the engine's
+  default is `shadow`, so a freshly trained group does not quietly start
+  serving. Use `--status shadow` (or promote the group) when it has earned it.
+
+A component role whose target is too sparse is skipped and reported rather than
+fitted on too little data — serving tolerates a partial group, and a model
+trained on forty rows still answers with confidence.
 
 ## `spy-der settlement`
 
