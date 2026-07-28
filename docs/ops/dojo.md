@@ -106,6 +106,11 @@ writes and `spy-der-import-zerodte` back-filled. Without it (or
 `--experience-dir`) every phase reports `no MarketExperienceProvider` and the
 run exits 0 having scored nothing.
 
+`--recent-days N` keeps the newest **N recorded sessions**, not N calendar
+days. A calendar window that spans a weekend only contains two trading
+sessions and used to make the daily timer refuse the tape with
+`2 sessions recorded (< 3)` even when months of history were on disk.
+
 ```bash
 cd /opt/spy-der
 venv/bin/spy-der dojo \
