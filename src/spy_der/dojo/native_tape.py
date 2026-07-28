@@ -20,12 +20,16 @@ priced by the same economics. Nothing is copied from a derived artifact under
 reproducible from the market recording alone, or a replay silently depends on
 whichever engine version happened to write the artifact.
 
-Outcomes are real, not modelled. Every candidate here expires on the session
-date, so its settlement value is arithmetic:
-:func:`~spy_der.candidates.payoff.terminal_payoff` at the closing price. That
-gives a per-candidate P&L map, which is what lets the Dojo measure *selection
-regret* — not just whether a trade won, but how it compared with the best
-trade available at that tick.
+Outcomes are what a position would actually have *realized*, not what it was
+worth at expiry: :func:`~spy_der.evaluation.managed_outcome.simulate_managed_exit`
+walks the bar path and closes the structure where the production exit policy
+says to. SPY-DER never holds to settlement, so scoring terminal payoff would
+credit trades with money the account never saw. That gives a per-candidate P&L
+map, which is what lets the Dojo measure *selection regret* — not just whether
+a trade won, but how it compared with the best trade available at that tick.
+
+The policy must match the one the candidate-value model was trained under, or
+the Dojo and the model disagree about what a good trade is.
 
 Three rules keep the tape honest:
 
@@ -34,10 +38,10 @@ Three rules keep the tape honest:
   the temptation is to put them there so packets are self-contained. Realized
   P&L in a field named ``forecast`` is a lookahead landmine one future
   authority away from reading it, so the label path stays out of the packet.
-* **An unfinished session settles nothing.** Terminal payoff is only defined at
-  expiry, so a session whose bars stop at noon has no settlement price — it has
-  a midday quote. Such a session yields packets and no outcomes rather than a
-  number that reads like a result.
+* **An unfinished session settles nothing.** A position that never reached a
+  close has no settlement price to fall back on when no exit fired — a session
+  whose bars stop at noon offers a midday quote. Such a session yields packets
+  and no outcomes rather than a number that reads like a result.
 * **Sampling is by wall-clock interval, not by record index.** Recording
   cadence differs between the 0DTE import and SPY-DER's own service, and
   between configurations of each. Striding every Nth record would make the tape
@@ -54,9 +58,8 @@ NativeTapeProvider.warnings` rather than left to be discovered:
 * **No candidate utility, therefore no measured selection.**
   :func:`~spy_der.economics.service.calculate_candidate_economics` only
   produces an ``expected_value`` when its caller supplies ``expected_net_pnl``,
-  and that comes from the candidate-value model — which needs realized
-  per-candidate P&L to fit. This tape is the first thing in SPY-DER that
-  produces exactly that, so the loop closes on the next turn; until it does,
+  and that comes from the candidate-value model. Fit one with
+  ``spy-der-train`` and pass it as ``value_model``; without it,
   :class:`~spy_der.agents.deterministic.DeterministicDecisionAgent` sorts on a
   ``None`` utility and falls through to candidate id. The Dojo still measures
   knob effects honestly, but *which* candidate gets picked is alphabetical.
@@ -83,12 +86,13 @@ from spy_der.contracts.integration import (
     MarketPacket,
     OutcomePacket,
 )
-from spy_der.contracts.market import CanonicalMarketSnapshot
+from spy_der.contracts.market import Bar, CanonicalMarketSnapshot
+from spy_der.contracts.positions import ExitPolicy
 from spy_der.economics.service import calculate_universe_economics
+from spy_der.evaluation.managed_outcome import simulate_managed_exit
 from spy_der.evaluation.settlement import (
     session_bar_path,
     session_settlement_price,
-    settled_candidate_pnl,
 )
 from spy_der.market_data.replay import CorruptRecordingError
 from spy_der.training.observations import load_session_snapshots
@@ -206,12 +210,18 @@ class NativeTapeProvider:
         neutral_band: float = DEFAULT_NEUTRAL_BAND,
         symbol: str = "SPY",
         value_model: Any | None = None,
+        exit_policy: ExitPolicy | None = None,
     ) -> None:
         self.market_dir = Path(state_root) / "market"
         self.interval_minutes = max(int(interval_minutes), 0)
         self.neutral_band = max(float(neutral_band), 0.0)
         self.symbol = symbol
         self.value_model = value_model
+        # Outcomes are what a position would have realized under this policy,
+        # matching what the candidate-value model is trained on. Scoring
+        # settlement value while the model predicts managed value would have
+        # the Dojo and the model disagree about what a good trade is.
+        self.exit_policy = exit_policy or ExitPolicy()
         self._outcomes: dict[str, OutcomePacket] = {}
         self._loaded: set[date] = set()
         # Reported once by `warnings()` rather than logged per snapshot. The
@@ -322,7 +332,8 @@ class NativeTapeProvider:
         if not snapshots:
             return [], {}
 
-        settle = session_settlement_price(session_bar_path(snapshots))
+        bar_path = session_bar_path(snapshots)
+        settle = session_settlement_price(bar_path)
         if settle is None and session not in self._unsettled:
             self._unsettled.append(session)
 
@@ -350,7 +361,7 @@ class NativeTapeProvider:
             )
             packets.append(packet)
             if settle is not None:
-                built = self._outcome(snapshot, packet, ranked, settle)
+                built = self._outcome(snapshot, packet, ranked, bar_path, settle)
                 if built is not None:
                     outcomes[packet.snapshot_id] = built
         return packets, outcomes
@@ -479,14 +490,24 @@ class NativeTapeProvider:
         snapshot: CanonicalMarketSnapshot,
         packet: MarketPacket,
         ranked: Sequence[Candidate],
+        bar_path: Sequence[Bar],
         settle: Decimal,
     ) -> OutcomePacket | None:
         by_candidate: dict[str, str] = {}
         reference: Candidate | None = None
         for candidate in ranked:
-            pnl = settled_candidate_pnl(candidate, packet.session_date, settle)
-            if pnl is None:
+            outcome = simulate_managed_exit(
+                candidate,
+                chain=snapshot.option_chain,
+                bars=bar_path,
+                observed_at=snapshot.timestamp,
+                session=packet.session_date,
+                settlement=settle,
+                policy=self.exit_policy,
+            )
+            if outcome is None:
                 continue
+            pnl = outcome.realized_pnl
             by_candidate[candidate.candidate_id] = str(pnl)
             if reference is None:
                 reference = candidate

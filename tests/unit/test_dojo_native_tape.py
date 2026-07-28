@@ -16,6 +16,7 @@ against the old code for the right reason — no provider, no score.
 from __future__ import annotations
 
 import json
+import math
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -23,7 +24,6 @@ from pathlib import Path
 import numpy as np
 
 from spy_der.candidates.factory import generate_candidate_universe
-from spy_der.candidates.payoff import intrinsic
 from spy_der.contracts.market import (
     Bar,
     CanonicalMarketSnapshot,
@@ -37,7 +37,9 @@ from spy_der.dojo.authority import default_authorities
 from spy_der.dojo.config import DojoConfig
 from spy_der.dojo.native_tape import NativeTapeProvider
 from spy_der.dojo.recorded import run_recorded_phase
+from spy_der.evaluation.managed_outcome import simulate_managed_exit
 from spy_der.market_data.recording import build_record
+from spy_der.training.observations import load_session_snapshots
 
 ET_OPEN_UTC = 14  # 09:30 ET expressed in UTC during standard time
 FULL_SESSION_BARS = 390
@@ -73,7 +75,11 @@ def _chain(session: date, spot: float, received: datetime) -> tuple[OptionQuote,
                 if side is OptionType.CALL
                 else max(strike - spot, 0.0)
             )
-            mid = Decimal(f"{value + 1.0:.2f}")
+            # Extrinsic decays with moneyness. A flat premium across every
+            # strike makes every vertical spread cost exactly zero, which is
+            # not a market and leaves nothing to measure a profit ratio against.
+            extrinsic = 1.0 * math.exp(-((strike - spot) ** 2) / 50.0) + 0.05
+            mid = Decimal(f"{value + extrinsic:.2f}")
             quotes.append(
                 OptionQuote(
                     contract=OptionContract(
@@ -286,34 +292,57 @@ def test_data_quality_comes_from_the_recording(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # Outcomes are settlement arithmetic, not a model                             #
 # --------------------------------------------------------------------------- #
-def test_settled_pnl_is_the_terminal_payoff_at_the_close(tmp_path: Path) -> None:
-    """Check one long call against hand arithmetic, not against the same function."""
+def test_outcomes_are_managed_pnl_not_the_settlement_value(tmp_path: Path) -> None:
+    """SPY-DER never holds to expiry, so the Dojo must not score as if it did.
+
+    The tape closes each structure where the production exit policy says to.
+    Scoring terminal payoff instead would credit trades with money the account
+    never saw — and would disagree with what the candidate-value model is
+    trained on.
+    """
+    session = _record(tmp_path, sessions=1)[0]
+    provider = NativeTapeProvider(tmp_path, interval_minutes=0)
+    packets = list(provider.snapshots(session))
+    snapshots, _ = load_session_snapshots(
+        tmp_path / "market" / f"{session.isoformat()}.jsonl"
+    )
+    settle = snapshots[-1].bars_1m[-1].close
+    bar_path = snapshots[-1].bars_1m
+
+    differed = 0
+    for packet in packets:
+        outcome = provider.outcome(packet.snapshot_id)
+        if outcome is None:
+            continue
+        by_candidate = outcome.labels["realized_pnl_by_candidate"]
+        snapshot = next(s for s in snapshots if s.snapshot_id == packet.snapshot_id)
+        for candidate in generate_candidate_universe(snapshot).candidates:
+            recorded = by_candidate.get(candidate.candidate_id)
+            if recorded is None:
+                continue
+            managed = simulate_managed_exit(
+                candidate,
+                chain=snapshot.option_chain,
+                bars=bar_path,
+                observed_at=snapshot.timestamp,
+                session=session,
+                settlement=settle,
+            )
+            assert managed is not None
+            assert Decimal(recorded) == managed.realized_pnl
+            if managed.was_managed:
+                differed += 1
+    assert differed, "no position exited early — the managed path is untested"
+
+
+def test_the_final_tick_has_no_outcome(tmp_path: Path) -> None:
+    """There is no forward path to manage a position through at the last bar."""
     session = _record(tmp_path, sessions=1)[0]
     provider = NativeTapeProvider(tmp_path, interval_minutes=0)
     packets = list(provider.snapshots(session))
 
-    snapshots, _ = __import__(
-        "spy_der.training.observations", fromlist=["load_session_snapshots"]
-    ).load_session_snapshots(tmp_path / "market" / f"{session.isoformat()}.jsonl")
-    settle = snapshots[-1].bars_1m[-1].close
-
-    checked = 0
-    for packet in packets:
-        outcome = provider.outcome(packet.snapshot_id)
-        assert outcome is not None
-        by_candidate = outcome.labels["realized_pnl_by_candidate"]
-        snapshot = next(s for s in snapshots if s.snapshot_id == packet.snapshot_id)
-        for candidate in generate_candidate_universe(snapshot).candidates:
-            if candidate.family != "long_call":
-                continue
-            leg = candidate.legs[0]
-            # A long call settles at intrinsic; the debit paid is a negative credit.
-            expected = candidate.entry_credit + intrinsic(
-                OptionType.CALL, leg.strike, settle
-            )
-            assert Decimal(by_candidate[candidate.candidate_id]) == expected
-            checked += 1
-    assert checked, "no long_call candidate was available to verify"
+    without = [p for p in packets if provider.outcome(p.snapshot_id) is None]
+    assert [p.snapshot_id for p in without] == [packets[-1].snapshot_id]
 
 
 def test_every_packet_candidate_has_a_settled_pnl(tmp_path: Path) -> None:
@@ -321,25 +350,30 @@ def test_every_packet_candidate_has_a_settled_pnl(tmp_path: Path) -> None:
     session = _record(tmp_path, sessions=1)[0]
     provider = NativeTapeProvider(tmp_path, interval_minutes=0)
 
+    checked = 0
     for packet in provider.snapshots(session):
         outcome = provider.outcome(packet.snapshot_id)
-        assert outcome is not None
+        if outcome is None:  # the final tick has no forward path
+            continue
         settled = set(outcome.labels["realized_pnl_by_candidate"])
         assert {c.candidate_id for c in packet.candidates} == settled
+        checked += 1
+    assert checked
 
 
 def test_realized_direction_matches_the_sessions_actual_move(tmp_path: Path) -> None:
     session = _record(tmp_path, sessions=1)[0]
     provider = NativeTapeProvider(tmp_path, interval_minutes=0)
     packets = list(provider.snapshots(session))
-    snapshots, _ = __import__(
-        "spy_der.training.observations", fromlist=["load_session_snapshots"]
-    ).load_session_snapshots(tmp_path / "market" / f"{session.isoformat()}.jsonl")
+    snapshots, _ = load_session_snapshots(
+        tmp_path / "market" / f"{session.isoformat()}.jsonl"
+    )
     settle = snapshots[-1].bars_1m[-1].close
 
     for packet in packets:
         outcome = provider.outcome(packet.snapshot_id)
-        assert outcome is not None
+        if outcome is None:
+            continue
         move = (settle - packet.underlying_price) / packet.underlying_price
         expected = (
             "neutral"
