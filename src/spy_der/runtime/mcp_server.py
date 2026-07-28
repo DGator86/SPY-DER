@@ -152,6 +152,18 @@ TOOLS: tuple[McpTool, ...] = (
         schema=_NO_ARGS,
     ),
     McpTool(
+        name="spy_der_dojo_progress",
+        title="Live Dojo progress",
+        description=(
+            "What the Dojo is doing right now: phase strip (real tape, blind "
+            "days, learner, sparring, promotion), current detail line, elapsed "
+            "time, and whether the run is live / idle / stale / failed. Use "
+            "when asked 'is the dojo working?' — not the finished report."
+        ),
+        route="/v1/dojo/progress",
+        schema=_NO_ARGS,
+    ),
+    McpTool(
         name="spy_der_dojo_reports",
         title="Dojo report index",
         description=(

@@ -12,6 +12,7 @@ Routes:
     GET /health                    liveness
     GET /v1/system                 services, feed, AI gate, deploy — one view
     GET /v1/state                  live_state.json (spyder.dashboard.v1)
+    GET /v1/dojo/progress          live Dojo phase strip (working / idle / stale)
     GET /v1/dojo/latest            newest Dojo report
     GET /v1/dojo/reports           index of stamped Dojo reports (newest first)
     GET /v1/validation/latest      newest parity-validation report
@@ -42,6 +43,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from spy_der.dojo.config import DEFAULT_STATE_ROOT
+from spy_der.dojo.progress import idle_dojo_progress, read_dojo_progress
 from spy_der.dojo.reports import read_latest_dojo_report
 
 __all__ = [
@@ -93,6 +95,11 @@ class DashboardApiState:
 
     def latest_dojo_report(self) -> dict[str, Any] | None:
         return read_latest_dojo_report(self.reports_dir)
+
+    def dojo_progress(self) -> dict[str, Any]:
+        """Live Dojo square. Always 200 — idle when no run has published yet."""
+        body = read_dojo_progress(self.reports_dir)
+        return body if body is not None else idle_dojo_progress()
 
     def latest_validation_report(self) -> dict[str, Any] | None:
         latest = self.validation_dir / "latest.json"
@@ -179,6 +186,8 @@ def handle_get(state: DashboardApiState, path: str, query: str = "") -> tuple[in
                 "detail": "no Dojo run has completed, or its report is unreadable",
             }
         return 200, body
+    if path in {"/v1/dojo/progress"}:
+        return 200, state.dojo_progress()
     if path in {"/v1/system", "/v1/status"}:
         from spy_der.runtime.system_status import build_system_status
 

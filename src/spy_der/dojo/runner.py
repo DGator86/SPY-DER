@@ -34,6 +34,7 @@ from spy_der.dojo.native_tape import (
     NativeTapeProvider,
     load_value_model,
 )
+from spy_der.dojo.progress import DojoProgress
 from spy_der.dojo.protocols import (
     CandidateEvaluator,
     DecisionAuthority,
@@ -447,18 +448,65 @@ def _run_dojo_phases(
     # worlds a weak archetype gets drawn is a separate mechanism — the curriculum
     # weights the universe phase persists (spy_der.dojo.curriculum_weights).
     state_root = str(_Path(cfg.configs_dir).parent)
+    with DojoProgress(
+        reports_dir=cfg.reports_dir,
+        state_root=state_root,
+        report_date=report_date,
+    ) as progress:
+        return _run_dojo_phases_with_progress(
+            cfg,
+            progress=progress,
+            experience=experience,
+            synthetic=synthetic,
+            scorer=scorer,
+            authority_set=authority_set,
+            state_root=state_root,
+            report_date=report_date,
+            started=started,
+            skip_sequential=skip_sequential,
+        )
+
+
+def _run_dojo_phases_with_progress(
+    cfg: DojoConfig,
+    *,
+    progress: DojoProgress,
+    experience: MarketExperienceProvider | None,
+    synthetic: SyntheticUniverseProvider | None,
+    scorer: CandidateEvaluator,
+    authority_set: dict[str, DecisionAuthority],
+    state_root: str,
+    report_date: str,
+    started: float,
+    skip_sequential: bool,
+) -> dict[str, Any]:
+    # Native tape is the long pole; surface each session as it rebuilds so the
+    # dashboard square is not stuck on "Real tape" for an hour with no detail.
+    if isinstance(experience, NativeTapeProvider) and experience._on_progress is None:
+        experience._on_progress = lambda detail: progress.update(detail, phase="recorded")
+
     remembered_gaps = load_archetype_gaps(state_root)
 
+    progress.begin_phase("recorded", "Scoring stored market sessions")
     recorded = run_recorded_phase(
         cfg,
         experience,
         authorities=authority_set,
         evaluator=scorer,
     )
-    sequential = (
-        {"status": "skipped", "note": "skip_sequential"}
-        if skip_sequential
-        else run_sequential_dojo(
+    progress.finish_phase(
+        "recorded",
+        detail=str(recorded.get("note") or recorded.get("status") or ""),
+        skipped=str(recorded.get("status")) in {"skipped", "insufficient_data"},
+    )
+
+    if skip_sequential:
+        progress.begin_phase("sequential", "Skipping blind-day panel")
+        sequential = {"status": "skipped", "note": "skip_sequential"}
+        progress.finish_phase("sequential", "skipped", skipped=True)
+    else:
+        progress.begin_phase("sequential", "Leak-free blind-day forward transfer")
+        sequential = run_sequential_dojo(
             experience,
             cfg=SequentialDojoConfig(
                 min_warm_sessions=max(2, cfg.min_sessions - 1),
@@ -466,11 +514,19 @@ def _run_dojo_phases(
             authorities=authority_set,
             evaluator=scorer,
         )
-    )
-    learner = (
-        {"status": "skipped", "note": "skip_learner"}
-        if cfg.skip_learner
-        else run_learning_cycle(
+        progress.finish_phase(
+            "sequential",
+            detail=str(sequential.get("status") or ""),
+            skipped=str(sequential.get("status")) == "skipped",
+        )
+
+    if cfg.skip_learner:
+        progress.begin_phase("learner", "Skipping adaptive learner")
+        learner = {"status": "skipped", "note": "skip_learner"}
+        progress.finish_phase("learner", "skipped", skipped=True)
+    else:
+        progress.begin_phase("learner", "Diagnose → hypothesize → stage challenger")
+        learner = run_learning_cycle(
             mode="dojo",
             configs_dir=cfg.configs_dir,
             experience=experience,
@@ -482,7 +538,11 @@ def _run_dojo_phases(
             recorded_result=recorded,
             weak_archetypes=weakest_archetypes(remembered_gaps),
         )
-    )
+        progress.finish_phase(
+            "learner",
+            detail=str(learner.get("outcome") or learner.get("status") or ""),
+            skipped=str(learner.get("status")) == "skipped",
+        )
     # If learner staged a challenger, re-score universe with those changes too.
     staged_changes: dict[str, Any] | None = None
     if learner.get("outcome") == "promotion_recommended":
@@ -504,6 +564,7 @@ def _run_dojo_phases(
         and not cfg.force_universe
         and recorded.get("status") == "insufficient_data"
     ):
+        progress.begin_phase("universe", "Skipping sparring — not enough real tape")
         universe = {
             "status": "skipped",
             "reason": "no_recorded_tape",
@@ -516,17 +577,28 @@ def _run_dojo_phases(
             "n_snapshots": 0,
             "n_scored_universes": 0,
         }
+        progress.finish_phase("universe", str(universe["note"]), skipped=True)
     else:
+        progress.begin_phase(
+            "universe",
+            f"Sparring {cfg.universes_per_gen} worlds x {cfg.generations} generation(s)",
+        )
         universe = run_universe_phase(
             cfg,
             synthetic,
             authorities=universe_authorities,
             evaluator=scorer,
         )
+        progress.finish_phase(
+            "universe",
+            detail=str(universe.get("status") or ""),
+            skipped=str(universe.get("status")) == "skipped",
+        )
 
     # Phase 5 — the recommendation has to earn itself: re-run recorded tape and
     # blind days with the staged change installed, and promote it only if the
     # re-run beats the incumbent on every gate. No human in this loop.
+    progress.begin_phase("promotion", "Evidence-gated promotion trial")
     promotion = _run_promotion_phase(
         cfg,
         learner=learner,
@@ -535,6 +607,11 @@ def _run_dojo_phases(
         evaluator=scorer,
         universe_result=universe,
         incumbent=authority_set.get("champion"),
+    )
+    progress.finish_phase(
+        "promotion",
+        detail=str(promotion.get("status") or ""),
+        skipped=str(promotion.get("status")) in {"no_candidate", "disabled", "skipped"},
     )
 
     lessons = _persist_lessons(
@@ -596,6 +673,10 @@ def _run_dojo_phases(
         flags=flags,
         metrics=metrics,
         human=human,
+    )
+    progress.finish(
+        summary=summary,
+        report_path=str(paths.get("dated_path") or paths.get("latest_path") or ""),
     )
     return {
         "report_date": report_date,

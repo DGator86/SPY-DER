@@ -211,6 +211,7 @@ class NativeTapeProvider:
         symbol: str = "SPY",
         value_model: Any | None = None,
         exit_policy: ExitPolicy | None = None,
+        on_progress: Any | None = None,
     ) -> None:
         self.market_dir = Path(state_root) / "market"
         self.interval_minutes = max(int(interval_minutes), 0)
@@ -222,6 +223,7 @@ class NativeTapeProvider:
         # settlement value while the model predicts managed value would have
         # the Dojo and the model disagree about what a good trade is.
         self.exit_policy = exit_policy or ExitPolicy()
+        self._on_progress = on_progress
         self._outcomes: dict[str, OutcomePacket] = {}
         self._loaded: set[date] = set()
         # Reported once by `warnings()` rather than logged per snapshot. The
@@ -246,6 +248,15 @@ class NativeTapeProvider:
 
     def snapshots(self, session: date) -> Iterable[MarketPacket]:
         packets, outcomes = self._build_session(session)
+        if self._on_progress is not None:
+            try:
+                self._on_progress(
+                    f"Built {session.isoformat()} — {len(packets)} packet(s)"
+                )
+            except Exception:
+                # Progress is observability only; a bad callback must not
+                # take down the tape the Dojo is scoring.
+                pass
         self._outcomes.update(outcomes)
         self._loaded.add(session)
         return packets
