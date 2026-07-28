@@ -843,7 +843,7 @@ function renderDojoProgress(progress) {
 }
 
 function renderDojo(dojo, validation, progress) {
-  const box = panel("Dojo training room", true);
+  const box = panel("Learning · Dojo", true);
   box.appendChild(renderDojoProgress(progress));
   if (!dojo) {
     box.appendChild(note("No Dojo report yet. The nightly run will fill this in."));
@@ -988,7 +988,7 @@ export function mountSpyDerTab(options = {}) {
 
   const head = el("div", "spyder-tab__head");
   const title = el("h2", "spyder-tab__title", "SPY-DER");
-  const subtitle = el("small", null, "prediction · deterministic risk · guard");
+  const subtitle = el("small", null, "prediction · risk · Learning · Dojo");
   title.appendChild(subtitle);
   const statusPill = el("span", "spyder-tab__pill", "loading");
   const freshness = el("span", "spyder-tab__note", "");

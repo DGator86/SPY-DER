@@ -1,18 +1,16 @@
 <!doctype html>
 <!--
   Standalone shell for the SPY-DER tab, served by `spy-der-dashboard-api` at
-  `/ui`. It loads the same `spy-der-tab.js` the 0DTE Vercel dashboard embeds, so
-  there is one implementation and no second copy to drift.
-
-  This is the mount that keeps working after 0DTE is retired: the tab needs no
-  host dashboard, only the read-only API on the same origin.
+  `/ui`. This is the primary Learning · Dojo surface — not the 0DTE Vercel host.
+  The same `spy-der-tab.js` may be embedded elsewhere during migration, so there
+  is one implementation and no second copy to drift.
 -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
-    <title>SPY-DER</title>
+    <title>SPY-DER · Learning · Dojo</title>
     <link rel="stylesheet" href="/ui/spy-der-tab.css" />
     <style>
       html,

@@ -5,8 +5,21 @@
 
 ## What it is (read this first)
 
-The Vercel **Dojo** tab shows SPY-DER Dojo reports. Dojo is a **nightly exam +
-study plan**, not an open-ended trainer:
+**Learning and Dojo live on SPY-DER**, not on the 0DTE Vercel host. Open the
+read-only dashboard:
+
+```bash
+# on the VPS (loopback) — or SSH-tunnel 8788 and open locally
+curl -s http://127.0.0.1:8788/health
+# browser: http://127.0.0.1:8788/ui
+```
+
+The **Learning · Dojo** panel on `/ui` shows the live working square
+(`/v1/dojo/progress`) and the finished report (`/v1/dojo/latest`). No 0DTE
+proxy is required for that surface. 0DTE may still embed the same tab during
+migration; that path is optional and does not own Learning/Dojo.
+
+Dojo is a **nightly exam + study plan**, not an open-ended trainer:
 
 | Question | Answer |
 |---|---|
@@ -15,8 +28,8 @@ study plan**, not an open-ended trainer:
 | Why stop before “great”? | Fixed timer budgets (e.g. daily: 6 worlds × 1 generation). Weak market types raise weights for the **next** generation / next night — the run does not loop until every archetype is green. |
 
 Each report includes a `human` block (`headline`, `data_story`, `stop_reason`,
-`next_step`) for dashboards. The Vercel tab rewrite lives in
-[`integrations/zerodte/dojo-tab-human-ui.patch`](../../integrations/zerodte/dojo-tab-human-ui.patch).
+`next_step`) for the SPY-DER dashboard. See also
+[`docs/ops/DASHBOARD_TAB.md`](DASHBOARD_TAB.md).
 
 The Dojo compresses market experience into one run:
 
@@ -257,42 +270,52 @@ low directional accuracy, unvisited regimes, prior curriculum carry, …).
 
 ## Reports
 
-A run writes a stamped report plus a `latest.json` pointer:
+A run writes progress while it works, then a stamped report plus `latest.json`:
 
 ```
+/var/lib/spy-der/reports/dojo/progress.json
 /var/lib/spy-der/reports/dojo/dojo_YYYYMMDD_HHMMSS.json
 /var/lib/spy-der/reports/dojo/latest.json
 /var/lib/spy-der/configs/curriculum_weights.json
+/var/lib/spy-der/health/dojo.json
 ```
 
-Both report files are published world-readable (0644, minus the operator umask)
-because the dashboard API and the 0DTE adapter read them as different users.
+Report and progress files are published world-readable (0644, minus the
+operator umask) so `spy-der-dashboard-api` can serve them as a different user.
 
-## Serving the report
+## Serving Learning · Dojo (SPY-DER)
 
-`spy-der-dashboard-api.service` exposes the report read-only on loopback:
+`spy-der-dashboard-api.service` is the Learning/Dojo UI. Loopback only:
 
 ```bash
-sudo cp deploy/spy-der-dashboard-api.service /etc/systemd/system/
-sudo systemctl daemon-reload
 sudo systemctl enable --now spy-der-dashboard-api.service
+# UI:   http://127.0.0.1:8788/ui
+# JSON: http://127.0.0.1:8788/v1/dojo/progress
 ```
 
 | Route | Returns |
 |---|---|
+| `GET /ui` | SPY-DER dashboard (Learning · Dojo panel is on this page) |
 | `GET /health` | liveness + resolved state root |
+| `GET /v1/dojo/progress` | live phase strip while a oneshot is working |
 | `GET /v1/dojo/latest` | newest Dojo report |
 | `GET /v1/dojo/reports?limit=N` | index of stamped reports, newest first |
 | `GET /v1/validation/latest` | newest parity-validation report |
 | `GET /v1/validation/reports?limit=N` | index of stamped validation reports |
 | `GET /v1/state` | `live_state.json` (`spyder.dashboard.v1`) |
+| `GET /v1/system` | services, feed, AI gate, deploy |
 
 ```bash
+curl -s http://127.0.0.1:8788/v1/dojo/progress | jq '{status,phase_label,detail,live}'
 curl -s http://127.0.0.1:8788/v1/dojo/latest | jq '.summary, .flags'
 ```
 
-The 0DTE dashboard adapter reads `latest.json` (or `live_state.json`) through
-the `spyder.dashboard.v1` contract only.
+From a laptop, tunnel then open the UI (still SPY-DER — not Vercel):
+
+```bash
+ssh -L 8788:127.0.0.1:8788 user@vps
+# browser: http://127.0.0.1:8788/ui
+```
 
 ## Troubleshooting: a run finished but no report is visible
 

@@ -1,35 +1,41 @@
 # SPY-DER dashboard tab
 
-One tab, two mounts, one implementation.
+**Learning and Dojo are on SPY-DER.** The operator surface is
+`spy-der-dashboard-api` at `GET /ui`. 0DTE may embed the same assets during
+migration; it does not own Learning/Dojo.
 
 ```
 src/spy_der/runtime/ui/          the tab (index.html, spy-der-tab.js, .css)
         |
-        +-- spy-der-dashboard-api  GET /ui        standalone, survives cutover
-        +-- 0DTE Vercel dashboard  a tab pane      during migration
+        +-- spy-der-dashboard-api  GET /ui        primary (Learning · Dojo lives here)
+        +-- 0DTE Vercel dashboard  a tab pane      optional embed during migration
 ```
 
 The assets ship inside the installed package (`[tool.setuptools.package-data]`),
 so the systemd unit reads them out of the venv rather than depending on a
 checkout being present on the VPS.
 
-## Standalone
+## Primary: SPY-DER `/ui`
 
 ```bash
-spy-der-dashboard-api --state-root /var/lib/spy-der --port 8788
+sudo systemctl enable --now spy-der-dashboard-api.service
+# on the VPS, or via `ssh -L 8788:127.0.0.1:8788 …`
+open http://127.0.0.1:8788/ui
 ```
 
-Then `http://127.0.0.1:8788/ui`. Same origin as `/v1/*`, so no configuration.
+Same origin as `/v1/*`, so no proxy and no `data-spy-der-base` prefix.
 
 The service stays read-only: `deploy/spy-der-dashboard-api.service` sets
 `ReadOnlyPaths=/var/lib/spy-der`, and `/ui` only reads files inside the
 installed package directory.
 
-## Embedded in 0DTE
+## Optional: embed in 0DTE
 
 See [`integrations/zerodte/spy_der_tab/README.md`](../../integrations/zerodte/spy_der_tab/README.md).
 Summary: serve the two assets, add a container with `data-spy-der-tab`, proxy
-five GETs. No JavaScript edit on the 0DTE side — the module auto-mounts.
+the GETs (including `/v1/dojo/progress`). No JavaScript edit on the 0DTE side —
+the module auto-mounts. Prefer SPY-DER `/ui` unless you specifically need the
+Vercel host.
 
 ## What it shows
 
@@ -39,7 +45,7 @@ five GETs. No JavaScript edit on the 0DTE side — the module auto-mounts.
 | Current decision | `/v1/state` | confidence, uncertainty, size scalar, reason codes, models, rationale |
 | Shadow account | `/v1/attribution/latest` | model book vs actual book, gap decomposition, behavioural flags |
 | System health | `/v1/system` | services, feed, AI gate, deploy |
-| Dojo training room | `/v1/dojo/latest`, `/v1/validation/latest` | plain-English verdict, tonight’s focus, stage cards, robustness matrix, parity |
+| Learning · Dojo | `/v1/dojo/progress`, `/v1/dojo/latest`, `/v1/validation/latest` | live working square, finished report, parity |
 | Open positions | `/v1/state` | live positions with unrealized P&L |
 
 `/v1/state` carries either published shape — a `spyder.dashboard.v1` packet from

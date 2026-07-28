@@ -1,5 +1,9 @@
 # 0DTE thin SPY-DER dashboard adapter
 
+**Learning and Dojo are on SPY-DER** (`http://127.0.0.1:8788/ui`). This adapter
+is only for optional reads from the 0DTE host during migration — it does not
+own the Learning/Dojo UI.
+
 This agent cannot push to `DGator86/0DTE`. Land the following on 0DTE `main`.
 
 ## Target layout inside 0DTE
