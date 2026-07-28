@@ -16,9 +16,47 @@ __all__ = [
     "PositionState",
     "PositionStatus",
     "ReconciliationResult",
+    "profit_ratio",
 ]
 
 POSITION_SCHEMA = "position.v1"
+
+
+def profit_ratio(
+    entry_price: Decimal | float | str,
+    mark_price: Decimal | float | str,
+    *,
+    opened_for_credit: bool,
+) -> Decimal:
+    """Fraction of the entry price gained, signed so positive is always profit.
+
+    The direction is the whole point. ``avg_fill_price`` is a positive price
+    magnitude — a structure sold for a 1.00 credit and one bought for a 1.00
+    debit both record ``entry_price = 1.00``, with the direction living in the
+    order's ``side``. So the naive ``(mark - entry) / entry`` is right for a
+    debit and exactly backwards for a credit:
+
+    ===================================  ==========  ==================
+    Iron fly sold at 1.00                Reality     Naive ratio
+    ===================================  ==========  ==================
+    price falls to 0.50 (buy back cheap) winning     -0.50, reads as a loss
+    price rises to 1.60 (buy back dear)  losing      +0.60, reads as a win
+    ===================================  ==========  ==================
+
+    Fed to :func:`~spy_der.positions.exits.evaluate_exit` that stopped out
+    winners and took profit on losers — both locking in a loss, on exactly the
+    credit families (iron fly, iron condor, credit spreads) the system trades
+    most. Every consumer of a profit ratio must come through here.
+
+    For a credit structure the convention this produces is the conventional
+    one: ``take_profit_ratio = 0.5`` means buying the structure back for half
+    the credit received.
+    """
+    entry = Decimal(str(entry_price))
+    if entry == 0:
+        raise ValueError("profit_ratio needs a non-zero entry price")
+    move = (Decimal(str(mark_price)) - entry) / entry
+    return -move if opened_for_credit else move
 
 
 class PositionStatus(StrEnum):
@@ -84,6 +122,11 @@ class PositionState:
     exit_reason: str = ""
     order_ids: tuple[str, ...] = ()
     geometry_hash: str = ""
+    #: True when the structure was opened for a net credit. Load-bearing:
+    #: ``avg_fill_price`` is a positive price magnitude and carries direction in
+    #: the order's ``side``, not in its sign, so without this a credit structure
+    #: has its profit direction backwards. See :func:`profit_ratio`.
+    opened_for_credit: bool = False
 
     def __post_init__(self) -> None:
         if self.account_id:

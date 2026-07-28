@@ -7,7 +7,12 @@ from datetime import datetime, time
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from spy_der.contracts.positions import ApprovedExitPolicyId, ExitPolicy, PositionState
+from spy_der.contracts.positions import (
+    ApprovedExitPolicyId,
+    ExitPolicy,
+    PositionState,
+    profit_ratio,
+)
 
 __all__ = ["ExitSignal", "evaluate_exit"]
 
@@ -54,8 +59,12 @@ def evaluate_exit(
     if entry is None or entry == 0:
         return ExitSignal(False, reason="no_entry")
 
-    # Long premium PnL proxy: (mark - entry) / entry
-    pnl_ratio = float((Decimal(str(mark_price)) - Decimal(str(entry))) / Decimal(str(entry)))
+    # Signed so positive is always profit, for credit and debit alike. Using the
+    # raw price move here stopped out winning credit structures and took profit
+    # on losing ones — see `profit_ratio`.
+    pnl_ratio = float(
+        profit_ratio(entry, mark_price, opened_for_credit=position.opened_for_credit)
+    )
 
     pid = policy.policy_id
     if pid in {

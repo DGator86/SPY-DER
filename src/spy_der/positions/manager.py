@@ -8,7 +8,12 @@ from decimal import Decimal
 
 from spy_der.contracts.common import content_hash
 from spy_der.contracts.execution import OrderState, OrderStatus
-from spy_der.contracts.positions import ExitPolicy, PositionState, PositionStatus
+from spy_der.contracts.positions import (
+    ExitPolicy,
+    PositionState,
+    PositionStatus,
+    profit_ratio,
+)
 from spy_der.execution.accounts import IsolatedAccountBook
 from spy_der.positions.exits import ExitSignal, evaluate_exit
 from spy_der.positions.state_machine import validate_position_transition
@@ -28,8 +33,16 @@ class PositionManager:
         *,
         max_loss: Decimal = Decimal("0"),
         exit_policy_id: str = "",
+        opened_for_credit: bool = False,
         now: datetime | None = None,
     ) -> PositionState | None:
+        """Open or update the position for ``order``.
+
+        ``opened_for_credit`` must reflect the candidate's entry type. The fill
+        price is a positive magnitude for credit and debit alike, so without it
+        every profit ratio on a credit structure comes out backwards — see
+        :func:`~spy_der.contracts.positions.profit_ratio`.
+        """
         now = now or datetime.now(tz=UTC)
         if order.status not in {OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED}:
             return None
@@ -58,6 +71,7 @@ class PositionManager:
                 exit_policy_id=exit_policy_id or self.default_policy.policy_id,
                 opened_at=now,
                 order_ids=(order.order_id,),
+                opened_for_credit=opened_for_credit,
             )
             validate_position_transition(PositionStatus.PENDING_OPEN, PositionStatus.OPEN)
             opened = PositionState(
@@ -73,6 +87,7 @@ class PositionManager:
                 exit_policy_id=pending.exit_policy_id,
                 opened_at=pending.opened_at,
                 order_ids=pending.order_ids,
+                opened_for_credit=pending.opened_for_credit,
             )
             self._positions[position_id] = opened
             self.accounts.register_position(order.account_id, position_id)
@@ -97,6 +112,7 @@ class PositionManager:
                 exit_policy_id=existing.exit_policy_id,
                 opened_at=existing.opened_at,
                 order_ids=tuple(dict.fromkeys((*existing.order_ids, order.order_id))),
+                opened_for_credit=existing.opened_for_credit,
             )
             self._positions[position_id] = updated
             return updated
@@ -112,8 +128,8 @@ class PositionManager:
         pos = self._positions[position_id]
         if pos.entry_price is None or pos.open_contracts <= 0:
             return pos
-        pnl_ratio = (Decimal(str(mark_price)) - Decimal(str(pos.entry_price))) / Decimal(
-            str(pos.entry_price)
+        pnl_ratio = profit_ratio(
+            pos.entry_price, mark_price, opened_for_credit=pos.opened_for_credit
         )
         peak = max(pos.peak_pnl, pnl_ratio)
         updated = PositionState(
@@ -135,6 +151,7 @@ class PositionManager:
             exit_reason=pos.exit_reason,
             order_ids=pos.order_ids,
             geometry_hash=pos.geometry_hash,
+            opened_for_credit=pos.opened_for_credit,
         )
         self._positions[position_id] = updated
         return updated
@@ -211,6 +228,7 @@ class PositionManager:
             exit_reason=reason or "ai_reduce",
             order_ids=pos.order_ids,
             geometry_hash=pos.geometry_hash,
+            opened_for_credit=pos.opened_for_credit,
         )
         self._positions[position_id] = updated
         self.accounts.realize_pnl(pos.account_id, pnl, note=f"reduce:{cut}")
@@ -251,6 +269,7 @@ class PositionManager:
             exit_reason=reason,
             order_ids=pos.order_ids,
             geometry_hash=pos.geometry_hash,
+            opened_for_credit=pos.opened_for_credit,
         )
         self._positions[position_id] = closed
         self.accounts.close_position(pos.account_id, position_id, pnl)
@@ -278,6 +297,7 @@ class PositionManager:
             exit_reason=pos.exit_reason,
             order_ids=pos.order_ids,
             geometry_hash=pos.geometry_hash,
+            opened_for_credit=pos.opened_for_credit,
         )
         self._positions[position_id] = settled
         return settled

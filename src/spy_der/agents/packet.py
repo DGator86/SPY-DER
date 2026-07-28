@@ -22,7 +22,7 @@ from spy_der.contracts.agents import (
     make_packet_id,
     packet_hash,
 )
-from spy_der.contracts.candidates import Candidate, CandidateUniverse
+from spy_der.contracts.candidates import Candidate, CandidateUniverse, DebitCredit
 from spy_der.contracts.economics import CandidateEconomics
 from spy_der.contracts.forecasts import MarketForecastBundle
 from spy_der.contracts.market import CanonicalMarketSnapshot
@@ -84,6 +84,7 @@ def build_agent_candidate_view(
         maximum_loss=candidate.maximum_loss,
         capital_required=candidate.capital_required,
         geometry_hash=candidate.geometry_hash,
+        opened_for_credit=candidate.entry_type == DebitCredit.CREDIT,
         maximum_profit=candidate.maximum_profit,
         breakevens=candidate.breakevens,
         mid_price=mid,

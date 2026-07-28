@@ -240,6 +240,10 @@ class AgentCandidateView:
     evidence_ids: tuple[str, ...] = ()
     warning_codes: tuple[str, ...] = ()
     hard_vetoed: bool = False
+    #: True when the structure is opened for a net credit. Carried so the
+    #: position it becomes can compute a correctly-signed profit ratio; see
+    #: :func:`~spy_der.contracts.positions.profit_ratio`.
+    opened_for_credit: bool = False
 
     def __post_init__(self) -> None:
         if not self.candidate_id:

@@ -243,6 +243,10 @@ class ShadowAiLoop:
                         order,
                         max_loss=view.maximum_loss if view else Decimal("0"),
                         exit_policy_id=exit_policy_id,
+                        # Without this the position's profit ratio is inverted
+                        # for every credit structure, so a winning iron fly
+                        # trips `stop` and a losing one trips `target`.
+                        opened_for_credit=bool(view.opened_for_credit) if view else False,
                         now=now,
                     )
                     if opened_pos is not None:
