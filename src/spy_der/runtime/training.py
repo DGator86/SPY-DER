@@ -194,6 +194,12 @@ def main(argv: list[str] | None = None) -> int:
         result.group_id,
         _load_mode_for(result.status),
     )
+    log.info(
+        "or set SPY_DER_FORECAST_GROUP=%s and SPY_DER_FORECAST_LOAD_MODE=%s "
+        "in /etc/spy-der/spy-der.env, then restart spy-der-engine",
+        result.group_id,
+        _load_mode_for(result.status),
+    )
     if result.status == "research":
         log.info(
             "status is 'research' — re-run with --status shadow (or promote the "
