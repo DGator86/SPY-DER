@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 from spy_der.contracts.integration import MarketPacket, OutcomePacket
@@ -34,10 +34,17 @@ class RecordedDecision:
 
 
 def _filter_sessions(sessions: list[date], recent_days: int) -> list[date]:
+    """Keep the newest ``recent_days`` *recorded sessions*, not calendar days.
+
+    A calendar window of 3 days that spans a weekend only contains two trading
+    sessions (Mon+Tue after Sat/Sun empty). The daily Dojo then reports
+    ``2 sessions recorded (< 3)`` and refuses the tape even when months of
+    history sit on disk — which reads on the dashboard as "Dojo did nothing".
+    """
     if recent_days <= 0 or not sessions:
         return sessions
-    cutoff = max(sessions) - timedelta(days=recent_days - 1)
-    return [s for s in sessions if s >= cutoff]
+    ordered = sorted(sessions)
+    return ordered[-recent_days:]
 
 
 def _run_authority(
@@ -70,7 +77,8 @@ def run_recorded_phase(
             "status": "insufficient_data",
             "note": (
                 f"{len(sessions)} sessions recorded "
-                f"(< {cfg.min_sessions}) — let 0DTE accumulate tape"
+                f"(< {cfg.min_sessions}) — need more SPY-DER market recordings "
+                f"under <state-root>/market"
             ),
             "n_sessions": len(sessions),
         }

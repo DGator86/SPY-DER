@@ -51,6 +51,8 @@ class DojoConfig:
     wf_folds: int = 3
     min_ticks: int = 100
     min_sessions: int = 3
+    #: Newest N *recorded sessions* to score (0 = all). Not a calendar-day
+    #: window — see :func:`spy_der.dojo.recorded._filter_sessions`.
     recent_days: int = 0
     # learner phase
     learn_trials: int = 15

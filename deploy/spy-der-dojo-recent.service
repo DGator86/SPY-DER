@@ -1,7 +1,7 @@
 [Unit]
 # Mon/Wed/Fri: last 10 recorded sessions + medium universe sparring.
 # Never auto-promotes.
-Description=SPY-DER dojo — recent-10-day review
+Description=SPY-DER dojo — recent-10-session review
 After=network-online.target
 Wants=network-online.target
 

@@ -657,7 +657,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--full-lattice", action="store_true")
     ap.add_argument("--days", type=int, default=8)
     ap.add_argument("--seed", type=int, default=20260723)
-    ap.add_argument("--recent-days", type=int, default=0)
+    ap.add_argument(
+        "--recent-days",
+        type=int,
+        default=0,
+        help=(
+            "limit the recorded phase to the newest N recorded sessions "
+            "(0 = all). Named for the daily/recent timers; counts sessions, "
+            "not calendar days, so a weekend does not thin the window."
+        ),
+    )
     ap.add_argument("--experience-dir", default="", help="directory of MarketPacket JSON")
     ap.add_argument(
         "--state-root",

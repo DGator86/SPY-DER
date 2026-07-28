@@ -1,7 +1,7 @@
 [Unit]
 # Daily light dojo: review the last 3 recorded sessions + a shallow universe
 # sparring pass. Never auto-promotes.
-Description=SPY-DER dojo — daily recent-3-day review
+Description=SPY-DER dojo — daily recent-3-session review
 After=network-online.target
 Wants=network-online.target
 
