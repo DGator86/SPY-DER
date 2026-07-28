@@ -86,10 +86,10 @@ class DojoProgress:
     def __enter__(self) -> DojoProgress:
         return self
 
-    def __exit__(self, exc_type: Any, exc: Any, _tb: Any) -> bool:
+    def __exit__(self, exc_type: Any, exc: Any, _tb: Any) -> None:
         if exc_type is not None and self._status == "running":
             self.fail(f"{getattr(exc_type, '__name__', 'Error')}: {exc}")
-        return False
+        return None
 
     @property
     def path(self) -> Path:

@@ -577,7 +577,7 @@ def _run_dojo_phases_with_progress(
             "n_snapshots": 0,
             "n_scored_universes": 0,
         }
-        progress.finish_phase("universe", universe["note"], skipped=True)
+        progress.finish_phase("universe", str(universe["note"]), skipped=True)
     else:
         progress.begin_phase(
             "universe",
