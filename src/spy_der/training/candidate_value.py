@@ -1,4 +1,4 @@
-"""Fit the candidate-value model on realized settlement P&L.
+"""Fit the candidate-value model on the P&L a position would have realized.
 
 The gap this closes is the one that made SPY-DER able to *avoid* losing trades
 without being able to *choose* winning ones.
@@ -20,11 +20,18 @@ this module turns recordings into rows the model can be fitted on:
 
     snapshot → generate_candidate_universe → calculate_universe_economics
              → build_feature_row                     (the input row)
-             → settled_candidate_pnl at the close    (the target)
+             → simulate_managed_exit                 (the target)
 
-One observation is one candidate at one tick. Both targets come from the same
-settlement: ``y_pnl`` is the per-share terminal payoff, ``y_profit`` is whether
-it finished above zero.
+One observation is one candidate at one tick. ``y_pnl`` is the P&L at the exit
+that would actually have fired under the production exit policy; ``y_profit`` is
+whether that was positive.
+
+**Not the terminal payoff.** SPY-DER never holds to settlement — its live exits
+are ``trail``, ``target`` and ``eod`` — and the error is not symmetric: a credit
+structure usually pins near max profit at expiry while the managed version gets
+stopped out on the excursion along the way, so an expiry-value target teaches
+the model to love exactly the family that keeps getting stopped. See
+:mod:`spy_der.evaluation.managed_outcome` for the two costs that buys.
 
 Three properties keep it honest, and they are the same three the forecast
 pipeline holds to:
@@ -45,10 +52,10 @@ pipeline holds to:
   cannot be served in `candidate` or `champion` mode. Training cannot promote
   itself.
 
-An important limit: these rows describe **what a candidate paid**, not what a
-*position* earned. There is no exit policy here, no stop, no mid-session close.
-The model learns terminal value at expiry, which is the right target for a 0DTE
-structure held to settlement and the wrong one for anything managed intraday.
+An important consequence: the target is **policy-dependent**. The label means
+"value under this exit policy", so changing the ratios makes every fitted model
+stale. The policy is therefore part of ``label_version`` in the registry, which
+turns silent staleness into a load-time mismatch.
 """
 
 from __future__ import annotations
@@ -68,12 +75,13 @@ from spy_der.candidate_value.models.value import (
     build_feature_row,
 )
 from spy_der.candidates.factory import generate_candidate_universe
+from spy_der.contracts.positions import ExitPolicy
 from spy_der.contracts.value import CANDIDATE_VALUE_VERSION
 from spy_der.economics.service import calculate_universe_economics
+from spy_der.evaluation.managed_outcome import simulate_managed_exit
 from spy_der.evaluation.settlement import (
     session_bar_path,
     session_settlement_price,
-    settled_candidate_pnl,
 )
 from spy_der.market_data.replay import CorruptRecordingError
 from spy_der.training.folds import build_expanding_session_folds
@@ -115,6 +123,12 @@ class CandidateValueObservations:
     row_sessions: list[str] = field(default_factory=list)
     sessions: tuple[str, ...] = ()
     skipped_sessions: tuple[tuple[str, str], ...] = ()
+    #: Rows whose position closed on an exit rather than running to expiry.
+    managed_rows: int = 0
+    #: The policy the targets were simulated under. The label means "value
+    #: under this policy", so a model fitted here is stale the moment it
+    #: changes — which is why it goes into `label_version`.
+    exit_policy: ExitPolicy = field(default_factory=ExitPolicy)
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -125,7 +139,11 @@ class CandidateValueObservations:
         )
         if self.rows:
             wins = sum(self.y_profit)
-            text += f"; {wins} settled positive ({wins / len(self.rows):.1%})"
+            text += f"; {wins} closed positive ({wins / len(self.rows):.1%})"
+            text += (
+                f"; {self.managed_rows} exited early "
+                f"({self.managed_rows / len(self.rows):.1%})"
+            )
         if self.skipped_sessions:
             text += "; skipped: " + ", ".join(
                 f"{s} ({why})" for s, why in self.skipped_sessions
@@ -158,6 +176,7 @@ def build_candidate_observations(
     *,
     sessions: Sequence[str] | None = None,
     interval_minutes: int = DEFAULT_INTERVAL_MINUTES,
+    policy: ExitPolicy | None = None,
 ) -> CandidateValueObservations:
     """Build per-candidate training rows from the recordings under ``state_root``.
 
@@ -167,7 +186,9 @@ def build_candidate_observations(
     whichever engine version happened to write the artifact.
     """
     market_dir = Path(state_root) / "market"
+    exit_policy = policy or ExitPolicy()
     result = CandidateValueObservations()
+    result.exit_policy = exit_policy
     observed: list[str] = []
     skipped: list[tuple[str, str]] = []
 
@@ -201,7 +222,8 @@ def build_candidate_observations(
             skipped.append((label, "no usable snapshots"))
             continue
 
-        settle = session_settlement_price(session_bar_path(snaps))
+        bar_path = session_bar_path(snaps)
+        settle = session_settlement_price(bar_path)
         if settle is None:
             # No close, no settlement, no target. Fitting against a midday quote
             # would teach the model that every position expires at lunchtime.
@@ -221,12 +243,23 @@ def build_candidate_observations(
                 econ = economics.get(candidate.candidate_id)
                 if econ is None:
                     continue
-                pnl = settled_candidate_pnl(candidate, session, settle)
-                if pnl is None:
+                outcome = simulate_managed_exit(
+                    candidate,
+                    chain=snapshot.option_chain,
+                    bars=bar_path,
+                    observed_at=snapshot.timestamp,
+                    session=session,
+                    settlement=settle,
+                    policy=exit_policy,
+                )
+                if outcome is None:
                     continue
+                pnl = float(outcome.realized_pnl)
                 result.rows.append(build_feature_row(candidate, econ))
-                result.y_pnl.append(float(pnl))
-                result.y_profit.append(1 if float(pnl) > 0.0 else 0)
+                result.y_pnl.append(pnl)
+                result.y_profit.append(1 if pnl > 0.0 else 0)
+                if outcome.was_managed:
+                    result.managed_rows += 1
                 result.row_sessions.append(label)
                 produced += 1
 
@@ -260,6 +293,23 @@ class CandidateValueTrainingResult:
         else:
             text += "; no out-of-fold metrics (too few sessions to form a fold)"
         return text
+
+
+def _label_version(policy: ExitPolicy) -> str:
+    """Label identity, stamped with the exit policy that produced it.
+
+    The target is what a position realized under a specific policy. Two models
+    fitted under different ratios answer different questions, and without this
+    the registry would happily serve one in place of the other.
+    """
+    return (
+        f"managed.v1:{policy.policy_id}"
+        f":tp{policy.take_profit_ratio:g}"
+        f":sl{policy.stop_loss_ratio:g}"
+        f":arm{policy.trailing_arm_ratio:g}"
+        f":gb{policy.trailing_giveback_ratio:g}"
+        f":eod{int(policy.eod_close)}"
+    )
 
 
 def _score(
@@ -412,10 +462,10 @@ def train_candidate_value_model(
     model_id = registry.save(
         model,
         model_type="candidate_value",
-        target="settled_net_pnl",
+        target="managed_net_pnl",
         horizon="session_close",
         feature_version=CANDIDATE_VALUE_VERSION,
-        label_version="settlement.v1",
+        label_version=_label_version(observations.exit_policy),
         crossfit_config={
             "scheme": "expanding_session_walk_forward",
             "n_folds": len(folds),

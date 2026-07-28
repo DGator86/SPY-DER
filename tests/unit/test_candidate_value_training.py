@@ -37,7 +37,7 @@ from spy_der.training.registry import ModelRegistry
 # --------------------------------------------------------------------------- #
 # Observations                                                                #
 # --------------------------------------------------------------------------- #
-def test_recordings_become_per_candidate_settlement_rows(tmp_path: Path) -> None:
+def test_recordings_become_per_candidate_managed_rows(tmp_path: Path) -> None:
     _record(tmp_path, sessions=2)
     observations = build_candidate_observations(tmp_path, interval_minutes=0)
 
@@ -47,10 +47,13 @@ def test_recordings_become_per_candidate_settlement_rows(tmp_path: Path) -> None
     assert len(observations.rows) == len(observations.y_pnl) == len(observations.y_profit)
     assert len(observations.row_sessions) == len(observations.rows)
     assert set(observations.row_sessions) == set(observations.sessions)
+    # Positions that closed early are what makes this target differ from the
+    # terminal payoff; a run with none of them is measuring the old thing.
+    assert observations.managed_rows > 0
 
 
-def test_the_target_is_settlement_not_a_proxy(tmp_path: Path) -> None:
-    """`y_profit` must agree with `y_pnl` — they come from one settlement."""
+def test_the_target_is_managed_pnl_not_a_proxy(tmp_path: Path) -> None:
+    """`y_profit` must agree with `y_pnl` — both come from one closed position."""
     _record(tmp_path, sessions=1)
     observations = build_candidate_observations(tmp_path, interval_minutes=0)
 
@@ -155,7 +158,12 @@ def test_the_model_is_research_status_and_cannot_promote_itself(trained) -> None
     meta = registry.load_metadata(result.model_id)
 
     assert meta["status"] == "research"
-    assert meta["target"] == "settled_net_pnl"
+    assert meta["target"] == "managed_net_pnl"
+    # The label means "value under this exit policy", so the policy is part of
+    # its identity — otherwise a model fitted under different ratios loads
+    # silently in place of one that answers a different question.
+    assert meta["label_version"].startswith("managed.v1:target_and_stop")
+    assert "tp0.5" in meta["label_version"]
     with pytest.raises(Exception, match="load_mode"):
         registry.load(result.model_id, load_mode="champion")
 
