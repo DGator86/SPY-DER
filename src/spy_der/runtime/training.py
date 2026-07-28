@@ -27,6 +27,10 @@ import logging
 from pathlib import Path
 
 from spy_der.runtime.heartbeat import write_heartbeat
+from spy_der.training.candidate_value import (
+    build_candidate_observations,
+    train_candidate_value_model,
+)
 from spy_der.training.observations import build_observations
 from spy_der.training.pipeline import MIN_ROWS_PER_ROLE, train_model_group
 from spy_der.training.registry import ALLOWED_MODES, ModelRegistry
@@ -69,6 +73,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--group-id", default=None, help="explicit group id (default: derived)")
     p.add_argument(
+        "--skip-candidate-value",
+        action="store_true",
+        help=(
+            "skip the candidate-value model. Without it every candidate reaches "
+            "the decision layer with no expected value, so selection falls back "
+            "to candidate id and only avoidance is left."
+        ),
+    )
+    p.add_argument(
         "--json",
         action="store_true",
         help="emit the result as JSON on stdout, for scripting",
@@ -104,7 +117,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     log.info("%s", result.describe())
 
+    # The candidate-value model is trained from the same recordings but is a
+    # separate artifact with a separate purpose: the forecast group says where
+    # the market is going, this says what each candidate is worth. Its failure
+    # is reported and never changes the exit code — the forecast group is the
+    # primary deliverable and should still register without it.
+    value_payload: dict[str, object] = {"trained": False, "reason": "skipped by flag"}
+    if not args.skip_candidate_value:
+        value_payload = _train_candidate_value(state_root, registry, args)
+
     payload = {
+        "candidate_value": value_payload,
         "group_id": result.group_id,
         "status": result.status,
         "sessions": list(result.sessions),
@@ -177,6 +200,61 @@ def main(argv: list[str] | None = None) -> int:
             "group) before the engine will serve it in shadow mode"
         )
     return 0
+
+
+def _train_candidate_value(
+    state_root: Path, registry: ModelRegistry, args: argparse.Namespace
+) -> dict[str, object]:
+    """Fit the candidate-value model; report rather than raise."""
+    try:
+        observations = build_candidate_observations(state_root, sessions=args.sessions)
+    except Exception:
+        log.exception("candidate-value observations failed to build")
+        return {"trained": False, "reason": "observation build failed"}
+
+    log.info("candidate-value observations: %s", observations.describe())
+    try:
+        outcome = train_candidate_value_model(
+            observations, registry=registry, status=args.status
+        )
+    except Exception:
+        log.exception("candidate-value training failed")
+        return {"trained": False, "reason": "training failed"}
+
+    log.info("candidate-value: %s", outcome.describe())
+    if outcome.model_id is None:
+        log.warning(
+            "no candidate-value model: %s. Until one is fitted, candidates carry "
+            "no expected value and selection falls through to candidate id.",
+            outcome.skipped_reason,
+        )
+        return {"trained": False, "reason": outcome.skipped_reason}
+
+    edge = outcome.oof_metrics.get("selection_edge")
+    if not outcome.oof_metrics:
+        log.warning(
+            "candidate-value model %s has no walk-forward folds — its metrics "
+            "are absent, not zero",
+            outcome.model_id,
+        )
+    elif edge is not None and edge <= 0.0:
+        # The number that matters: the decision layer consumes the *order*, not
+        # the predicted value. No selection edge means ranking by this model is
+        # no better than not ranking at all.
+        log.warning(
+            "candidate-value model %s shows NO SELECTION EDGE (top decile %+.4f "
+            "vs all %+.4f) — ranking by it is no better than chance",
+            outcome.model_id,
+            outcome.oof_metrics.get("top_decile_mean_pnl", 0.0),
+            outcome.oof_metrics.get("all_mean_pnl", 0.0),
+        )
+    return {
+        "trained": True,
+        "model_id": outcome.model_id,
+        "n_rows": outcome.n_rows,
+        "n_sessions": outcome.n_sessions,
+        "oof_metrics": outcome.oof_metrics,
+    }
 
 
 def _load_mode_for(status: str) -> str:

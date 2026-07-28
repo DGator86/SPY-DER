@@ -37,7 +37,7 @@ Three rules keep the tape honest:
 * **An unfinished session settles nothing.** Terminal payoff is only defined at
   expiry, so a session whose bars stop at noon has no settlement price — it has
   a midday quote. Such a session yields packets and no outcomes rather than a
-  number that reads like a result. See :data:`SETTLEMENT_CUTOFF_MINUTE`.
+  number that reads like a result.
 * **Sampling is by wall-clock interval, not by record index.** Recording
   cadence differs between the 0DTE import and SPY-DER's own service, and
   between configurations of each. Striding every Nth record would make the tape
@@ -69,11 +69,11 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Sequence
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 from spy_der.candidates.factory import generate_candidate_universe
-from spy_der.candidates.payoff import terminal_payoff
 from spy_der.contracts.candidates import Candidate
 from spy_der.contracts.economics import CandidateEconomics
 from spy_der.contracts.integration import (
@@ -83,17 +83,21 @@ from spy_der.contracts.integration import (
     MarketPacket,
     OutcomePacket,
 )
-from spy_der.contracts.market import Bar, CanonicalMarketSnapshot
+from spy_der.contracts.market import CanonicalMarketSnapshot
 from spy_der.economics.service import calculate_universe_economics
-from spy_der.features.resample import ET
+from spy_der.evaluation.settlement import (
+    session_bar_path,
+    session_settlement_price,
+    settled_candidate_pnl,
+)
 from spy_der.market_data.replay import CorruptRecordingError
 from spy_der.training.observations import load_session_snapshots
 
 __all__ = [
     "DEFAULT_INTERVAL_MINUTES",
     "DEFAULT_NEUTRAL_BAND",
-    "SETTLEMENT_CUTOFF_MINUTE",
     "NativeTapeProvider",
+    "load_value_model",
 ]
 
 log = logging.getLogger("spy_der.dojo.native_tape")
@@ -104,12 +108,6 @@ log = logging.getLogger("spy_der.dojo.native_tape")
 #: keeps a session near 78 packets — comfortably over ``DojoConfig.min_ticks``
 #: at the three-session minimum — for a few seconds per session.
 DEFAULT_INTERVAL_MINUTES = 5
-
-#: Minute-of-day (ET) the bar path must reach before a session is considered
-#: settled. 15:55 rather than 16:00: the last bar of a session is routinely
-#: stamped a minute or two early, and demanding the exact close would discard
-#: otherwise complete sessions.
-SETTLEMENT_CUTOFF_MINUTE = 15 * 60 + 55
 
 #: Fractional move below which a session's realized direction is called
 #: ``neutral`` rather than bullish/bearish. Candidate directions include a
@@ -123,37 +121,6 @@ def _session_from_stem(stem: str) -> date | None:
     try:
         return date.fromisoformat(stem)
     except ValueError:
-        return None
-
-
-def _bar_path(snapshots: Sequence[CanonicalMarketSnapshot]) -> tuple[Bar, ...]:
-    """The session's fullest bar window.
-
-    Each snapshot carries a rolling window ending at its own tick, so the last
-    snapshot holding bars holds the longest path.
-    """
-    for snapshot in reversed(snapshots):
-        if snapshot.bars_1m:
-            return tuple(snapshot.bars_1m)
-    return ()
-
-
-def _settlement_price(bars: Sequence[Bar]) -> Decimal | None:
-    """Closing price, or ``None`` when the tape never reached the close.
-
-    A truncated session is the common case for a recorder that crashed or a
-    day still in progress, and its final bar is a midday quote. Settling
-    against it would report every position as though it had expired at noon.
-    """
-    if not bars:
-        return None
-    last = bars[-1]
-    local = last.timestamp.astimezone(ET)
-    if local.hour * 60 + local.minute < SETTLEMENT_CUTOFF_MINUTE:
-        return None
-    try:
-        return Decimal(str(last.close))
-    except (InvalidOperation, ValueError):
         return None
 
 
@@ -173,6 +140,46 @@ def _quality_score(snapshot: CanonicalMarketSnapshot) -> float:
     return min(max(1.0 - float(snapshot.data_quality.penalty), 0.0), 1.0)
 
 
+def load_value_model(
+    state_root: str | Path,
+    *,
+    model_id: str | None = None,
+    load_mode: str = "research",
+) -> tuple[Any | None, str]:
+    """Newest registered candidate-value model; ``(model, note)``.
+
+    Returns ``(None, reason)`` rather than raising. A Dojo run without a value
+    model is degraded, not broken — it still measures knob effects — and
+    failing the whole run because no model has been fitted yet would make the
+    common early state unrunnable.
+    """
+    from spy_der.training.registry import ModelRegistry, RegistryError
+
+    directory = Path(state_root) / "models"
+    if not directory.is_dir():
+        return None, f"no model registry at {directory}"
+    registry = ModelRegistry(str(directory))
+
+    chosen = model_id
+    if chosen is None:
+        candidates: list[tuple[str, str]] = []
+        for meta_path in sorted(directory.glob("candidate_value-*.json")):
+            try:
+                meta = registry.load_metadata(meta_path.stem, validate_v2=False)
+            except (RegistryError, OSError, ValueError):
+                continue
+            candidates.append((str(meta.get("created_at") or ""), meta_path.stem))
+        if not candidates:
+            return None, "no candidate-value model registered"
+        chosen = max(candidates)[1]
+
+    try:
+        model, meta = registry.load(chosen, load_mode=load_mode)
+    except (RegistryError, OSError, ValueError) as exc:
+        return None, f"could not load {chosen}: {exc}"
+    return model, f"{chosen} (status {meta.get('status', 'unknown')})"
+
+
 class NativeTapeProvider:
     """Recorded SPY-DER sessions as Dojo experience.
 
@@ -182,6 +189,13 @@ class NativeTapeProvider:
         interval_minutes: minimum wall-clock spacing between sampled packets.
         neutral_band: see :data:`DEFAULT_NEUTRAL_BAND`.
         symbol: underlying to report on packets whose snapshot omits one.
+        value_model: a fitted
+            :class:`~spy_der.candidate_value.models.value.CandidateValueModel`.
+            This is what turns the tape from measuring knob effects into
+            measuring *selection* — without it every candidate carries
+            ``utility=None`` and the deciding agent falls through to candidate
+            id. Load one with
+            :func:`~spy_der.dojo.native_tape.load_value_model`.
     """
 
     def __init__(
@@ -191,11 +205,13 @@ class NativeTapeProvider:
         interval_minutes: int = DEFAULT_INTERVAL_MINUTES,
         neutral_band: float = DEFAULT_NEUTRAL_BAND,
         symbol: str = "SPY",
+        value_model: Any | None = None,
     ) -> None:
         self.market_dir = Path(state_root) / "market"
         self.interval_minutes = max(int(interval_minutes), 0)
         self.neutral_band = max(float(neutral_band), 0.0)
         self.symbol = symbol
+        self.value_model = value_model
         self._outcomes: dict[str, OutcomePacket] = {}
         self._loaded: set[date] = set()
         # Reported once by `warnings()` rather than logged per snapshot. The
@@ -306,7 +322,7 @@ class NativeTapeProvider:
         if not snapshots:
             return [], {}
 
-        settle = _settlement_price(_bar_path(snapshots))
+        settle = session_settlement_price(session_bar_path(snapshots))
         if settle is None and session not in self._unsettled:
             self._unsettled.append(session)
 
@@ -323,12 +339,15 @@ class NativeTapeProvider:
                 e.candidate_id: e
                 for e in calculate_universe_economics(universe, snapshot)
             }
-            ranked, priced = self._rank(universe.candidates, economics)
+            utilities = self._utilities(universe.candidates, economics)
+            ranked, priced = self._rank(universe.candidates, economics, utilities)
             if priced:
                 self._priced_seen = True
             else:
                 self._unpriced.add(snapshot.snapshot_id)
-            packet = self._packet(snapshot, session, ranked, economics, priced=priced)
+            packet = self._packet(
+                snapshot, session, ranked, economics, utilities, priced=priced
+            )
             packets.append(packet)
             if settle is not None:
                 built = self._outcome(snapshot, packet, ranked, settle)
@@ -336,33 +355,73 @@ class NativeTapeProvider:
                     outcomes[packet.snapshot_id] = built
         return packets, outcomes
 
+    def _utilities(
+        self,
+        candidates: Sequence[Candidate],
+        economics: dict[str, CandidateEconomics],
+    ) -> dict[str, float]:
+        """Risk-adjusted utility per candidate, when a value model is attached.
+
+        Empty without one, and that is the whole difference between the Dojo
+        measuring judgement and the Dojo measuring the alphabet.
+        """
+        if self.value_model is None:
+            return {}
+        from spy_der.candidate_value.models.value import build_feature_row
+
+        out: dict[str, float] = {}
+        for candidate in candidates:
+            econ = economics.get(candidate.candidate_id)
+            if econ is None:
+                continue
+            try:
+                forecast = self.value_model.predict_one(
+                    build_feature_row(candidate, econ),
+                    candidate=candidate,
+                    economics=econ,
+                )
+            except (RuntimeError, ValueError) as exc:
+                # One unscoreable candidate must not cost the tick. Absent
+                # utility is already a state every consumer handles.
+                log.warning("candidate value failed for %s: %s", candidate.candidate_id, exc)
+                continue
+            value = forecast.utility
+            if value is None:
+                value = forecast.expected_net_pnl
+            if value is not None:
+                out[candidate.candidate_id] = float(value)
+        return out
+
     def _rank(
         self,
         candidates: Sequence[Candidate],
         economics: dict[str, CandidateEconomics],
+        utilities: dict[str, float],
     ) -> tuple[list[Candidate], bool]:
-        """Best expected value first; ``(ordered, priced)``.
+        """Best value first; ``(ordered, priced)``.
 
-        ``priced`` is False when no candidate carried an expected value, which
-        is the norm on a forecast-free tape: `calculate_candidate_economics`
-        only computes one when the caller supplies ``expected_net_pnl``, and
-        that comes from the candidate-value model. The caller must not present
+        ``priced`` is False when nothing carried a value, which is the state of
+        a tape with no candidate-value model attached:
+        `calculate_candidate_economics` computes an ``expected_value`` only when
+        its caller supplies ``expected_net_pnl``. The caller must not present
         the resulting order as a ranking — see :meth:`_packet`.
         """
 
-        def key(candidate: Candidate) -> tuple[float, str]:
+        def value_of(candidate: Candidate) -> float | None:
+            if candidate.candidate_id in utilities:
+                return utilities[candidate.candidate_id]
             econ = economics.get(candidate.candidate_id)
-            value = econ.expected_value if econ is not None else None
+            raw = econ.expected_value if econ is not None else None
+            return float(raw) if raw is not None else None
+
+        def key(candidate: Candidate) -> tuple[float, str]:
+            value = value_of(candidate)
             return (
-                -float(value) if value is not None else float("inf"),
+                -value if value is not None else float("inf"),
                 candidate.candidate_id,
             )
 
-        priced = any(
-            (econ := economics.get(c.candidate_id)) is not None
-            and econ.expected_value is not None
-            for c in candidates
-        )
+        priced = any(value_of(c) is not None for c in candidates)
         return sorted(candidates, key=key), priced
 
     def _packet(
@@ -371,12 +430,16 @@ class NativeTapeProvider:
         session: date,
         ranked: Sequence[Candidate],
         economics: dict[str, CandidateEconomics],
+        utilities: dict[str, float],
         *,
         priced: bool,
     ) -> MarketPacket:
         views: list[MarketCandidateView] = []
         for rank, candidate in enumerate(ranked, start=1):
             econ = economics.get(candidate.candidate_id)
+            utility = utilities.get(candidate.candidate_id)
+            if utility is None and econ is not None and econ.expected_value is not None:
+                utility = float(econ.expected_value)
             views.append(
                 MarketCandidateView(
                     candidate_id=candidate.candidate_id,
@@ -390,11 +453,7 @@ class NativeTapeProvider:
                     fill_probability=(
                         float(econ.fill_probability) if econ is not None else 1.0
                     ),
-                    utility=(
-                        float(econ.expected_value)
-                        if econ is not None and econ.expected_value is not None
-                        else None
-                    ),
+                    utility=utility,
                     # Without an expected value the order above is alphabetical
                     # by candidate id, and a 1..N index would dress that up as
                     # a ranking for anything that reads `v3_rank` as a tiebreak.
@@ -425,7 +484,7 @@ class NativeTapeProvider:
         by_candidate: dict[str, str] = {}
         reference: Candidate | None = None
         for candidate in ranked:
-            pnl = self._settled_pnl(candidate, packet.session_date, settle)
+            pnl = settled_candidate_pnl(candidate, packet.session_date, settle)
             if pnl is None:
                 continue
             by_candidate[candidate.candidate_id] = str(pnl)
@@ -457,21 +516,4 @@ class NativeTapeProvider:
                 "realized_pnl_by_candidate": by_candidate,
             },
             settled_at=snapshot.timestamp,
-        )
-
-    @staticmethod
-    def _settled_pnl(
-        candidate: Candidate, session: date, settle: Decimal
-    ) -> Decimal | None:
-        """Per-share P&L at expiry, or ``None`` if this is not an expiry.
-
-        A candidate expiring after the session date still has time value at the
-        close; ``terminal_payoff`` would price it as though it did not.
-        """
-        if candidate.expiration != session:
-            return None
-        return terminal_payoff(
-            candidate.legs,
-            entry_credit=candidate.entry_credit,
-            spot=settle,
         )

@@ -18,7 +18,7 @@ spy-der-import-zerodte \
     --source /var/lib/zerodte/ticks \
     --state-root /var/lib/spy-der
 
-# 2. Train on it.
+# 2. Train on it — the forecast group and the candidate-value model.
 spy-der-train --state-root /var/lib/spy-der
 
 # 3. Read the verdict, then serve if it earned it.
@@ -30,10 +30,12 @@ spy-der dojo --state-root /var/lib/spy-der \
     --configs-dir /var/lib/spy-der/configs
 ```
 
-Steps 2 and 4 read the same recordings by two different routes:
-`spy-der-train` fits the forecast models on labeled observations, while the
-Dojo scores decisions against per-candidate settlement. See
-[`dojo.md`](dojo.md) — `--state-root` is required there, or every phase skips.
+Steps 2 and 4 read the same recordings by three different routes:
+`spy-der-train` fits the forecast models on labeled observations *and* the
+candidate-value model on per-candidate settlement, while the Dojo scores
+decisions against that same settlement. See [`dojo.md`](dojo.md) —
+`--state-root` is required there or every phase skips, and without a
+candidate-value model the run scores an arbitrary selection.
 
 Re-running the import is cheap: sessions already under `<state-root>/market` are
 skipped unless `--overwrite` is given.

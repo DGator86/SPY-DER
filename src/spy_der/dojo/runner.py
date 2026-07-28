@@ -29,7 +29,11 @@ from spy_der.dojo.authority import default_authorities
 from spy_der.dojo.config import DEFAULT_CONFIGS_DIR, DEFAULT_REPORTS_DIR, DojoConfig
 from spy_der.dojo.evaluation import OutcomeCandidateEvaluator
 from spy_der.dojo.human import build_human_report
-from spy_der.dojo.native_tape import DEFAULT_INTERVAL_MINUTES, NativeTapeProvider
+from spy_der.dojo.native_tape import (
+    DEFAULT_INTERVAL_MINUTES,
+    NativeTapeProvider,
+    load_value_model,
+)
 from spy_der.dojo.protocols import (
     CandidateEvaluator,
     DecisionAuthority,
@@ -673,6 +677,22 @@ def main(argv: list[str] | None = None) -> int:
             f"(default: {DEFAULT_INTERVAL_MINUTES}; 0 uses every snapshot)"
         ),
     )
+    ap.add_argument(
+        "--value-model-id",
+        default="",
+        help=(
+            "explicit candidate-value model id from the registry under "
+            "<state-root>/models (default: the newest registered one)"
+        ),
+    )
+    ap.add_argument(
+        "--no-value-model",
+        action="store_true",
+        help=(
+            "score without candidate values. Selection then falls through to "
+            "candidate id, so only knob effects are measured."
+        ),
+    )
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
@@ -683,8 +703,19 @@ def main(argv: list[str] | None = None) -> int:
 
         experience = FileMarketExperienceProvider(args.experience_dir)
     elif args.state_root:
+        # Without a value model the tape scores an arbitrary selection; the
+        # provider says so in its warnings rather than letting it pass as a
+        # measured result.
+        value_model, value_note = (
+            (None, "disabled by --no-value-model")
+            if args.no_value_model
+            else load_value_model(args.state_root, model_id=args.value_model_id or None)
+        )
+        print(f"  candidate value: {value_note}")
         native = NativeTapeProvider(
-            args.state_root, interval_minutes=args.tape_interval_minutes
+            args.state_root,
+            interval_minutes=args.tape_interval_minutes,
+            value_model=value_model,
         )
         experience = native
 
