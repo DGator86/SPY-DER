@@ -21,7 +21,7 @@ import logging
 import signal
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -71,8 +71,19 @@ class MarketServiceConfig:
     def market_dir(self) -> Path:
         return Path(self.state_root) / "market"
 
-    def recording_path(self, session: datetime) -> Path:
-        return self.market_dir / f"{session.date().isoformat()}.jsonl"
+    def recording_path(self, session: date) -> Path:
+        """Recording file for a *session date* — never a wall-clock date.
+
+        These differ every evening. The session date is an exchange-time (ET)
+        fact carried on the snapshot; the wall clock here is UTC, which rolls
+        over at 20:00 ET. Filing by the wall clock put every post-rollover
+        record into the next day's file, so one file held two session dates —
+        and everything that reads the session from the *filename*
+        (:func:`spy_der.training.observations.build_observations`, the Dojo's
+        native tape) would then label those rows with the wrong day and build
+        one bar path out of two sessions.
+        """
+        return self.market_dir / f"{session.isoformat()}.jsonl"
 
 
 def _last_seq(path: Path) -> int:
@@ -257,7 +268,9 @@ class MarketService:
             log.warning("no provider returned a tick at %s", now.isoformat())
             return
 
-        path = self.config.recording_path(now)
+        # The snapshot's own session date, not `now`: the assembler resolved it
+        # in exchange time, and the file must agree with what is inside it.
+        path = self.config.recording_path(snapshot.session_date)
         seq = self._next_seq(path)
         record = build_record(seq, snapshot)
         self._seq_by_session[path.stem] = seq + 1

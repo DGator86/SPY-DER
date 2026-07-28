@@ -16,7 +16,7 @@ Environment=SPY_DER_STATE_ROOT=%S/spy-der
 ExecStart=/opt/spy-der/venv/bin/spy-der dojo \
     --reports-dir /var/lib/spy-der/reports/dojo \
     --configs-dir /var/lib/spy-der/configs \
-    --experience-dir /var/lib/spy-der/inbox/experience \
+    --state-root /var/lib/spy-der \
     --recent-days 10 \
     --days 10 \
     --universes 8 \
