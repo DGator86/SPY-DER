@@ -58,7 +58,7 @@ In `dashboard/static/index.html`, alongside the existing tab buttons and panes:
 <script type="module" src="/static/spy-der-tab.js"></script>
 ```
 
-`data-spy-der-base` is the prefix for the five reads below. Drop the attribute
+`data-spy-der-base` is the prefix for the six reads below. Drop the attribute
 entirely when the dashboard is served from the same origin as
 `spy-der-dashboard-api`.
 
@@ -70,7 +70,7 @@ import { mountSpyDerTab } from "/static/spy-der-tab.js";
 mountSpyDerTab({ target: document.querySelector("[data-spy-der-tab]") });
 ```
 
-### 3. Proxy five read-only endpoints
+### 3. Proxy six read-only endpoints
 
 The browser cannot reach `127.0.0.1:8788` directly, so 0DTE proxies. Each route
 is a straight pass-through of one `spy-der-dashboard-api` GET:
@@ -79,6 +79,7 @@ is a straight pass-through of one `spy-der-dashboard-api` GET:
 | -------------------------------- | ------------------------ |
 | `/api/spy-der/v1/system`         | `/v1/system`             |
 | `/api/spy-der/v1/state`          | `/v1/state`              |
+| `/api/spy-der/v1/dojo/progress`  | `/v1/dojo/progress`      |
 | `/api/spy-der/v1/dojo/latest`    | `/v1/dojo/latest`        |
 | `/api/spy-der/v1/validation/latest` | `/v1/validation/latest` |
 | `/api/spy-der/v1/attribution/latest` | `/v1/attribution/latest` |

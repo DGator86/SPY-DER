@@ -27,6 +27,7 @@ const DEFAULT_ENDPOINTS = {
   system: "/v1/system",
   state: "/v1/state",
   dojo: "/v1/dojo/latest",
+  dojoProgress: "/v1/dojo/progress",
   validation: "/v1/validation/latest",
   attribution: "/v1/attribution/latest",
 };
@@ -753,8 +754,97 @@ function renderHumanStory(human) {
   return wrap.firstChild ? wrap : null;
 }
 
-function renderDojo(dojo, validation) {
+function formatElapsed(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const hours = Math.floor(total / 3600);
+  const mins = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
+}
+
+function progressTone(status) {
+  if (status === "running" || status === "live") return "ok";
+  if (status === "failed" || status === "stale") return "bad";
+  if (status === "finished") return "ok";
+  return "";
+}
+
+function progressHeadline(progress) {
+  const status = text(progress && progress.status, "idle");
+  if (status === "running") return "WORKING";
+  if (status === "finished") return "FINISHED";
+  if (status === "failed") return "FAILED";
+  if (status === "stale") return "STALE";
+  return "IDLE";
+}
+
+function renderDojoProgress(progress) {
+  const square = el("div", "spyder-tab__dojo-square");
+  const payload = progress && typeof progress === "object" ? progress : null;
+  const status = payload ? text(payload.status, "idle") : "idle";
+  const live = Boolean(payload && payload.live);
+
+  const head = el("div", "spyder-tab__dojo-square-head");
+  const pill = el(
+    "p",
+    "spyder-tab__pill" +
+      (progressTone(status) ? ` spyder-tab__pill--${progressTone(status)}` : "") +
+      (live ? " spyder-tab__pill--pulse" : "")
+  );
+  pill.textContent = progressHeadline(payload);
+  head.appendChild(pill);
+  if (payload && payload.phase_label && status !== "idle") {
+    head.appendChild(el("span", "spyder-tab__dojo-square-phase", text(payload.phase_label)));
+  }
+  if (payload && Number(payload.elapsed_seconds) > 0) {
+    head.appendChild(
+      el("span", "spyder-tab__note", `elapsed ${formatElapsed(payload.elapsed_seconds)}`)
+    );
+  }
+  square.appendChild(head);
+
+  const detail = el(
+    "p",
+    "spyder-tab__dojo-square-detail",
+    payload && payload.detail
+      ? text(payload.detail)
+      : "Waiting for the next Dojo oneshot."
+  );
+  square.appendChild(detail);
+
+  const strip = el("div", "spyder-tab__dojo-strip");
+  const phases = Array.isArray(payload && payload.phases) ? payload.phases : [];
+  const defaults = [
+    ["recorded", "Real tape"],
+    ["sequential", "Blind days"],
+    ["learner", "Adaptive change"],
+    ["universe", "Synthetic sparring"],
+    ["promotion", "Promotion trial"],
+  ];
+  const entries = phases.length
+    ? phases
+    : defaults.map(([name, label]) => ({ name, label, status: "pending", detail: "" }));
+  for (const phase of entries) {
+    const cell = el(
+      "div",
+      "spyder-tab__dojo-step spyder-tab__dojo-step--" + text(phase.status, "pending")
+    );
+    cell.appendChild(el("div", "spyder-tab__dojo-step-label", text(phase.label || phase.name)));
+    cell.appendChild(el("div", "spyder-tab__dojo-step-status", text(phase.status, "pending")));
+    if (phase.detail) {
+      cell.title = text(phase.detail);
+    }
+    strip.appendChild(cell);
+  }
+  square.appendChild(strip);
+  return square;
+}
+
+function renderDojo(dojo, validation, progress) {
   const box = panel("Dojo training room", true);
+  box.appendChild(renderDojoProgress(progress));
   if (!dojo) {
     box.appendChild(note("No Dojo report yet. The nightly run will fill this in."));
   } else {
@@ -923,7 +1013,7 @@ export function mountSpyDerTab(options = {}) {
 
   async function refresh() {
     refreshButton.disabled = true;
-    const keys = ["system", "state", "dojo", "validation", "attribution"];
+    const keys = ["system", "state", "dojo", "dojoProgress", "validation", "attribution"];
     const settled = await Promise.all(
       keys.map((key) =>
         readJson(url(key)).catch((error) => ({ ok: false, status: 0, body: null, error }))
@@ -972,7 +1062,8 @@ export function mountSpyDerTab(options = {}) {
     grid.appendChild(
       renderDojo(
         results.dojo.ok ? results.dojo.body : null,
-        results.validation.ok ? results.validation.body : null
+        results.validation.ok ? results.validation.body : null,
+        results.dojoProgress.ok ? results.dojoProgress.body : null
       )
     );
     if (state) grid.appendChild(renderPositions(state));

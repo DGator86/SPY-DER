@@ -69,6 +69,33 @@ def test_missing_dojo_report_explains_itself(tmp_path: Path) -> None:
     assert body["path"].endswith("reports/dojo/latest.json")
 
 
+def test_dojo_progress_is_idle_before_any_run(tmp_path: Path) -> None:
+    code, body = handle_get(_state(tmp_path), "/v1/dojo/progress")
+    assert code == 200
+    assert body["status"] == "idle"
+    assert body["live"] is False
+    assert len(body["phases"]) == 5
+
+
+def test_dojo_progress_serves_a_live_run(tmp_path: Path) -> None:
+    from spy_der.dojo.progress import DojoProgress
+
+    progress = DojoProgress(
+        reports_dir=tmp_path / "reports" / "dojo",
+        state_root=tmp_path,
+        report_date="2026-07-28",
+    )
+    progress.begin_phase("recorded", "Scoring stored market sessions")
+    progress.update("Built 2026-07-27 — 12 packet(s)")
+
+    code, body = handle_get(_state(tmp_path), "/v1/dojo/progress")
+    assert code == 200
+    assert body["status"] == "running"
+    assert body["live"] is True
+    assert "Built 2026-07-27" in body["detail"]
+    assert body["phases"][0]["status"] == "running"
+
+
 def test_report_index_is_newest_first(tmp_path: Path) -> None:
     reports = tmp_path / "reports" / "dojo"
     for stamp in ("20260722_060000", "20260724_060000", "20260723_060000"):

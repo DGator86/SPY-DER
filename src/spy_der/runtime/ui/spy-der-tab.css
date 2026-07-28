@@ -102,6 +102,15 @@
 .spyder-tab__pill--warn::before { background: var(--sd-warn); }
 .spyder-tab__pill--bad::before { background: var(--sd-bad); }
 
+.spyder-tab__pill--pulse::before {
+  animation: spyder-tab-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes spyder-tab-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.85); }
+}
+
 .spyder-tab__refresh {
   font: inherit;
   font-size: 12px;
@@ -519,6 +528,107 @@
 
 .spyder-tab__chain--dojo {
   margin-top: 12px;
+}
+
+/* Live Dojo working square ------------------------------------------------ */
+.spyder-tab__dojo-square {
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid var(--sd-border);
+  border-radius: 6px;
+  background:
+    linear-gradient(160deg, rgba(88, 166, 255, 0.08), transparent 42%),
+    var(--sd-panel-2);
+}
+
+.spyder-tab__dojo-square-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.spyder-tab__dojo-square-phase {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sd-text);
+}
+
+.spyder-tab__dojo-square-detail {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--sd-muted);
+}
+
+.spyder-tab__dojo-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.spyder-tab__dojo-step {
+  min-height: 54px;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid var(--sd-border);
+  border-left-width: 3px;
+  border-left-color: var(--sd-idle);
+  background: var(--sd-panel);
+}
+
+.spyder-tab__dojo-step--pending {
+  border-left-color: var(--sd-idle);
+  opacity: 0.72;
+}
+
+.spyder-tab__dojo-step--running {
+  border-left-color: var(--sd-accent);
+}
+
+.spyder-tab__dojo-step--done {
+  border-left-color: var(--sd-ok);
+}
+
+.spyder-tab__dojo-step--skipped {
+  border-left-color: var(--sd-muted);
+}
+
+.spyder-tab__dojo-step--failed {
+  border-left-color: var(--sd-bad);
+}
+
+.spyder-tab__dojo-step-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--sd-text);
+}
+
+.spyder-tab__dojo-step-status {
+  margin-top: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--sd-muted);
+}
+
+.spyder-tab__dojo-step--running .spyder-tab__dojo-step-status {
+  color: var(--sd-accent);
+}
+
+.spyder-tab__dojo-step--done .spyder-tab__dojo-step-status {
+  color: var(--sd-ok);
+}
+
+.spyder-tab__dojo-step--failed .spyder-tab__dojo-step-status {
+  color: var(--sd-bad);
+}
+
+@media (max-width: 640px) {
+  .spyder-tab__dojo-strip {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .spyder-tab__robustness {
