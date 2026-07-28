@@ -38,6 +38,7 @@ spy-der-market = "spy_der.runtime.market_service:main"
 spy-der-mcp = "spy_der.runtime.mcp_server:main"
 spy-der-train = "spy_der.runtime.training:main"
 spy-der-import-zerodte = "spy_der.runtime.zerodte_import:main"
+spy-der-repair-recording = "spy_der.runtime.repair_recording:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -153,9 +153,10 @@ class MarketService:
         `Restart=always` recovery mid-session, and on the day a 0DTE import is
         followed by SPY-DER taking over collection.
 
-        Only the last line is parsed: the file is written one record per line
-        with a monotonic sequence, so the tail is the whole answer and a full
-        read would cost the entire session on every restart.
+        The highest parsable ``seq`` on disk is used (unparseable tails are
+        skipped). A file already carrying a historical gap still resumes from
+        that highest value; healing the gap is an explicit operator step via
+        ``spy-der-repair-recording``.
         """
         session = path.stem
         cached = self._seq_by_session.get(session)

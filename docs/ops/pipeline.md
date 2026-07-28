@@ -24,6 +24,25 @@ uniformity, and fails closed on corruption, so every stage artifact is
 integrity-checked by code that was already tested. `spy_der.runtime.artifacts`
 is the shared writer.
 
+### Repairing a `SEQUENCE_GAP`
+
+Training and Dojo skip a session that fails integrity. When the only fault is a
+restarted sequence counter — the pre-resume market-service bug that wrote
+`…, 576, 0, 1, …` after `Restart=always` — renumber explicitly rather than
+training past it:
+
+```bash
+# Classify first.
+spy-der-repair-recording --state-root /var/lib/spy-der --session 2026-07-27 --dry-run
+
+# Rewrite seq to 0..n-1 (keeps a .bak sibling), then retrain.
+spy-der-repair-recording --state-root /var/lib/spy-der --session 2026-07-27
+spy-der-train --state-root /var/lib/spy-der
+```
+
+Hash mismatches still refuse. Live collection already resumes `seq` from disk;
+this tool is for healing recordings that were broken before that fix.
+
 **The journal** (`journal/journal.db`) is `SqliteJournalStore`: append-only,
 hash-chained, WAL. It is the system of record for *what happened*; the artifact
 files are the bulk output a stage produced.
