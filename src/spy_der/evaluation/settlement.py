@@ -4,26 +4,87 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from decimal import Decimal
+from datetime import UTC, date, datetime
+from decimal import Decimal, InvalidOperation
 
 from spy_der.candidates.payoff import terminal_payoff
 from spy_der.contracts.candidates import Candidate, CandidateLeg
 from spy_der.contracts.common import content_hash
 from spy_der.contracts.events import AggregateType, JournalEvent, JournalEventType
+from spy_der.contracts.market import Bar, CanonicalMarketSnapshot
 from spy_der.contracts.outcomes import (
     CounterfactualOutcome,
     OutcomeRecord,
     SettlementSource,
     SettlementStatus,
 )
+from spy_der.features.resample import ET
 from spy_der.journal.store import AppendOnlyJournal, InMemoryJournalStore
 
 __all__ = [
+    "SETTLEMENT_CUTOFF_MINUTE",
     "SettlementBatch",
+    "session_bar_path",
+    "session_settlement_price",
     "settle_candidate",
     "settle_session",
+    "settled_candidate_pnl",
 ]
+
+#: Minute-of-day (ET) the bar path must reach before a session counts as
+#: settled. 15:55 rather than 16:00: the last bar of a session is routinely
+#: stamped a minute or two early, and demanding the exact close would discard
+#: otherwise complete sessions.
+SETTLEMENT_CUTOFF_MINUTE = 15 * 60 + 55
+
+
+def session_bar_path(
+    snapshots: Sequence[CanonicalMarketSnapshot],
+) -> tuple[Bar, ...]:
+    """The session's fullest bar window.
+
+    Each snapshot carries a rolling window ending at its own tick, so the last
+    snapshot holding bars holds the longest path.
+    """
+    for snapshot in reversed(snapshots):
+        if snapshot.bars_1m:
+            return tuple(snapshot.bars_1m)
+    return ()
+
+
+def session_settlement_price(bars: Sequence[Bar]) -> Decimal | None:
+    """Closing price, or ``None`` when the tape never reached the close.
+
+    A truncated session is the common case for a recorder that crashed or a day
+    still in progress, and its final bar is a midday quote. Settling against it
+    would report every position as though it had expired at noon — a number
+    that reads like a result for a day that never finished.
+    """
+    if not bars:
+        return None
+    last = bars[-1]
+    local = last.timestamp.astimezone(ET)
+    if local.hour * 60 + local.minute < SETTLEMENT_CUTOFF_MINUTE:
+        return None
+    try:
+        return Decimal(str(last.close))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def settled_candidate_pnl(
+    candidate: Candidate, session: date, settle: Decimal
+) -> Decimal | None:
+    """Per-share P&L at expiry, or ``None`` if this is not an expiry.
+
+    A candidate expiring after the session date still carries time value at the
+    close; ``terminal_payoff`` would price it as though it did not.
+    """
+    if candidate.expiration != session:
+        return None
+    return terminal_payoff(
+        candidate.legs, entry_credit=candidate.entry_credit, spot=settle
+    )
 
 
 @dataclass(frozen=True, slots=True)

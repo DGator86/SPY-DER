@@ -156,9 +156,43 @@ summary:
 - `tape_unpriced` — no candidate carried an expected value, so candidate
   *selection* is arbitrary (the deterministic agent sorts on a `None` utility
   and falls through to candidate id) and only knob effects are being scored.
-  Economics computes an expected value only when a candidate-value forecast
-  supplies `expected_net_pnl`. The signature in the report is champion and
-  baseline scoring identically to the digit.
+  **Fix it by training a candidate-value model:** `spy-der-train` fits one from
+  the same recordings, and the Dojo loads the newest registered one
+  automatically. `--no-value-model` scores without it on purpose;
+  `--value-model-id` pins a specific one.
+
+### Selection needs a candidate-value model
+
+The Dojo can only score *which candidate got picked* if candidates carry a
+value to pick between.
+`spy_der.economics.service.calculate_candidate_economics` produces an
+`expected_value` only when its caller supplies `expected_net_pnl`, and that
+comes from `CandidateValueModel`. With none fitted, every candidate arrives
+with `utility=None`, `DeterministicDecisionAgent` falls through to its
+candidate-id tiebreak, and the run measures knob effects over an alphabetical
+pick.
+
+```bash
+# fits the forecast group AND the candidate-value model from the same tape
+venv/bin/spy-der-train --state-root /var/lib/spy-der
+```
+
+The model is trained on what each candidate *actually paid* at settlement:
+per-candidate terminal payoff at the session close, scored out-of-fold over
+walk-forward session folds. Watch two numbers in the output:
+
+| Metric | Means |
+|---|---|
+| `mae_skill`, `brier_skill` | fractional improvement over predicting the unconditional median / base rate. Zero means the features carried nothing; negative means worse than the constant it replaced |
+| `selection_edge` | mean P&L of the model's top-decile picks minus the mean over all candidates. **This is the operational one** — the decision layer consumes the *order*, not the predicted value, so a model can have fine MAE and rank no better than chance |
+
+`spy-der-train` logs `NO SELECTION EDGE` when that number is at or below zero.
+A model in that state will load and rank and add nothing; do not promote it
+past `research`.
+
+The model settles at expiry, which is the right target for a 0DTE structure
+held to the close and the wrong one for anything managed intraday — there is no
+exit policy, stop, or mid-session close in the target.
 
 ## Preconditions
 
