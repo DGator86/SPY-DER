@@ -158,6 +158,59 @@ def test_sqlite_journal_roundtrip(tmp_path: Path) -> None:
     assert len(store.iter_events()) == 2
 
 
+def test_sqlite_concurrent_writers_do_not_collide_on_sequence(tmp_path: Path) -> None:
+    """Engine and settlement are separate processes that both append.
+
+    The pre-fix path loaded every event to compute ``len + 1`` without a write
+    lock, so two writers both claimed the same ``sequence_number`` and crashed
+    with ``UNIQUE constraint failed: journal_events.sequence_number``.
+    """
+    import concurrent.futures
+
+    path = tmp_path / "journal.sqlite"
+    # Create the schema once before workers race on appends.
+    SqliteJournalStore(path)
+
+    def _writer(worker: int, count: int) -> list[int]:
+        store = SqliteJournalStore(path)
+        seqs: list[int] = []
+        for i in range(count):
+            ev = store.append(
+                JournalEvent(
+                    event_type="system_decided",
+                    aggregate_id=f"w{worker}",
+                    payload={"worker": worker, "i": i},
+                    deployment_id=f"d{worker}",
+                )
+            )
+            seqs.append(ev.sequence_number)
+        return seqs
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(_writer, w, 25) for w in range(4)]
+        all_seqs = [seq for fut in futures for seq in fut.result()]
+
+    assert sorted(all_seqs) == list(range(1, 101))
+    assert len(set(all_seqs)) == 100
+    store = SqliteJournalStore(path)
+    assert len(store.iter_events()) == 100
+    assert store.verify_chain()
+
+
+def test_sqlite_append_uses_tip_not_full_scan(tmp_path: Path) -> None:
+    """Next sequence comes from the tip row, not ``len(iter_events())``."""
+    path = tmp_path / "journal.sqlite"
+    store = SqliteJournalStore(path)
+    for i in range(50):
+        store.append(JournalEvent(event_type="features_computed", payload={"i": i}))
+    seq, prev = store._tip()
+    assert seq == 51
+    assert prev == store.latest_hash()
+    finalized = store.append(JournalEvent(event_type="candidates_generated", payload={"n": 1}))
+    assert finalized.sequence_number == 51
+    assert finalized.previous_event_hash == prev
+
+
 def test_replay_helpers_still_work() -> None:
     events = deterministic_events("seed-a")
     assert len(events) == 2
