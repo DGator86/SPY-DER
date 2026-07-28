@@ -93,6 +93,11 @@ labels every observation against the *forward* path of its own session.
 
 ```bash
 spy-der-train --state-root /var/lib/spy-der          # registers a `research` group
+# Point the engine at it via /etc/spy-der/spy-der.env (unit already loads this):
+#   SPY_DER_FORECAST_GROUP=group-<id>
+#   SPY_DER_FORECAST_LOAD_MODE=research
+sudo systemctl restart spy-der-engine.service
+# Or one-shot:
 spy-der-engine --forecast-group <id> --forecast-load-mode research
 ```
 

@@ -125,6 +125,25 @@ def _types(root: Path) -> Counter:
 # --------------------------------------------------------------------------- #
 # Engine                                                                      #
 # --------------------------------------------------------------------------- #
+def test_engine_forecast_group_defaults_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The unit loads spy-der.env; operators should not need an ExecStart drop-in."""
+    from spy_der.runtime.engine import build_arg_parser
+
+    monkeypatch.setenv("SPY_DER_FORECAST_GROUP", "group-from-env")
+    monkeypatch.setenv("SPY_DER_FORECAST_LOAD_MODE", "research")
+    args = build_arg_parser().parse_args([])
+    assert args.forecast_group == "group-from-env"
+    assert args.forecast_load_mode == "research"
+
+    args = build_arg_parser().parse_args(
+        ["--forecast-group", "group-from-flag", "--forecast-load-mode", "shadow"]
+    )
+    assert args.forecast_group == "group-from-flag"
+    assert args.forecast_load_mode == "shadow"
+
+
 def test_engine_writes_a_candidate_artifact_per_snapshot(tmp_path: Path) -> None:
     _closed_session(tmp_path)
     _run_engine(tmp_path)
