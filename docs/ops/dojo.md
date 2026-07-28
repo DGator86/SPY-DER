@@ -10,7 +10,7 @@ study plan**, not an open-ended trainer:
 
 | Question | Answer |
 |---|---|
-| What data? | **Stored real sessions** (`inbox/experience`) plus **synthetic stress worlds**. Not the live market feed. |
+| What data? | **SPY-DER's own recordings** (`<state-root>/market`, via `--state-root`) plus **synthetic stress worlds**. Not the live market feed. |
 | Does it trade live? | **No.** Live knobs change only after a validated promotion writes `champion.json`. |
 | Why stop before “great”? | Fixed timer budgets (e.g. daily: 6 worlds × 1 generation). Weak market types raise weights for the **next** generation / next night — the run does not loop until every archetype is green. |
 
@@ -20,7 +20,7 @@ Each report includes a `human` block (`headline`, `data_story`, `stop_reason`,
 
 The Dojo compresses market experience into one run:
 
-1. **recorded** — walk `MarketExperienceProvider`; score champion / challenger / baseline via `CandidateEvaluator`
+1. **recorded** — walk `MarketExperienceProvider`; score champion / challenger / baseline via `CandidateEvaluator`. On SPY-DER's own tape the provider is `spy_der.dojo.native_tape.NativeTapeProvider`, which rebuilds each snapshot's candidates and economics through the production path and settles every one of them at the session close, so the score includes selection regret against the best trade that was actually available
 2. **sequential** — leak-free blind-day forward transfer + retention panel
 3. **learner** — diagnose (recorded tape **and** remembered archetype gaps) → hypothesize → optimize (holdout) → stage a challenger only if gates pass
 4. **universe** — spar against `SyntheticUniverseProvider` packets, weighted toward the archetypes the system is losing in, scoring every authority per archetype
@@ -98,20 +98,67 @@ venv/bin/python -c "from spy_der.learning.promotion import rollback_champion; \
 The human path is still there: `promote_pending(configs, candidate_id,
 human_ack="PROMOTE")` promotes a staged candidate directly.
 
-## VPS quick start
+## Running a cycle by hand
+
+`--state-root` is what makes a manual run do anything: the Dojo reads the
+canonical recordings under `<state-root>/market` — the ones `spy-der-market`
+writes and `spy-der-import-zerodte` back-filled. Without it (or
+`--experience-dir`) every phase reports `no MarketExperienceProvider` and the
+run exits 0 having scored nothing.
 
 ```bash
 cd /opt/spy-der
 venv/bin/spy-der dojo \
+    --state-root /var/lib/spy-der \
     --reports-dir /var/lib/spy-der/reports/dojo \
     --configs-dir /var/lib/spy-der/configs \
-    --experience-dir /var/lib/spy-der/inbox/experience \
     --recent-days 3 \
     --days 3 \
     --universes 6 \
     --generations 1 \
     --trials 10
 ```
+
+Or run a packaged timer's exact command on demand:
+
+```bash
+sudo systemctl start spy-der-dojo-daily.service
+journalctl -u spy-der-dojo-daily.service -f
+```
+
+Useful variations:
+
+| Want | Add |
+|---|---|
+| Stage a challenger without promoting it | `--no-auto-promote` |
+| Score only the recorded tape | `--skip-learner --skip-universe` |
+| Every recorded tick, not one per 5 minutes | `--tape-interval-minutes 0` |
+| The full report on stdout | `--json` |
+
+`--tape-interval-minutes` samples the tape by wall clock, not by record index,
+so the packet count does not depend on how often the recorder happened to
+tick. The default (5) keeps a session near 78 packets; candidate generation
+plus economics runs a few hundred milliseconds per snapshot, so `0` over eight
+sessions is minutes of startup, not seconds.
+
+`--experience-dir` still accepts a directory of `MarketPacket` JSON (the 0DTE
+handoff format) and takes precedence when both are given.
+
+### Read the warnings, not just the summary
+
+A run can report `Real tape OK` and still have measured very little. Two
+conditions are printed as `[WARN]` lines because neither shows up in the
+summary:
+
+- `tape_unsettled` — those sessions never reached the close, so they contribute
+  market state but no outcomes. Terminal payoff is only defined at expiry; a
+  session whose bars stop at noon has a midday quote, not a settlement.
+- `tape_unpriced` — no candidate carried an expected value, so candidate
+  *selection* is arbitrary (the deterministic agent sorts on a `None` utility
+  and falls through to candidate id) and only knob effects are being scored.
+  Economics computes an expected value only when a candidate-value forecast
+  supplies `expected_net_pnl`. The signature in the report is champion and
+  baseline scoring identically to the digit.
 
 ## Preconditions
 

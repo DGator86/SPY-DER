@@ -23,7 +23,17 @@ spy-der-train --state-root /var/lib/spy-der
 
 # 3. Read the verdict, then serve if it earned it.
 spy-der-engine --forecast-group <id> --forecast-load-mode research
+
+# 4. Run the learning cycle over the same recordings.
+spy-der dojo --state-root /var/lib/spy-der \
+    --reports-dir /var/lib/spy-der/reports/dojo \
+    --configs-dir /var/lib/spy-der/configs
 ```
+
+Steps 2 and 4 read the same recordings by two different routes:
+`spy-der-train` fits the forecast models on labeled observations, while the
+Dojo scores decisions against per-candidate settlement. See
+[`dojo.md`](dojo.md) — `--state-root` is required there, or every phase skips.
 
 Re-running the import is cheap: sessions already under `<state-root>/market` are
 skipped unless `--overwrite` is given.

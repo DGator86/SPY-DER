@@ -29,6 +29,7 @@ from spy_der.dojo.authority import default_authorities
 from spy_der.dojo.config import DEFAULT_CONFIGS_DIR, DEFAULT_REPORTS_DIR, DojoConfig
 from spy_der.dojo.evaluation import OutcomeCandidateEvaluator
 from spy_der.dojo.human import build_human_report
+from spy_der.dojo.native_tape import DEFAULT_INTERVAL_MINUTES, NativeTapeProvider
 from spy_der.dojo.protocols import (
     CandidateEvaluator,
     DecisionAuthority,
@@ -654,14 +655,38 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=20260723)
     ap.add_argument("--recent-days", type=int, default=0)
     ap.add_argument("--experience-dir", default="", help="directory of MarketPacket JSON")
+    ap.add_argument(
+        "--state-root",
+        default="",
+        help=(
+            "SPY-DER state root; trains on its own recordings under "
+            "<state-root>/market. Use this for SPY-DER's own tape (imported "
+            "from 0DTE or recorded live). --experience-dir wins if both given."
+        ),
+    )
+    ap.add_argument(
+        "--tape-interval-minutes",
+        type=int,
+        default=DEFAULT_INTERVAL_MINUTES,
+        help=(
+            "minimum spacing between sampled packets from --state-root "
+            f"(default: {DEFAULT_INTERVAL_MINUTES}; 0 uses every snapshot)"
+        ),
+    )
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
-    experience = None
+    experience: MarketExperienceProvider | None = None
+    native: NativeTapeProvider | None = None
     if args.experience_dir:
         from spy_der.integrations.zerodte.recorded_feed import FileMarketExperienceProvider
 
         experience = FileMarketExperienceProvider(args.experience_dir)
+    elif args.state_root:
+        native = NativeTapeProvider(
+            args.state_root, interval_minutes=args.tape_interval_minutes
+        )
+        experience = native
 
     cfg = DojoConfig(
         reports_dir=args.reports_dir,
@@ -689,6 +714,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  {out['summary']}")
     for flag in out["flags"]:
         print(f"    [{flag['severity'].upper():4}] {flag['flag']}: {flag['detail']}")
+    if native is not None:
+        # A tape can be large and still score nothing that matters — sessions
+        # that never reached the close carry no outcomes, and a tape with no
+        # candidate-value forecast scores an arbitrary selection. Both look
+        # like a healthy run from the summary line alone.
+        for warning in native.warnings():
+            print(f"    [WARN] {warning}")
     promotion = out["metrics"]["phases"].get("promotion") or {}
     if promotion.get("status") not in {None, "no_candidate", "disabled"}:
         print(f"\n  promotion trial: {promotion.get('status')}")

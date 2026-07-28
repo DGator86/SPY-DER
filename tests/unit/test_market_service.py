@@ -9,7 +9,7 @@ assert, because it means Massive by itself is not sufficient to trade on.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -317,9 +317,52 @@ def test_a_raising_feed_does_not_kill_the_service(
 
 def test_recording_path_is_per_session(tmp_path: Path) -> None:
     cfg = MarketServiceConfig(state_root=str(tmp_path))
-    path = cfg.recording_path(datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    path = cfg.recording_path(date(2026, 7, 24))
     assert path.name == "2026-07-24.jsonl"
     assert path.parent == Path(tmp_path) / "market"
+
+
+def test_a_tick_is_filed_under_its_session_date_not_the_wall_clock(
+    tmp_path: Path,
+) -> None:
+    """UTC rolls over at 20:00 ET, and the session date does not.
+
+    Filing by the wall clock sent every post-rollover record into the *next*
+    day's file, so one file held two session dates. Everything that reads the
+    session from the filename — `build_observations`, the Dojo's native tape —
+    then labels those rows with the wrong day and builds one bar path out of
+    two sessions. Nothing raises; the numbers just quietly describe a day that
+    never happened.
+    """
+    from spy_der.contracts.market import CanonicalMarketSnapshot, SessionStatus
+
+    session = date(2026, 7, 27)
+    # 00:30 UTC on the 28th is 20:30 ET on the 27th — a real recorded moment
+    # for a service running under `Restart=always`.
+    recorded_at = datetime(2026, 7, 28, 0, 30, tzinfo=UTC)
+
+    class _Feed:
+        last_source = "stub"
+
+        def snapshot(self, _now: datetime) -> CanonicalMarketSnapshot:
+            return CanonicalMarketSnapshot(
+                snapshot_id="snap-late",
+                content_hash="sha256:snap-late",
+                timestamp=recorded_at,
+                session_date=session,
+                underlying_symbol="SPY",
+                underlying_price=Decimal("600"),
+                session_status=SessionStatus.CLOSED,
+            )
+
+    service = MarketService(
+        config=MarketServiceConfig(state_root=str(tmp_path), settlement_provider="")
+    )
+    (tmp_path / "market").mkdir(parents=True, exist_ok=True)
+    service._tick(_Feed())  # type: ignore[arg-type]
+
+    written = sorted(p.name for p in (tmp_path / "market").glob("*.jsonl"))
+    assert written == ["2026-07-27.jsonl"], written
 
 
 def test_stop_signal_ends_the_loop(tmp_path: Path, stub_vendor: Any) -> None:
