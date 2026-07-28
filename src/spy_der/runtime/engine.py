@@ -21,11 +21,12 @@ outcomes, which is the design saying a stage may legitimately not run. Today:
   `FeatureBundle`, recorded under `features/` and journaled as
   `FEATURES_COMPUTED`
 * `forecast` runs when a trained model group is configured
-  (`--forecast-group`, produced by `spy-der train`), serving through
-  `ForecastServer` and journaling `FORECAST_GENERATED`. With no group it stays
-  fail-closed and journals `FORECAST_UNAVAILABLE` rather than serving
-  `heuristic_bundle`'s neutral 0.5, which is marked research-only and which
-  downstream stages would read as a real forecast
+  (`--forecast-group` or `SPY_DER_FORECAST_GROUP` from the env file, produced
+  by `spy-der train`), serving through `ForecastServer` and journaling
+  `FORECAST_GENERATED`. With no group it stays fail-closed and journals
+  `FORECAST_UNAVAILABLE` rather than serving `heuristic_bundle`'s neutral 0.5,
+  which is marked research-only and which downstream stages would read as a
+  real forecast
 
 The engine is idempotent: it skips snapshots whose candidate artifact is
 already on disk, so a restart resumes rather than duplicating.
@@ -35,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import time
 from dataclasses import dataclass, field
@@ -63,6 +65,11 @@ log = logging.getLogger("spy_der.engine")
 
 DEFAULT_STATE_ROOT = "/var/lib/spy-der"
 DEPLOYMENT_ID = "spy-der-engine"
+
+#: Set in `/etc/spy-der/spy-der.env` after `spy-der-train` registers a group.
+#: The systemd unit already loads that file; flags still win when passed.
+ENV_FORECAST_GROUP = "SPY_DER_FORECAST_GROUP"
+ENV_FORECAST_LOAD_MODE = "SPY_DER_FORECAST_LOAD_MODE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -515,13 +522,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--session", default="", help="restrict to one YYYY-MM-DD session")
     p.add_argument(
         "--forecast-group",
-        default="",
-        help="registered model group to serve forecasts from (see spy-der-train)",
+        default=os.environ.get(ENV_FORECAST_GROUP, ""),
+        help=(
+            "registered model group to serve forecasts from (see spy-der-train); "
+            f"default: ${ENV_FORECAST_GROUP} from the environment"
+        ),
     )
     p.add_argument(
         "--forecast-load-mode",
-        default="shadow",
-        help="registry load mode for the forecast group (default: shadow)",
+        default=os.environ.get(ENV_FORECAST_LOAD_MODE, "shadow"),
+        help=(
+            "registry load mode for the forecast group "
+            f"(default: ${ENV_FORECAST_LOAD_MODE} or shadow)"
+        ),
     )
     # Accepted so the systemd unit's --config is not a hard error before the
     # config loader lands; the file is not read yet (same as `spy-der market`).
