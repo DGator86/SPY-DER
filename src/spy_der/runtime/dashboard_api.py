@@ -19,7 +19,7 @@ Routes:
     GET /v1/validation/reports     index of stamped validation reports
     GET /v1/attribution/latest     newest shadow-account attribution report
     GET /v1/attribution/reports    index of stamped attribution reports
-    GET /ui                        the SPY-DER dashboard tab, standalone
+    GET /ui                        SPY-DER dashboard (primary Learning · Dojo UI)
     GET /ui/<asset>                its stylesheet and module
 
 `handle_get` is the single read path for JSON: `spy_der.runtime.mcp_server` wraps

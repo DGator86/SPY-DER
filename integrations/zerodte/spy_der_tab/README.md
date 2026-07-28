@@ -1,8 +1,10 @@
 # SPY-DER tab for the 0DTE Vercel dashboard
 
-Adds a dedicated **SPY-DER** tab beside the existing Legacy / V2 / V3 views:
-decision chain, current decision, shadow-account attribution, system health,
-Dojo and parity, open positions.
+Optional embed of the SPY-DER tab beside Legacy / V2 / V3 during migration.
+
+**Learning and Dojo are owned by SPY-DER.** Prefer
+`http://127.0.0.1:8788/ui` on the VPS (or an SSH tunnel to it). This 0DTE
+mount is convenience only — it does not own Learning/Dojo.
 
 This directory contains **no code**. The tab lives in SPY-DER, at
 `src/spy_der/runtime/ui/`, and ships inside the installed package. 0DTE mounts
@@ -11,8 +13,8 @@ it; it does not own a copy. That matters for two reasons:
 - There is one implementation. A fix to the tab is a SPY-DER commit, and the VPS
   deploy already fast-forwards `/opt/spy-der` and reinstalls it — no second
   patch to land on 0DTE.
-- It survives cutover. `spy-der-dashboard-api` serves the same asset at `/ui`,
-  so when 0DTE is retired the tab keeps working with nothing to port.
+- The primary surface is already `spy-der-dashboard-api` at `/ui`; when 0DTE is
+  retired, nothing Learning/Dojo-related needs to move.
 
 The existing `../0dte-spy-der-parallel-panel.patch` is unrelated and stays as
 is: it adds SPY-DER as a fourth *card* in the Parallel decisions panel. This is
