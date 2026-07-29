@@ -10,6 +10,8 @@ import os
 import stat
 from pathlib import Path
 
+import pytest
+
 from spy_der.dojo.reports import persist_dojo_report
 from spy_der.runtime.dashboard_api import (
     UI_ROOT,
@@ -342,3 +344,167 @@ def test_ui_is_not_reachable_through_the_json_handler(tmp_path: Path) -> None:
     code, body = handle_get(_state(tmp_path), "/ui")
     assert code == 404
     assert body["error"] == "not_found"
+
+
+# --------------------------------------------------------------------------- #
+# Pending challengers + operator promote/reject                               #
+# --------------------------------------------------------------------------- #
+def test_pending_queue_is_empty_before_any_challenger(tmp_path: Path) -> None:
+    code, body = handle_get(_state(tmp_path), "/v1/dojo/pending")
+    assert code == 200
+    assert body["pending"] == []
+    assert body["count"] == 0
+    assert body["lane"] == "decision_knobs"
+    assert body["actions_enabled"] is False
+
+
+def test_pending_queue_lists_staged_knob_challengers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from spy_der.learning.promotion import stage_pending_review
+    from spy_der.runtime.dashboard_api import OPERATOR_TOKEN_ENV
+
+    monkeypatch.setenv(OPERATOR_TOKEN_ENV, "secret-token")
+    stage_pending_review(
+        tmp_path / "configs",
+        candidate_id="cand-ood",
+        payload={
+            "knobs": {"prefer_abstain_on_ood": True},
+            "target_archetype": "chop",
+            "mode": "remediate",
+        },
+        auto_promote=False,
+    )
+    code, body = handle_get(_state(tmp_path), "/v1/dojo/pending")
+    assert code == 200
+    assert body["count"] == 1
+    assert body["actions_enabled"] is True
+    assert body["pending"][0]["candidate_id"] == "cand-ood"
+    assert body["pending"][0]["knobs"]["prefer_abstain_on_ood"] is True
+    assert body["pending"][0]["target_archetype"] == "chop"
+
+
+def test_promote_requires_operator_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from spy_der.learning.promotion import stage_pending_review
+    from spy_der.runtime.dashboard_api import OPERATOR_TOKEN_ENV, handle_post
+
+    monkeypatch.delenv(OPERATOR_TOKEN_ENV, raising=False)
+    stage_pending_review(
+        tmp_path / "configs",
+        candidate_id="cand-1",
+        payload={"knobs": {"min_confidence": 0.55}},
+    )
+    code, body = handle_post(
+        _state(tmp_path),
+        "/v1/dojo/promote",
+        {"candidate_id": "cand-1", "human_ack": "PROMOTE"},
+        authorization="Bearer anything",
+    )
+    assert code == 503
+    assert body["error"] == "operator_token_unset"
+
+
+def test_promote_rejects_bad_bearer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from spy_der.learning.promotion import stage_pending_review
+    from spy_der.runtime.dashboard_api import OPERATOR_TOKEN_ENV, handle_post
+
+    monkeypatch.setenv(OPERATOR_TOKEN_ENV, "correct-token")
+    stage_pending_review(
+        tmp_path / "configs",
+        candidate_id="cand-1",
+        payload={"knobs": {"min_confidence": 0.55}},
+    )
+    code, body = handle_post(
+        _state(tmp_path),
+        "/v1/dojo/promote",
+        {"candidate_id": "cand-1", "human_ack": "PROMOTE"},
+        authorization="Bearer wrong-token",
+    )
+    assert code == 401
+    assert body["error"] == "unauthorized"
+
+
+def test_promote_and_reject_mutate_configs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from spy_der.learning.promotion import current_champion, stage_pending_review
+    from spy_der.runtime.dashboard_api import OPERATOR_TOKEN_ENV, handle_post
+
+    monkeypatch.setenv(OPERATOR_TOKEN_ENV, "op-token")
+    configs = tmp_path / "configs"
+    stage_pending_review(
+        configs,
+        candidate_id="keep-me",
+        payload={"knobs": {"prefer_abstain_on_ood": True}},
+    )
+    stage_pending_review(
+        configs,
+        candidate_id="drop-me",
+        payload={"knobs": {"min_confidence": 0.7}},
+    )
+
+    code, body = handle_post(
+        _state(tmp_path),
+        "/v1/dojo/promote",
+        {"candidate_id": "keep-me", "human_ack": "PROMOTE"},
+        authorization="Bearer op-token",
+    )
+    assert code == 200
+    assert body["ok"] is True
+    assert body["action"] == "promote"
+    assert current_champion(configs)["candidate_id"] == "keep-me"
+    assert [c["candidate_id"] for c in body["pending"]] == ["drop-me"]
+
+    code, body = handle_post(
+        _state(tmp_path),
+        "/v1/dojo/reject",
+        {"candidate_id": "drop-me"},
+        authorization="Bearer op-token",
+    )
+    assert code == 200
+    assert body["pending"] == []
+    assert (configs / "challengers" / "rejected_drop-me.json").is_file()
+
+
+def test_rollback_restores_previous_champion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from spy_der.learning.promotion import (
+        current_champion,
+        promote_pending,
+        stage_pending_review,
+    )
+    from spy_der.runtime.dashboard_api import OPERATOR_TOKEN_ENV, handle_post
+
+    monkeypatch.setenv(OPERATOR_TOKEN_ENV, "op-token")
+    configs = tmp_path / "configs"
+    stage_pending_review(
+        configs, candidate_id="first", payload={"knobs": {"min_confidence": 0.4}}
+    )
+    promote_pending(configs, "first", human_ack="PROMOTE")
+    stage_pending_review(
+        configs, candidate_id="second", payload={"knobs": {"min_confidence": 0.8}}
+    )
+    promote_pending(configs, "second", human_ack="PROMOTE")
+    assert current_champion(configs)["candidate_id"] == "second"
+
+    code, body = handle_post(
+        _state(tmp_path),
+        "/v1/dojo/rollback",
+        {},
+        authorization="Bearer op-token",
+    )
+    assert code == 200
+    assert body["action"] == "rollback"
+    assert current_champion(configs)["candidate_id"] == "first"
+
+
+def test_ui_shell_enables_operator_actions() -> None:
+    code, _, body = read_ui_asset("/ui")
+    assert code == 200
+    assert b"data-spy-der-actions" in body
+    assert b"Adaptive Loop" in body

@@ -1,8 +1,8 @@
 /* SPY-DER dashboard tab — one implementation, two mounts.
  *
- * Mount A: 0DTE's Vercel dashboard, as a tab beside Legacy / V2 / V3.
- * Mount B: SPY-DER's own read-only dashboard API at `/ui`, which is what keeps
- *          working after 0DTE is retired.
+ * Mount A: 0DTE's Vercel dashboard, as the Adaptive Loop tab.
+ * Mount B: SPY-DER's own dashboard API at `/ui`, which is what keeps working
+ *          after 0DTE is retired.
  *
  * Both mounts load this same file, so there is no second copy to drift. The
  * 0DTE side needs no JavaScript edit: drop a container with `data-spy-der-tab`
@@ -12,15 +12,17 @@
  * Constraints this file is written to:
  *
  *   - No dependencies, no build step. It is loaded as a plain ES module.
- *   - Read-only. It issues GETs and renders. There is no code path here that
- *     can submit, size, approve or promote anything — the execution guard is
- *     the only route to a trade and a browser must not be a second one.
+ *   - Decision path stays closed. GETs render live state; operator POSTs only
+ *     promote / reject / rollback *decision knobs* (champion.json). Nothing
+ *     here can place, size, or submit a trade — the execution guard remains
+ *     the only route to the market.
+ *   - Operator writes need `data-spy-der-actions` (or options.actions) plus a
+ *     Bearer token for SPY_DER_OPERATOR_TOKEN. Without both, Promote/Reject
+ *     stay hidden and the tab is display-only.
  *   - No `innerHTML` with server data. Every value goes through `text()`, so a
  *     rationale or reason code cannot inject markup into 0DTE's page.
  *   - Panels fail independently. One unreadable artifact greys out its own
- *     panel and says why; it never blanks the tab. A dashboard that shows
- *     nothing because one file is missing is worse than one showing "unknown",
- *     which is the same principle `runtime/system_status.py` is built on.
+ *     panel and says why; it never blanks the tab.
  */
 
 const DEFAULT_ENDPOINTS = {
@@ -28,11 +30,17 @@ const DEFAULT_ENDPOINTS = {
   state: "/v1/state",
   dojo: "/v1/dojo/latest",
   dojoProgress: "/v1/dojo/progress",
+  pending: "/v1/dojo/pending",
+  champion: "/v1/dojo/champion",
+  promote: "/v1/dojo/promote",
+  reject: "/v1/dojo/reject",
+  rollback: "/v1/dojo/rollback",
   validation: "/v1/validation/latest",
   attribution: "/v1/attribution/latest",
 };
 
 const DEFAULT_REFRESH_MS = 30000;
+const OPERATOR_TOKEN_KEY = "spyDerOperatorToken";
 
 /* -------------------------------------------------------------------------- */
 /* DOM helpers                                                                */
@@ -842,9 +850,140 @@ function renderDojoProgress(progress) {
   return square;
 }
 
-function renderDojo(dojo, validation, progress) {
-  const box = panel("Learning · Dojo", true);
+function knobsSummary(knobs) {
+  if (!knobs || typeof knobs !== "object") return "—";
+  const parts = Object.entries(knobs)
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .slice(0, 6)
+    .map(([key, value]) => `${key}=${value}`);
+  return parts.length ? parts.join(", ") : "—";
+}
+
+function renderPendingReview(pendingBody, actions) {
+  const box = el("div", "spyder-tab__pending");
+  box.appendChild(el("h4", "spyder-tab__subhead", "Knob challengers · pending review"));
+
+  const pending = pendingBody && Array.isArray(pendingBody.pending) ? pendingBody.pending : [];
+  const actionsEnabled = Boolean(pendingBody && pendingBody.actions_enabled);
+  const canAct = Boolean(actions && actions.enabled);
+
+  if (!pending.length) {
+    box.appendChild(
+      note(
+        "No staged knob challengers. Auto-promote clears this queue when a trial passes; " +
+          "with SPY_DER_DOJO_AUTO_PROMOTE=0 the Dojo leaves candidates here for you."
+      )
+    );
+  } else {
+    const list = el("div", "spyder-tab__pending-list");
+    for (const candidate of pending) {
+      const row = el("div", "spyder-tab__pending-row");
+      if (actions && actions.selectedId === candidate.candidate_id) {
+        row.classList.add("spyder-tab__pending-row--selected");
+      }
+      row.appendChild(
+        el("div", "spyder-tab__pending-id", text(candidate.candidate_id))
+      );
+      const meta = el("div", "spyder-tab__pending-meta");
+      meta.appendChild(
+        el(
+          "span",
+          null,
+          candidate.target_archetype
+            ? `focus ${text(candidate.target_archetype)}`
+            : text(candidate.mode, "knob change")
+        )
+      );
+      meta.appendChild(el("span", "spyder-tab__note", knobsSummary(candidate.knobs)));
+      row.appendChild(meta);
+
+      if (canAct) {
+        const btns = el("div", "spyder-tab__pending-actions");
+        const promoteBtn = el("button", "spyder-tab__btn spyder-tab__btn--ok", "Promote");
+        promoteBtn.type = "button";
+        promoteBtn.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void actions.onPromote(candidate.candidate_id);
+        });
+        const rejectBtn = el("button", "spyder-tab__btn spyder-tab__btn--bad", "Reject");
+        rejectBtn.type = "button";
+        rejectBtn.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void actions.onReject(candidate.candidate_id);
+        });
+        btns.appendChild(promoteBtn);
+        btns.appendChild(rejectBtn);
+        row.appendChild(btns);
+      } else {
+        row.addEventListener("click", () => {
+          if (actions && actions.onSelect) actions.onSelect(candidate.candidate_id);
+        });
+      }
+      list.appendChild(row);
+    }
+    box.appendChild(list);
+  }
+
+  if (actions && actions.enabled) {
+    const unlock = el("div", "spyder-tab__operator");
+    if (actions.hasToken) {
+      unlock.appendChild(
+        note(
+          actionsEnabled
+            ? "Operator unlocked — Promote / Reject write decision knobs only (not forecast models)."
+            : "Token saved locally, but the API has no SPY_DER_OPERATOR_TOKEN configured."
+        )
+      );
+      const rollbackBtn = el("button", "spyder-tab__btn", "Rollback champion");
+      rollbackBtn.type = "button";
+      rollbackBtn.addEventListener("click", () => {
+        void actions.onRollback();
+      });
+      const lockBtn = el("button", "spyder-tab__btn", "Lock");
+      lockBtn.type = "button";
+      lockBtn.addEventListener("click", () => actions.onLock());
+      unlock.appendChild(rollbackBtn);
+      unlock.appendChild(lockBtn);
+    } else {
+      unlock.appendChild(
+        note(
+          "Unlock with the operator token to Promote / Reject staged knob challengers."
+        )
+      );
+      const row = el("div", "spyder-tab__operator-row");
+      const input = el("input", "spyder-tab__operator-input");
+      input.type = "password";
+      input.placeholder = "SPY_DER_OPERATOR_TOKEN";
+      input.autocomplete = "off";
+      const unlockBtn = el("button", "spyder-tab__btn spyder-tab__btn--ok", "Unlock");
+      unlockBtn.type = "button";
+      unlockBtn.addEventListener("click", () => {
+        actions.onUnlock(input.value);
+      });
+      row.appendChild(input);
+      row.appendChild(unlockBtn);
+      unlock.appendChild(row);
+    }
+    if (actions.message) {
+      unlock.appendChild(
+        note(actions.message, /fail|refus|unauth|error/i.test(actions.message))
+      );
+    }
+    box.appendChild(unlock);
+  } else if (pending.length) {
+    box.appendChild(
+      note(
+        "Display only on this mount — enable data-spy-der-actions to Promote / Reject."
+      )
+    );
+  }
+  return box;
+}
+
+function renderDojo(dojo, validation, progress, pendingBody, actions) {
+  const box = panel("Adaptive Loop · Dojo", true);
   box.appendChild(renderDojoProgress(progress));
+  box.appendChild(renderPendingReview(pendingBody, actions));
   if (!dojo) {
     box.appendChild(note("No Dojo report yet. The nightly run will fill this in."));
   } else {
@@ -954,9 +1093,12 @@ function renderPositions(state) {
 /* Fetching                                                                   */
 /* -------------------------------------------------------------------------- */
 
-async function readJson(url) {
+async function readJson(url, options = {}) {
+  const headers = { Accept: "application/json", ...(options.headers || {}) };
   const response = await fetch(url, {
-    headers: { Accept: "application/json" },
+    method: options.method || "GET",
+    headers,
+    body: options.body,
     cache: "no-store",
   });
   const body = await response.json().catch(() => null);
@@ -964,6 +1106,23 @@ async function readJson(url) {
   // reported as absence rather than as a failure the user should chase.
   if (!response.ok) return { ok: false, status: response.status, body };
   return { ok: true, status: response.status, body };
+}
+
+function loadOperatorToken() {
+  try {
+    return sessionStorage.getItem(OPERATOR_TOKEN_KEY) || "";
+  } catch (_err) {
+    return "";
+  }
+}
+
+function saveOperatorToken(token) {
+  try {
+    if (token) sessionStorage.setItem(OPERATOR_TOKEN_KEY, token);
+    else sessionStorage.removeItem(OPERATOR_TOKEN_KEY);
+  } catch (_err) {
+    /* private mode — actions still work for this page lifetime via closure */
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -982,13 +1141,16 @@ export function mountSpyDerTab(options = {}) {
   const base = (options.base || target.dataset.spyDerBase || "").replace(/\/$/, "");
   const endpoints = { ...DEFAULT_ENDPOINTS, ...(options.endpoints || {}) };
   const refreshMs = Number(options.refreshMs || target.dataset.spyDerRefresh || DEFAULT_REFRESH_MS);
+  const actionsEnabled =
+    options.actions === true ||
+    target.dataset.spyDerActions !== undefined;
   const url = (key) => `${base}${endpoints[key]}`;
 
   target.classList.add("spyder-tab");
 
   const head = el("div", "spyder-tab__head");
   const title = el("h2", "spyder-tab__title", "SPY-DER");
-  const subtitle = el("small", null, "prediction · risk · Learning · Dojo");
+  const subtitle = el("small", null, "prediction · risk · Adaptive Loop · Dojo");
   title.appendChild(subtitle);
   const statusPill = el("span", "spyder-tab__pill", "loading");
   const freshness = el("span", "spyder-tab__note", "");
@@ -1010,10 +1172,102 @@ export function mountSpyDerTab(options = {}) {
 
   let timer = null;
   let disposed = false;
+  let operatorToken = options.operatorToken || loadOperatorToken();
+  let selectedId = null;
+  let actionMessage = "";
+  let actionBusy = false;
+
+  async function postAction(key, payload) {
+    if (actionBusy) return;
+    if (!operatorToken) {
+      actionMessage = "Unlock with the operator token first.";
+      void refresh();
+      return;
+    }
+    actionBusy = true;
+    actionMessage = "Working…";
+    void refresh();
+    const result = await readJson(url(key), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${operatorToken}`,
+        // Vercel→0DTE rewrites Authorization to DASHBOARD_TOKEN; this header
+        // carries the operator secret through that hop to spy-der-dashboard-api.
+        "X-Spy-Der-Operator-Token": operatorToken,
+      },
+      body: JSON.stringify(payload || {}),
+    }).catch((error) => ({ ok: false, status: 0, body: { detail: String(error) } }));
+    actionBusy = false;
+    if (result.ok) {
+      actionMessage = `${text(result.body && result.body.action, key)} ok`;
+      selectedId = null;
+    } else {
+      const detail =
+        (result.body && (result.body.detail || result.body.error)) ||
+        `HTTP ${result.status}`;
+      actionMessage = String(detail);
+      if (result.status === 401) {
+        operatorToken = "";
+        saveOperatorToken("");
+      }
+    }
+    void refresh();
+  }
+
+  const actions = actionsEnabled
+    ? {
+        get enabled() {
+          return true;
+        },
+        get hasToken() {
+          return Boolean(operatorToken);
+        },
+        get selectedId() {
+          return selectedId;
+        },
+        get message() {
+          return actionMessage;
+        },
+        onSelect(id) {
+          selectedId = id;
+          void refresh();
+        },
+        onUnlock(token) {
+          operatorToken = String(token || "").trim();
+          saveOperatorToken(operatorToken);
+          actionMessage = operatorToken ? "Unlocked for this browser session." : "";
+          void refresh();
+        },
+        onLock() {
+          operatorToken = "";
+          saveOperatorToken("");
+          actionMessage = "Locked.";
+          void refresh();
+        },
+        onPromote(id) {
+          return postAction("promote", { candidate_id: id, human_ack: "PROMOTE" });
+        },
+        onReject(id) {
+          return postAction("reject", { candidate_id: id });
+        },
+        onRollback() {
+          return postAction("rollback", {});
+        },
+      }
+    : null;
 
   async function refresh() {
     refreshButton.disabled = true;
-    const keys = ["system", "state", "dojo", "dojoProgress", "validation", "attribution"];
+    const keys = [
+      "system",
+      "state",
+      "dojo",
+      "dojoProgress",
+      "pending",
+      "validation",
+      "attribution",
+    ];
     const settled = await Promise.all(
       keys.map((key) =>
         readJson(url(key)).catch((error) => ({ ok: false, status: 0, body: null, error }))
@@ -1063,15 +1317,23 @@ export function mountSpyDerTab(options = {}) {
       renderDojo(
         results.dojo.ok ? results.dojo.body : null,
         results.validation.ok ? results.validation.body : null,
-        results.dojoProgress.ok ? results.dojoProgress.body : null
+        results.dojoProgress.ok ? results.dojoProgress.body : null,
+        results.pending.ok ? results.pending.body : { pending: [], actions_enabled: false },
+        actions
       )
     );
     if (state) grid.appendChild(renderPositions(state));
 
     const schema = state ? state.schema : "unknown";
-    footer.textContent =
-      `Read-only view · schema ${schema} · refreshed ${new Date().toLocaleTimeString()} · ` +
-      "this tab cannot place, size, approve or promote anything.";
+    const pendingCount =
+      results.pending.ok && results.pending.body
+        ? Number(results.pending.body.count || 0)
+        : 0;
+    footer.textContent = actionsEnabled
+      ? `Adaptive Loop · schema ${schema} · ${pendingCount} pending knob challenger(s) · ` +
+        `refreshed ${new Date().toLocaleTimeString()} · trades still go only through the execution guard.`
+      : `Display view · schema ${schema} · refreshed ${new Date().toLocaleTimeString()} · ` +
+        "Promote/Reject hidden on this mount (no data-spy-der-actions).";
     refreshButton.disabled = false;
   }
 

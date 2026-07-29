@@ -31,11 +31,14 @@ installed package directory.
 
 ## Optional: embed in 0DTE
 
-See [`integrations/zerodte/spy_der_tab/README.md`](../../integrations/zerodte/spy_der_tab/README.md).
-Summary: serve the two assets, add a container with `data-spy-der-tab`, proxy
-the GETs (including `/v1/dojo/progress`). No JavaScript edit on the 0DTE side —
-the module auto-mounts. Prefer SPY-DER `/ui` unless you specifically need the
-Vercel host.
+See [`integrations/zerodte/spy_der_tab/README.md`](../../integrations/zerodte/spy_der_tab/README.md)
+and the ready Vercel patch
+[`integrations/zerodte/README-adaptive-loop-vercel.md`](../../integrations/zerodte/README-adaptive-loop-vercel.md).
+
+Summary: serve the two assets, replace Learning/Dojo with an Adaptive Loop
+container carrying `data-spy-der-tab` + `data-spy-der-actions`, and proxy
+`/api/spy-der/v1/*` (including `/v1/dojo/progress` and operator POSTs). Prefer
+SPY-DER `/ui` unless you specifically need the Vercel host.
 
 ## What it shows
 

@@ -127,6 +127,107 @@
   border-color: var(--sd-accent);
 }
 
+.spyder-tab__btn {
+  font: inherit;
+  font-size: 12px;
+  color: var(--sd-text);
+  background: var(--sd-panel-2);
+  border: 1px solid var(--sd-border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.spyder-tab__btn:hover {
+  border-color: var(--sd-accent);
+}
+
+.spyder-tab__btn--ok {
+  color: var(--sd-ok);
+  border-color: color-mix(in srgb, var(--sd-ok) 45%, var(--sd-border));
+}
+
+.spyder-tab__btn--bad {
+  color: var(--sd-bad);
+  border-color: color-mix(in srgb, var(--sd-bad) 45%, var(--sd-border));
+}
+
+.spyder-tab__pending {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--sd-border);
+  border-radius: 8px;
+  background: var(--sd-panel-2);
+}
+
+.spyder-tab__pending-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.spyder-tab__pending-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--sd-border);
+  border-radius: 6px;
+  background: var(--sd-panel);
+  cursor: default;
+}
+
+.spyder-tab__pending-row--selected {
+  border-color: var(--sd-accent);
+}
+
+.spyder-tab__pending-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.spyder-tab__pending-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.spyder-tab__pending-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.spyder-tab__operator {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.spyder-tab__operator-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.spyder-tab__operator-input {
+  flex: 1 1 220px;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--sd-text);
+  background: var(--sd-panel);
+  border: 1px solid var(--sd-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
 /* Grid and panels -------------------------------------------------------- */
 .spyder-tab__grid {
   display: grid;
@@ -653,5 +754,9 @@
 
   .spyder-tab__bar-row {
     grid-template-columns: 72px 1fr 72px;
+  }
+
+  .spyder-tab__pending-row {
+    grid-template-columns: 1fr;
   }
 }
