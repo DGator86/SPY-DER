@@ -1,7 +1,7 @@
 [Unit]
 # Dashboard data services. Binds loopback only: the Vercel frontend reaches it
 # through a reverse proxy, so the API is never directly internet-facing.
-Description=SPY-DER dashboard API (read-only state services)
+Description=SPY-DER dashboard API (state reads + operator knob promotion)
 After=network-online.target
 Wants=network-online.target
 
@@ -20,12 +20,14 @@ ExecStart=/opt/spy-der/venv/bin/spy-der dashboard-api \
 Restart=always
 RestartSec=5
 
-# Read-only service: it must never mutate runtime state.
+# Reads are open; writes are limited to configs/ (champion + pending_review).
+# Promote / Reject require SPY_DER_OPERATOR_TOKEN in spy-der.env.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadOnlyPaths=/var/lib/spy-der
+ReadWritePaths=/var/lib/spy-der/configs
 
 StandardOutput=journal
 StandardError=journal

@@ -164,6 +164,17 @@ TOOLS: tuple[McpTool, ...] = (
         schema=_NO_ARGS,
     ),
     McpTool(
+        name="spy_der_dojo_pending",
+        title="Pending knob challengers",
+        description=(
+            "Staged decision-knob challengers under configs/pending_review/. "
+            "Read-only — Promote / Reject stay on the authenticated HTTP "
+            "operator channel, not MCP."
+        ),
+        route="/v1/dojo/pending",
+        schema=_NO_ARGS,
+    ),
+    McpTool(
         name="spy_der_dojo_reports",
         title="Dojo report index",
         description=(

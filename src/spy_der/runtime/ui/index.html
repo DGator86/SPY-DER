@@ -1,16 +1,19 @@
 <!doctype html>
 <!--
   Standalone shell for the SPY-DER tab, served by `spy-der-dashboard-api` at
-  `/ui`. This is the primary Learning · Dojo surface — not the 0DTE Vercel host.
-  The same `spy-der-tab.js` may be embedded elsewhere during migration, so there
-  is one implementation and no second copy to drift.
+  `/ui`. This is the primary Adaptive Loop · Dojo surface — not the 0DTE Vercel
+  host. The same `spy-der-tab.js` may be embedded elsewhere during migration, so
+  there is one implementation and no second copy to drift.
+
+  `data-spy-der-actions` unlocks Promote / Reject / Rollback for decision knobs
+  once SPY_DER_OPERATOR_TOKEN is set on the API and pasted into the panel.
 -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
-    <title>SPY-DER · Learning · Dojo</title>
+    <title>SPY-DER · Adaptive Loop · Dojo</title>
     <link rel="stylesheet" href="/ui/spy-der-tab.css" />
     <style>
       html,
@@ -35,7 +38,7 @@
   <body>
     <!-- Same-origin: the API serving this page also serves /v1/*, so the
          default endpoints need no base prefix. -->
-    <div id="spy-der" data-spy-der-tab></div>
+    <div id="spy-der" data-spy-der-tab data-spy-der-actions></div>
     <script type="module" src="/ui/spy-der-tab.js"></script>
   </body>
 </html>

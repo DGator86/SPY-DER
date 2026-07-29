@@ -1,0 +1,3365 @@
+From 2b14e4a782d1f29f126280ca505eb0d96953fe0a Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Wed, 29 Jul 2026 02:17:52 +0000
+Subject: [PATCH] Embed SPY-DER Adaptive Loop on Vercel; retire duplicate
+ Dojo/Learning UI
+
+Mount spy-der-tab.js as the Adaptive Loop tab, proxy /api/spy-der/v1/* to
+spy-der-dashboard-api (including dojo/progress and operator promote/reject),
+and allow those POSTs through the read-only middleware and Vercel proxy.
+---
+ api/[...path].js                 |   51 +-
+ dashboard/auth.py                |   27 +-
+ dashboard/server.py              |   50 +-
+ dashboard/static/app.js          |  828 +-----------------
+ dashboard/static/index.html      |   68 +-
+ dashboard/static/spy-der-tab.css |  762 ++++++++++++++++
+ dashboard/static/spy-der-tab.js  | 1387 ++++++++++++++++++++++++++++++
+ scripts/vercel-build.sh          |    6 +-
+ 8 files changed, 2304 insertions(+), 875 deletions(-)
+ create mode 100644 dashboard/static/spy-der-tab.css
+ create mode 100644 dashboard/static/spy-der-tab.js
+
+diff --git a/api/[...path].js b/api/[...path].js
+index cf01b6e..416d5de 100644
+--- a/api/[...path].js
++++ b/api/[...path].js
+@@ -1,10 +1,20 @@
+ /**
+- * Vercel serverless proxy — forwards read-only /api/* to the VPS dashboard.
++ * Vercel serverless proxy — forwards /api/* to the VPS dashboard.
+  * Set VPS_API_URL and DASHBOARD_TOKEN in Vercel project environment variables.
+- * The browser never sees the token; Vercel adds it server-side.
++ *
++ * GET/HEAD stay read-only. POST is allowed only for SPY-DER operator knob
++ * writes (promote / reject / rollback). The browser's operator secret travels
++ * as X-Spy-Der-Operator-Token because Authorization is reserved for
++ * DASHBOARD_TOKEN on this hop.
+  */
+ export default async function handler(req, res) {
+-  if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
++  const requestUrl = new URL(req.url, "http://localhost");
++  const subpath = requestUrl.pathname.replace(/^\/api\/?/, "");
++  const operatorWrite =
++    req.method === "POST" &&
++    /^(spy-der\/v1\/dojo\/(promote|reject|rollback))\/?$/.test(subpath);
++
++  if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && !operatorWrite) {
+     return res.status(405).json({ detail: "Method not allowed — read-only dashboard" });
+   }
+ 
+@@ -21,24 +31,35 @@ export default async function handler(req, res) {
+     });
+   }
+ 
+-  // Derive the subpath directly from the raw request URL rather than
+-  // req.query.path — the dynamic-route query param is not reliably populated
+-  // for this catch-all function (observed empty in production, which silently
+-  // forwarded every call to "<vpsBase>/api/" with no subpath, hitting no route
+-  // on the VPS and returning a generic 404 instead of real data).
+-  const requestUrl = new URL(req.url, "http://localhost");
+-  const subpath = requestUrl.pathname.replace(/^\/api\/?/, "");
+-
+   const qsStr = requestUrl.searchParams.toString();
+   const target = `${vpsBase}/api/${subpath}${qsStr ? `?${qsStr}` : ""}`;
+ 
++  const headers = {
++    Authorization: `Bearer ${token}`,
++    Accept: req.headers.accept || "application/json",
++  };
++  const operator =
++    req.headers["x-spy-der-operator-token"] ||
++    req.headers["X-Spy-Der-Operator-Token"];
++  if (operator) {
++    headers["X-Spy-Der-Operator-Token"] = operator;
++  }
++  if (req.method === "POST") {
++    headers["Content-Type"] = req.headers["content-type"] || "application/json";
++  }
++
++  let body;
++  if (req.method === "POST") {
++    if (typeof req.body === "string") body = req.body;
++    else if (Buffer.isBuffer(req.body)) body = req.body;
++    else body = JSON.stringify(req.body ?? {});
++  }
++
+   try {
+     const upstream = await fetch(target, {
+       method: req.method,
+-      headers: {
+-        Authorization: `Bearer ${token}`,
+-        Accept: req.headers.accept || "application/json",
+-      },
++      headers,
++      body,
+     });
+ 
+     const contentType = upstream.headers.get("content-type") || "application/json";
+diff --git a/dashboard/auth.py b/dashboard/auth.py
+index 4720928..c4ed8be 100644
+--- a/dashboard/auth.py
++++ b/dashboard/auth.py
+@@ -33,16 +33,29 @@ def check_token(request: Request) -> None:
+     raise HTTPException(status_code=401, detail="Unauthorized")
+ 
+ 
++_OPERATOR_WRITE_PREFIXES = (
++    "/api/spy-der/v1/dojo/promote",
++    "/api/spy-der/v1/dojo/reject",
++    "/api/spy-der/v1/dojo/rollback",
++)
++
++
+ class ReadOnlyMiddleware(BaseHTTPMiddleware):
+-    """Reject mutating HTTP methods."""
++    """Reject mutating HTTP methods except SPY-DER operator knob writes."""
+ 
+     async def dispatch(self, request: Request, call_next):
+-        if request.method not in ("GET", "HEAD", "OPTIONS"):
+-            return JSONResponse(
+-                status_code=405,
+-                content={"detail": "Method not allowed — read-only dashboard"},
+-            )
+-        return await call_next(request)
++        if request.method in ("GET", "HEAD", "OPTIONS"):
++            return await call_next(request)
++        path = request.url.path.rstrip("/")
++        if request.method == "POST" and any(
++            path == prefix or path.startswith(prefix + "/")
++            for prefix in _OPERATOR_WRITE_PREFIXES
++        ):
++            return await call_next(request)
++        return JSONResponse(
++            status_code=405,
++            content={"detail": "Method not allowed — read-only dashboard"},
++        )
+ 
+ 
+ class AuthMiddleware(BaseHTTPMiddleware):
+diff --git a/dashboard/server.py b/dashboard/server.py
+index 3f4673e..aeeabe6 100644
+--- a/dashboard/server.py
++++ b/dashboard/server.py
+@@ -13,8 +13,8 @@ from pathlib import Path
+ from typing import Optional
+ from zoneinfo import ZoneInfo
+ 
+-from fastapi import FastAPI, HTTPException, Query
+-from fastapi.responses import FileResponse, StreamingResponse
++from fastapi import FastAPI, HTTPException, Query, Request
++from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+ from fastapi.staticfiles import StaticFiles
+ 
+ from dashboard.auth import AuthMiddleware, ReadOnlyMiddleware, get_dashboard_token
+@@ -422,6 +422,52 @@ async def api_system():
+     return read_system_status()
+ 
+ 
++
++@app.api_route("/api/spy-der/v1/{path:path}", methods=["GET", "HEAD", "POST"])
++async def api_spy_der_v1_proxy(path: str, request: Request):
++    """Pass-through to spy-der-dashboard-api (Adaptive Loop + operator writes).
++
++    Prefer this over the legacy file-reader routes so the Vercel embed and the
++    SPY-DER ``/ui`` tab share one implementation. Operator POSTs require
++    ``X-Spy-Der-Operator-Token`` (Vercel rewrites Authorization to DASHBOARD_TOKEN).
++    """
++    import urllib.error
++    import urllib.request
++
++    base = os.environ.get("SPY_DER_DASHBOARD_URL", "http://127.0.0.1:8788").rstrip("/")
++    qs = request.url.query
++    target = f"{base}/v1/{path}" + (f"?{qs}" if qs else "")
++
++    headers = {"Accept": request.headers.get("accept") or "application/json"}
++    operator = request.headers.get("x-spy-der-operator-token")
++    if operator:
++        headers["Authorization"] = f"Bearer {operator}"
++        headers["X-Spy-Der-Operator-Token"] = operator
++    body = await request.body() if request.method == "POST" else None
++    if request.method == "POST":
++        headers["Content-Type"] = request.headers.get("content-type") or "application/json"
++
++    req = urllib.request.Request(target, data=body, headers=headers, method=request.method)
++    try:
++        with urllib.request.urlopen(req, timeout=30) as upstream:
++            payload = upstream.read()
++            content_type = upstream.headers.get("Content-Type") or "application/json"
++            return Response(content=payload, status_code=upstream.status, media_type=content_type)
++    except urllib.error.HTTPError as exc:
++        payload = exc.read()
++        content_type = exc.headers.get("Content-Type") or "application/json"
++        return Response(content=payload, status_code=exc.code, media_type=content_type)
++    except urllib.error.URLError as exc:
++        return JSONResponse(
++            status_code=502,
++            content={
++                "detail": "spy-der-dashboard-api unreachable — is it running on :8788?",
++                "error": str(exc.reason),
++                "target": target,
++            },
++        )
++
++
+ @app.get("/api/spy-der")
+ async def api_spy_der():
+     """Thin SPY-DER dashboard bundle (live_state + dojo latest)."""
+diff --git a/dashboard/static/app.js b/dashboard/static/app.js
+index fda8eb2..7873c81 100644
+--- a/dashboard/static/app.js
++++ b/dashboard/static/app.js
+@@ -3005,22 +3005,19 @@
+     $("tab-prediction").classList.toggle("active", tab === "prediction");
+     $("tab-journal").classList.toggle("active", tab === "journal");
+     $("tab-validation").classList.toggle("active", tab === "validation");
+-    $("tab-learning").classList.toggle("active", tab === "learning");
+-    $("tab-dojo").classList.toggle("active", tab === "dojo");
++    $("tab-dojo").classList.toggle("active", tab === "dojo" || tab === "learning" || tab === "adaptive");
+     $("view-legacy").classList.toggle("hidden", tab !== "legacy");
+     $("view-v3").classList.toggle("hidden", tab !== "v3");
+     $("view-spyder").classList.toggle("hidden", tab !== "spyder");
+     $("view-prediction").classList.toggle("hidden", tab !== "prediction");
+     $("view-journal").classList.toggle("hidden", tab !== "journal");
+     $("view-validation").classList.toggle("hidden", tab !== "validation");
+-    $("view-learning").classList.toggle("hidden", tab !== "learning");
+-    $("view-dojo").classList.toggle("hidden", tab !== "dojo");
++    $("view-dojo").classList.toggle("hidden", !(tab === "dojo" || tab === "learning" || tab === "adaptive"));
+     if (tab === "spyder") { renderSpyder(lastLive, lastPaper, lastTrades); refreshSystem(); }
+     if (tab === "prediction") refreshPrediction();
+     if (tab === "journal") refreshJournal();
+     if (tab === "validation") refreshValidation();
+-    if (tab === "learning") refreshLearning();
+-    if (tab === "dojo") refreshDojo();
++    if (tab === "dojo" || tab === "learning" || tab === "adaptive") refreshDojo();
+   }
+ 
+   /* ---------------- system panel (SPY-DER service health) ---------------- */
+@@ -3576,805 +3573,51 @@
+     $("tab-validation-dot").classList.toggle("hidden", !hasAlert);
+   }
+ 
+-  /* ---------------- learning tab (adaptive learning engine) ---------------- */
+-  const SEV_CLS = { alert: "veto", warn: "warn", info: "" };
+ 
+-  function renderLearningV2Status(live) {
+-    const el = $("lrn-v2-metrics");
+-    if (!el) return;
+-    const p = liveParallel(live);
+-    const v2 = p.v2 || {};
+-    const s = liveV2Signals(live);
+-    const mode = v2.mode || s.policy_mode || "—";
+-    $("lrn-v2-sub").textContent = mode;
+-    if (!live || (!liveTs(live) && !Object.keys(s).length && !v2.mode)) {
+-      el.innerHTML = '<p class="empty">No live V3 observation yet — Learning status comes from '
+-        + '<span class="mono">/var/lib/spy-der/live_state.json</span> once SPY-DER is running</p>';
+-      $("lrn-v2-chips").innerHTML = "";
+-      return;
+-    }
+-    const disagree = num(v2.disagreement) === 1 || num(s.policy_disagreement) === 1;
+-    const fallback = num(v2.fallback_used) === 1 || num(s.policy_fallback_used) === 1;
+-    el.innerHTML = [
+-      metricCard("Policy mode", esc(mode)),
+-      metricCard("V3 structure", esc(v2.structure != null ? v2.structure : (s.v2_policy_structure || "—"))),
+-      metricCard("V3 action", esc(v2.action != null ? v2.action : (s.v2_policy_action || "—"))),
+-      metricCard("Confidence", fmt(v2.confidence != null ? v2.confidence : s.v2_policy_confidence, 2)),
+-      metricCard("Source", esc(v2.source || s.policy_source || "—"),
+-        fallback ? "warn" : ""),
+-      metricCard("Phys mode", esc(s.phys_density_mode || "—")),
+-    ].join("");
+-    const chips = ['<span class="chip track-v2">v2 shadow</span>',
+-      '<span class="chip track-legacy">learning = legacy</span>'];
+-    if (disagree) chips.push('<span class="chip disagree">disagreement</span>');
+-    if (fallback) chips.push('<span class="chip fallback">fallback</span>');
+-    if (num(s.pin_active) === 1) chips.push('<span class="chip ok">pin</span>');
+-    $("lrn-v2-chips").innerHTML = chips.join("");
+-  }
+-
+-  function renderLearningDiagnostics(runs) {
+-    const latest = runs.find((r) => (r.diagnostics || []).length) || runs[0];
+-    const diags = (latest && latest.diagnostics) || [];
+-    $("lrn-diag-sub").textContent = latest
+-      ? `run ${String(latest.run_id || "").slice(0, 8)} · ${latest.mode || ""}`
+-      : "—";
+-    if (!diags.length) {
+-      $("lrn-diagnostics").innerHTML =
+-        '<p class="empty">Latest learning run found no diagnosable failure</p>';
+-      return;
+-    }
+-    $("lrn-diagnostics").innerHTML = diags.map((d) => `
+-      <div class="lrn-card">
+-        <div class="lrn-card-head">
+-          <span class="chip ${SEV_CLS[d.severity] || ""}">${esc(d.severity || "info")}</span>
+-          <b class="mono">${esc(d.issue || "?")}</b>
+-          <span class="tj-dim">conf ${pct(d.confidence)}</span>
+-        </div>
+-        <div class="tj-sub">${esc(d.likely_cause || "")}</div>
+-        <div class="tj-sub lrn-reco">→ ${esc(d.recommendation || "")}</div>
+-      </div>`).join("");
+-  }
+-
+-  function renderLearningPromotions(promos) {
+-    $("lrn-promo-sub").textContent = String(promos.length);
+-    if (!promos.length) {
+-      $("lrn-promotions").innerHTML = '<p class="empty">No promotion decisions yet</p>';
+-      return;
+-    }
+-    $("lrn-promotions").innerHTML = promos.slice(0, 8).map((p) => {
+-      const rules = ((p.decision || {}).rules) || [];
+-      const stCls = p.status === "pending_review" ? "warn"
+-                  : p.status === "approved" ? "ok" : "veto";
+-      const pending = p.status === "pending_review";
+-      return `<div class="lrn-card ${pending ? "lrn-pending" : ""}">
+-        <div class="lrn-card-head">
+-          <b class="mono">${esc(String(p.config_id || "").slice(0, 8))}</b>
+-          <span class="chip ${stCls}">${esc(p.status || "?")}</span>
+-          <span class="tj-dim mono">${esc((p.created_at || "").slice(0, 16).replace("T", " "))}</span>
+-        </div>
+-        <div class="lrn-rules">${rules.map((r) =>
+-          `<span class="lrn-rule ${r.passed ? "ok" : "bad"}" title="${esc(r.detail || "")}">${r.passed ? "✓" : "✗"} ${esc(r.name)}</span>`).join("")}</div>
+-        ${pending ? `<div class="tj-sub lrn-reco">awaiting human review in SPY-DER (pending_review)</div>` : ""}
+-      </div>`;
+-    }).join("");
+-  }
+-
+-  function renderLearningDrift(reports) {
+-    $("lrn-drift-sub").textContent = String(reports.length);
+-    if (!reports.length) {
+-      $("lrn-drift").innerHTML = '<p class="empty">No drift snapshots yet</p>';
+-      return;
+-    }
+-    $("lrn-drift").innerHTML = reports.slice(0, 6).map((r) => {
+-      const drifts = ((r.metrics || {}).drifts) || [];
+-      const chips = drifts.length
+-        ? drifts.map((d) => `<span class="chip warn" title="${esc(d.detail || "")}">${esc(d.kind)}: ${esc(d.metric)} ${sign(d.rel_change, 2)}</span>`).join("")
+-        : '<span class="chip">no drift</span>';
+-      return `<div class="lrn-card">
+-        <div class="lrn-card-head"><b class="mono">${esc(r.report_date || "?")}</b></div>
+-        <div class="chips">${chips}</div>
+-      </div>`;
+-    }).join("");
+-  }
+-
+-  function overridesLine(ov) {
+-    const entries = Object.entries(ov || {});
+-    if (!entries.length) return '<span class="tj-dim">defaults</span>';
+-    return entries.map(([k, v]) =>
+-      `<span class="mono lrn-ov">${esc(k)}=${esc(String(v))}</span>`).join(" ");
+-  }
+-
+-  function renderLearningCandidates(data) {
+-    const champ = data.champion;
+-    const cands = data.candidates || [];
+-    $("lrn-cand-sub").textContent = String(cands.length);
+-    $("lrn-champion").innerHTML = champ
+-      ? `<div class="lrn-card lrn-champ">
+-          <div class="lrn-card-head">
+-            <span class="chip ok">CHAMPION</span>
+-            <b class="mono">${esc(String(champ.config_id || "").slice(0, 8))}</b>
+-            <span class="tj-dim">${esc(champ.label || "")}</span>
+-          </div>
+-          <div class="tj-sub">${overridesLine(champ.overrides)}</div>
+-        </div>`
+-      : '<p class="empty">No champion config — dataclass defaults live</p>';
+-    if (!cands.length) {
+-      $("lrn-candidates").innerHTML = '<p class="empty">No candidate configs yet</p>';
+-      return;
+-    }
+-    const rows = cands.slice(0, 10).map((c) => {
+-      const m = c.metrics || {};
+-      const stCls = c.status === "pending_review" ? "warn"
+-                  : c.status === "promoted" ? "good"
+-                  : c.status === "rejected" ? "bad" : "";
+-      return `<tr>
+-        <td class="mono">${esc(String(c.config_id || "").slice(0, 8))}</td>
+-        <td>${esc(c.label || "")}<div class="tj-sub">${overridesLine(c.overrides)}</div></td>
+-        <td class="mono">${m.search_score != null ? sign(m.search_score, 3) : "—"}</td>
+-        <td class="mono">${m.holdout_score != null ? sign(m.holdout_score, 3) : "—"}</td>
+-        <td class="mono">${m.champion_score != null ? sign(m.champion_score, 3) : "—"}</td>
+-        <td><span class="tj-reason ${stCls}">${esc(c.status || "?")}</span></td>
+-      </tr>`;
+-    }).join("");
+-    $("lrn-candidates").innerHTML = `<table class="val-table"><thead><tr>
+-      <th>Config</th><th>Label / overrides</th><th>Score</th><th>Holdout</th>
+-      <th>Champion</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+-  }
+-
+-  function renderLearningRuns(runs) {
+-    $("lrn-runs-sub").textContent = String(runs.length);
+-    if (!runs.length) {
+-      $("lrn-runs").innerHTML = '<p class="empty">No learning runs yet</p>';
+-      return;
+-    }
+-    const rows = runs.slice(0, 10).map((r) => {
+-      const outCls = r.outcome === "promotion_recommended" ? "good"
+-                   : r.outcome === "rejected" ? "bad" : "";
+-      return `<tr>
+-        <td class="mono">${esc((r.started_at || "").slice(0, 16).replace("T", " "))}</td>
+-        <td>${esc(r.mode || "?")}</td>
+-        <td class="mono">${(r.diagnostics || []).length}</td>
+-        <td class="mono">${r.n_trials != null ? r.n_trials : "—"}</td>
+-        <td class="mono">${r.best_score != null ? sign(r.best_score, 3) : "—"}</td>
+-        <td class="mono">${r.holdout_score != null ? sign(r.holdout_score, 3) : "—"}</td>
+-        <td><span class="tj-reason ${outCls}">${esc(r.outcome || "?")}</span></td>
+-      </tr>`;
+-    }).join("");
+-    $("lrn-runs").innerHTML = `<table class="val-table"><thead><tr>
+-      <th>Started</th><th>Mode</th><th>Diag</th><th>Trials</th><th>Best</th>
+-      <th>Holdout</th><th>Outcome</th></tr></thead><tbody>${rows}</tbody></table>`;
+-  }
+-
+-  function renderLearningFeatures(features) {
+-    $("lrn-feat-sub").textContent = String(features.length);
+-    if (!features.length) {
+-      $("lrn-features").innerHTML = '<p class="empty">No feature scores yet</p>';
+-      return;
+-    }
+-    const order = { production: 0, candidate: 1, experimental: 2, observation: 3 };
+-    const sorted = features.slice().sort((a, b) =>
+-      (order[a.status] ?? 9) - (order[b.status] ?? 9)
+-      || Math.abs(b.pearson || 0) - Math.abs(a.pearson || 0));
+-    const rows = sorted.slice(0, 20).map((f) => {
+-      const stCls = f.status === "candidate" || f.status === "production" ? "good"
+-                  : f.status === "experimental" ? "warn" : "";
+-      return `<tr>
+-        <td class="mono">${esc(f.feature)}</td>
+-        <td class="mono ${num(f.pearson) > 0 ? "pos" : num(f.pearson) < 0 ? "neg" : ""}">${f.pearson != null ? sign(f.pearson, 3) : "—"}</td>
+-        <td class="mono">${f.spearman != null ? sign(f.spearman, 3) : "—"}</td>
+-        <td class="mono">${f.mutual_info != null ? fmt(f.mutual_info, 3) : "—"}</td>
+-        <td class="mono">${f.perm_importance != null ? sign(f.perm_importance, 3) : "—"}</td>
+-        <td class="mono">${f.stability != null ? fmt(f.stability, 2) : "—"}</td>
+-        <td><span class="tj-reason ${stCls}">${esc(f.status || "observation")}</span></td>
+-      </tr>`;
+-    }).join("");
+-    $("lrn-features").innerHTML = `<table class="val-table"><thead><tr>
+-      <th>Feature</th><th>Pearson</th><th>Spearman</th><th>MI</th>
+-      <th>Perm</th><th>Stability</th><th>Lifecycle</th></tr></thead>
+-      <tbody>${rows}</tbody></table>`;
+-  }
+-
+-  async function refreshLearning(liveOpt) {
+-    try {
+-      if (liveOpt) renderLearningV2Status(liveOpt);
+-      else {
+-        try {
+-          const live = await api("/api/live");
+-          renderLearningV2Status(live);
+-        } catch (_) { /* ignore */ }
+-      }
+-      const [learning, cands, promos, feats, drift] = await Promise.all([
+-        api("/api/learning?limit=50").catch(() => ({})),
+-        api("/api/candidates?limit=50").catch(() => ({})),
+-        api("/api/promotions?limit=50").catch(() => ({})),
+-        api("/api/feature-scores").catch(() => ({})),
+-        api("/api/drift?limit=10").catch(() => ({})),
+-      ]);
+-      renderLearningDiagnostics(learning.runs || []);
+-      renderLearningRuns(learning.runs || []);
+-      renderLearningCandidates(cands || {});
+-      renderLearningPromotions(promos.promotions || []);
+-      renderLearningFeatures(feats.features || []);
+-      renderLearningDrift(drift.reports || []);
+-    } catch (e) {
+-      if (e.message !== "Unauthorized") console.warn("learning", e);
+-    }
+-  }
+-
+-  // Light the Learning tab dot when a candidate awaits human review.
+-  function renderLearningBadge(promos) {
+-    const pending = ((promos && promos.promotions) || [])
+-      .some((p) => p.status === "pending_review");
+-    $("tab-learning-dot").classList.toggle("hidden", !pending);
+-  }
+ 
+-  /* ---------------- dojo tab (matrix training reports) ---------------- */
+-  let dojoReports = [];
+-  let dojoSelectedId = null;
+-  let dojoNote = "";
+-
+-  const DOJO_PHASE_LABEL = {
+-    recorded: "Recorded tape", learner: "Adaptive learner",
+-    universe: "Universe sparring",
+-  };
+-
+-  function dojoStatusCls(rep) {
+-    const flags = rep.flags || [];
+-    if (flags.some((f) => f.severity === "alert")) return "alert";
+-    if (flags.some((f) => f.severity === "warn")) return "warn";
+-    return "ok";
+-  }
+-
+-  // Light the Dojo tab dot when the latest run found a weak archetype.
+-  function renderDojoBadge(latest) {
+-    const reports = (latest && latest.reports) || [];
+-    const warn = reports.length > 0 && dojoStatusCls(reports[0]) !== "ok";
+-    $("tab-dojo-dot").classList.toggle("hidden", !warn);
+-  }
+-
+-  // One line per run in the picker: the outcome, not the phase statuses.
+-  // "recorded tape: ok · sequential: ok · learner: promotion_recommended" told
+-  // a reader which subsystems ran, never whether the system got any better.
+-  function dojoRunLine(rep) {
+-    const m = rep.metrics || {};
+-    const phases = m.phases || {};
+-    const ev = (phases.recorded || {}).evaluation || {};
+-    const promo = phases.promotion || {};
+-    const gaps = dojoGapRows(phases.universe).filter(isTrainableGap);
+-    const bits = [];
+-    if (num(ev.total_pnl) != null) bits.push(`${sign(ev.total_pnl, 1)} on real tape`);
+-    bits.push(gaps.length
+-      ? `${gaps.length} weak market type${gaps.length === 1 ? "" : "s"}`
+-      : "no weak market types");
+-    if (promo.enacted) bits.push("settings changed");
+-    else if (promo.status === "rejected") bits.push("change rejected");
+-    return bits.join(" · ");
+-  }
+-
+-  function renderDojoList() {
+-    $("dojo-count").textContent = String(dojoReports.length);
+-    if (!dojoReports.length) {
+-      // Show the reason the API gave. Blaming the timers unconditionally sent
+-      // operators to restart services that were already running, when the real
+-      // failure was that the report existed and could not be read.
+-      $("dojo-list").innerHTML = dojoNote
+-        ? `<p class="empty">Dojo report unavailable — <span class="mono">${esc(dojoNote)}</span></p>`
+-        : '<p class="empty">No SPY-DER dojo report yet — enable '
+-          + '<span class="mono">spy-der-dojo-*</span> timers; 0DTE reads '
+-          + '<span class="mono">/var/lib/spy-der/reports/dojo/latest.json</span></p>';
+-      return;
+-    }
+-    $("dojo-list").innerHTML = dojoReports.map((r) => {
+-      const sel = r.id === dojoSelectedId ? " selected" : "";
+-      return `<button class="val-row${sel}" type="button" data-id="${r.id}">
+-        <span class="val-dot ${dojoStatusCls(r)}"></span>
+-        <span class="mono val-date">${esc(r.report_date || "—")}</span>
+-        <span class="val-sum">${esc(dojoRunLine(r))}</span>
+-      </button>`;
+-    }).join("");
+-    document.querySelectorAll("#dojo-list .val-row").forEach((el) => {
+-      el.addEventListener("click", () => {
+-        dojoSelectedId = +el.dataset.id;
+-        renderDojoList();
+-        const rep = dojoReports.find((r) => r.id === dojoSelectedId);
+-        if (rep) renderDojoDetail(rep);
+-      });
+-    });
+-  }
+-
+-  /* ---------------- dojo tab: what training did, in English ----------------
+-     This tab is read on a phone by one person deciding whether the system is
+-     getting better. It leads with what happened and what it means; the raw
+-     panels stay available under "Full numbers" for when that is the question.
+-     --------------------------------------------------------------------- */
+-  const ARCHETYPE_LABEL = {
+-    calm_pin: "Calm / pinned", crash: "Crash", gap_shock: "Gap shock",
+-    grind_down: "Grind down", grind_up: "Grind up", range_chop: "Range chop",
+-    squeeze_melt_up: "Squeeze / melt-up", vol_expansion: "Vol expansion",
+-  };
+-  const REGIME_LABEL = {
+-    breakout: "Breakout", compression: "Compression", drift_down: "Drift down",
+-    drift_up: "Drift up", pin: "Pinned",
+-  };
+-  // Below this many scored sessions a number is an anecdote, not a finding —
+-  // the same floor SPY-DER uses before it will train on an archetype.
+-  const DOJO_THIN_SESSIONS = 3;
+-
+-  const archLabel = (a) => ARCHETYPE_LABEL[a] || String(a).replace(/_/g, " ");
+-  const regimeLabel = (r) => REGIME_LABEL[r] || String(r).replace(/_/g, " ");
+-
+-  function dojoGapRows(uni) {
+-    const matrix = (uni && uni.archetype_matrix) || {};
+-    return Object.entries(matrix)
+-      .map(([archetype, m]) => ({
+-        archetype,
+-        mean: num(m.mean_session_pnl),
+-        total: num(m.total_pnl),
+-        sessions: +m.n_sessions || 0,
+-        trades: +m.trades || 0,
+-        dirHit: num(m.dir_hit),
+-      }))
+-      .filter((r) => r.mean != null)
+-      // Actionable gaps lead, worst first; single-session losses sit below them
+-      // however large. Sorting on magnitude alone puts a -108 anecdote at the
+-      // top of the chart, which is the number a reader should trust least.
+-      .sort((a, b) =>
+-        (isTrainableGap(b) - isTrainableGap(a)) || (a.mean - b.mean));
+-  }
+-
+-  // A gap the Dojo will act on: losing money, with enough sessions to believe.
+-  const isTrainableGap = (r) => (r.mean < 0 && r.sessions >= DOJO_THIN_SESSIONS ? 1 : 0);
+-
+-  // The knobs are internal names. Say what each one does to a trade instead.
+-  const KNOB_TEXT = {
+-    prefer_abstain_on_ood: "standing down when the forecast is unreliable",
+-    min_confidence: (v) => `only trading above ${pct(v, 0)} confidence`,
+-    risk_max_size_scalar: (v) => `capping position size at ${pct(v, 0)}`,
+-    ood_threshold: null,
+-  };
+-
+-  function dojoKnobText(knobs) {
+-    const entries = Object.entries(knobs || {});
+-    const said = entries.map(([k, v]) => {
+-      const rule = KNOB_TEXT[k];
+-      if (rule === null) return null;
+-      if (typeof rule === "function") return rule(v);
+-      if (rule) return rule;
+-      return `${k}=${v}`;
+-    }).filter(Boolean);
+-    return said.length ? said.join(" and ") : "a settings change";
+-  }
+-
+-  // Why a change was refused, in the terms the decision was actually made on.
+-  function dojoRejectReason(promo) {
+-    const blocked = (promo.gates || []).find((g) => !g.passed);
+-    if (!blocked) return esc(promo.note || "a check failed");
+-    const cand = promo.candidate || {};
+-    const inc = promo.incumbent || {};
+-    switch (blocked.name) {
+-      case "pnl_edge":
+-        return `it would have made <b class="num">${sign(cand.total_pnl, 2)}</b> instead of `
+-          + `<b class="num">${sign(inc.total_pnl, 2)}</b> on the same days`;
+-      case "evidence":
+-        return "it did not trade enough to judge";
+-      case "win_rate":
+-        return `its hit rate fell too far (${pct(cand.win_rate, 0)} vs ${pct(inc.win_rate, 0)})`;
+-      case "forward_transfer":
+-        return "it did worse on days it had not seen";
+-      case "retention":
+-        return "it got worse on days it used to handle";
+-      case "universe":
+-        return "it did worse across the simulated markets";
+-      case "archetype_repair":
+-        return `it did not actually fix ${esc(archLabel(promo.target_archetype || ""))}`;
+-      case "cooldown":
+-        return "the settings were already changed too recently";
+-      default:
+-        return esc(blocked.detail || blocked.name);
+-    }
+-  }
+-
+-  /* ---- the headline: what this run did, as sentences ---- */
+-  function dojoStory(rep) {
+-    const m = rep.metrics || {};
+-    const phases = m.phases || {};
+-    const rec = phases.recorded || {};
+-    const uni = phases.universe || {};
+-    const lrn = phases.learner || {};
+-    const promo = phases.promotion || {};
+-    const ev = rec.evaluation || {};
+-    const targets = m.training_targets || {};
+-    const said = [];
+-
+-    // 1 — what it trained on.
+-    const bits = [];
+-    if (rec.status === "ok" && rec.n_sessions) {
+-      bits.push(`<b class="num">${rec.n_sessions}</b> recorded session${rec.n_sessions === 1 ? "" : "s"}`);
+-    }
+-    if (uni.status === "ok" && uni.n_universes) {
+-      bits.push(`<b class="num">${uni.n_universes}</b> simulated market${uni.n_universes === 1 ? "" : "s"}`);
+-    }
+-    const elapsed = num(m.elapsed_s);
+-    if (bits.length) {
+-      said.push(`Trained on ${bits.join(" and ")}`
+-        + (elapsed != null ? `, in ${fmtDuration(elapsed)}.` : "."));
+-    } else {
+-      said.push("This run had nothing to train on — no recorded tape and no "
+-        + "scored simulations.");
+-    }
+-
+-    // 2 — how the live config did on real market data.
+-    const pnl = num(ev.total_pnl);
+-    if (pnl != null && ev.trades) {
+-      const verb = pnl >= 0 ? "made" : "lost";
+-      const winTxt = ev.win_rate == null ? "" : ` — <b class="num">${pct(ev.win_rate, 0)}</b> of them won`;
+-      said.push(`On real market data the live settings ${verb} `
+-        + `<b class="num">${sign(Math.abs(pnl), 2)}</b> over <b class="num">${ev.trades}</b> trades${winTxt}.`);
+-    }
+-
+-    // 3 — where it is weak. This is the question the matrix exists to answer,
+-    // so it gets said rather than left for the reader to derive from a table.
+-    const rows = dojoGapRows(uni);
+-    const losing = rows.filter((r) => r.mean < 0);
+-    const gaps = losing.filter(isTrainableGap);
+-    if (rows.length) {
+-      if (losing.length) {
+-        const worst = (gaps[0] || losing[0]);
+-        const enough = gaps.length
+-          ? `<b class="num">${gaps.length}</b> of them on enough sessions to act on`
+-          : "none of them on enough sessions to act on yet";
+-        said.push(`It loses money in <b class="num">${losing.length}</b> of `
+-          + `<b class="num">${rows.length}</b> market types it sparred against — `
+-          + `${enough}. Worst of those is <b>${archLabel(worst.archetype)}</b> at `
+-          + `<b class="num">${sign(worst.mean, 2)}</b> a session.`);
+-      } else {
+-        said.push("It was profitable in every market type it sparred against.");
+-      }
+-    }
+-
+-    // 4 — what it did about it.
+-    const knobs = dojoKnobText(promo.knobs);
+-    const target = targets.targeted_archetype || promo.target_archetype;
+-    const targetTxt = target ? ` to fix <b>${archLabel(target)}</b>` : "";
+-    if (promo.enacted) {
+-      said.push(`It changed how it trades${targetTxt} — <b>${esc(knobs)}</b> — `
+-        + "after the change beat the current settings on every check. "
+-        + "Live from the next tick.");
+-    } else if (promo.status === "rejected") {
+-      said.push(`It tried <b>${esc(knobs)}</b>${targetTxt}, then rejected it: `
+-        + `${dojoRejectReason(promo)}.`);
+-    } else if (promo.status === "disabled") {
+-      said.push("Automatic changes are switched off, so nothing was applied.");
+-    } else if (promo.status === "promotion_failed") {
+-      said.push(`A validated change could not be written: ${esc(promo.note || "")}`);
+-    } else if (lrn.outcome === "gated") {
+-      said.push("It had a change in mind but the safety gates blocked staging it.");
+-    } else if (rows.length && gaps.length) {
+-      said.push(`It did not change anything this run${lrn.note ? ` — ${esc(lrn.note)}` : "."}`);
+-    } else {
+-      said.push("Nothing needed changing this run.");
+-    }
+-    return said;
+-  }
+-
+-  function dojoStatusPill(rep) {
+-    const phases = (rep.metrics || {}).phases || {};
+-    const promo = phases.promotion || {};
+-    if (promo.enacted) return ["Settings changed", "ok"];
+-    if (promo.status === "promotion_failed") return ["Change failed to save", "bad"];
+-    if (promo.status === "rejected") return ["Change rejected", "warn"];
+-    if (promo.status === "disabled") return ["Auto-change off", "warn"];
+-    return ["No change", "dim"];
+-  }
+-
+-  /* ---- why the run stopped where it did ----
+-     SPY-DER attaches a `human` block to every report (headline / data_story /
+-     stop_reason / next_step). The stop reason is the one thing this renderer
+-     cannot derive: "it stopped because the nightly budget ran out, not because
+-     everything is fixed" is a fact about the schedule, not about the numbers.
+-     Read it rather than restate it, so the two repos do not drift apart. */
+-  function renderDojoStopReason(human) {
+-    if (!human || typeof human !== "object") return "";
+-    const lines = [human.stop_reason, human.next_step, human.data_story]
+-      .filter((s) => typeof s === "string" && s.trim());
+-    if (!lines.length) return "";
+-    return `<p class="dojo-stop">${lines.map((s) => esc(s)).join(" ")}</p>`;
+-  }
+-
+-  /* ---- where the system is weak ---- */
+-  function renderDojoGaps(uni, targeted) {
+-    const rows = dojoGapRows(uni);
+-    if (!rows.length) return "";
+-    const scale = Math.max(...rows.map((r) => Math.abs(r.mean)), 0.0001);
+-    const bars = rows.map((r) => {
+-      const width = (Math.abs(r.mean) / scale) * 50;
+-      const neg = r.mean < 0;
+-      const thin = r.sessions < DOJO_THIN_SESSIONS;
+-      const isTarget = targeted && targeted === r.archetype;
+-      const sessTxt = `${r.sessions} session${r.sessions === 1 ? "" : "s"}`;
+-      return `<div class="gap-row${thin ? " gap-thin" : ""}"
+-          title="${esc(archLabel(r.archetype))}: ${sign(r.mean, 3)} per session over ${sessTxt}, ${r.trades} trades">
+-        <div class="gap-name">${esc(archLabel(r.archetype))}
+-          ${isTarget ? '<span class="gap-badge">training</span>' : ""}
+-          <span class="gap-n">${sessTxt}${thin ? " · thin" : ""}</span>
+-        </div>
+-        <div class="gap-track">
+-          <span class="gap-zero"></span>
+-          <span class="gap-bar ${neg ? "gap-neg" : "gap-pos"}"
+-            style="width:${width.toFixed(2)}%;${neg ? "right" : "left"}:50%"></span>
+-        </div>
+-        <div class="gap-val mono ${neg ? "neg" : "pos"}">${sign(r.mean, 2)}</div>
+-      </div>`;
+-    }).join("");
+-    const gaps = rows.filter(isTrainableGap);
+-    return `<h3 class="val-h3">Where it is weak
+-        <span class="tj-dim">(profit per session, by market type)</span></h3>
+-      <div class="gap-chart">${bars}</div>
+-      <p class="tj-sub">Bars run left of the line for a loss, right for a profit.
+-        ${gaps.length
+-          ? `The Dojo trains on the ones with at least ${DOJO_THIN_SESSIONS} sessions behind them — `
+-            + `<b>${gaps.map((g) => esc(archLabel(g.archetype))).join(", ")}</b>.`
+-          : "Nothing has enough losing sessions behind it to train on yet."}
+-        Rows marked <i>thin</i> are single sessions and are not acted on.</p>`;
+-  }
+-
+-  /* ---- what it has never seen ---- */
+-  function dojoCoverageGrid(raw) {
+-    // SPY-DER reports nest the archetype×regime counts under `.cells`
+-    // (`{cells: {calm_pin: {pin: n, ...}}, coverage_fraction, ...}`). Older
+-    // reports were already flat (`{calm_pin: {pin: n, ...}}`). Treat either.
+-    if (!raw || typeof raw !== "object") return {};
+-    const nested = raw.cells;
+-    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+-      const first = Object.values(nested)[0];
+-      if (first && typeof first === "object" && !Array.isArray(first)) return nested;
+-    }
+-    return raw;
+-  }
+-
+-  function renderDojoCoverage(uni) {
+-    const evaluated = !!(uni && uni.coverage_evaluated);
+-    const cov = dojoCoverageGrid((uni && (uni.coverage_evaluated || uni.coverage)) || {});
+-    const archs = Object.keys(cov).filter((a) => {
+-      const row = cov[a];
+-      return row && typeof row === "object" && !Array.isArray(row);
+-    });
+-    if (!archs.length) return "";
+-    const regimes = Object.keys(cov[archs[0]] || {});
+-    const counts = archs.flatMap((a) => regimes.map((r) => num(cov[a][r]) || 0));
+-    const maxN = Math.max(1, ...counts);
+-    const total = uni.coverage_cells_total ?? archs.length * regimes.length;
+-    const visited = evaluated
+-      ? (uni.coverage_cells_evaluated_visited ?? uni.coverage_cells_visited)
+-      : uni.coverage_cells_visited;
+-    const missing = (total != null && visited != null) ? total - visited : counts.filter((n) => !n).length;
+-    const unit = evaluated ? "decisions" : "minutes";
+-
+-    const rows = archs.map((a) => {
+-      const cells = regimes.map((r) => {
+-        const n = num(cov[a][r]) || 0;
+-        const heat = n === 0 ? "cov-none"
+-          : n > maxN * 0.5 ? "cov-3"
+-          : n > maxN * 0.15 ? "cov-2" : "cov-1";
+-        return `<td class="${heat}" title="${esc(archLabel(a))} in ${esc(regimeLabel(r))}: ${n} ${unit}">`
+-          + `${n ? n.toLocaleString() : "never"}</td>`;
+-      }).join("");
+-      return `<tr><th scope="row">${esc(archLabel(a))}</th>${cells}</tr>`;
+-    }).join("");
+-
+-    const headline = missing > 0
+-      ? `<b class="num">${missing}</b> of <b class="num">${total}</b> situations have never been trained`
+-      : `All <b class="num">${total}</b> situations have been trained at least once`;
+-    return `<h3 class="val-h3">What it has never seen</h3>
+-      <p class="tj-sub">${headline} — a situation is a market type in a
+-        particular regime. Darker means more ${unit} spent there.</p>
+-      <div class="dojo-scroll"><table class="tj-table cov-table">
+-        <thead><tr><th></th>${regimes.map((r) => `<th>${esc(regimeLabel(r))}</th>`).join("")}</tr></thead>
+-        <tbody>${rows}</tbody></table></div>`;
+-  }
+-
+-  /* ---- the change it tried, and why it stuck or not ---- */
+-  const DOJO_PROMO_VERDICT = {
+-    validated: ["applied", "ok"],
+-    rejected: ["rejected", "bad"],
+-    not_actionable: ["nothing to apply", "dim"],
+-    no_candidate: ["no change proposed", "dim"],
+-    skipped: ["not run", "dim"],
+-    disabled: ["switched off", "warn"],
+-    promotion_failed: ["passed checks but could not be saved", "bad"],
+-  };
+-  const GATE_LABEL = {
+-    actionable: "changes something live",
+-    evidence: "enough trades to judge",
+-    pnl_edge: "makes more money",
+-    win_rate: "keeps its hit rate",
+-    forward_transfer: "holds up on unseen days",
+-    retention: "does not forget old days",
+-    universe: "holds up in simulation",
+-    archetype_repair: "fixes the market type it targeted",
+-    cooldown: "not changing too often",
+-  };
+-
+-  function renderDojoPromotion(promo) {
+-    if (!promo || !promo.status) return "";
+-    const [label, tone] = DOJO_PROMO_VERDICT[promo.status] || [promo.status, "dim"];
+-    const parts = ['<h3 class="val-h3">The change it tested</h3>'];
+-    const raw = Object.entries(promo.knobs || {}).map(([k, v]) => `${k}=${v}`).join(" · ");
+-    parts.push(`<p class="tj-sub">${esc(dojoKnobText(promo.knobs))} — `
+-      + `<b class="promo-${tone}">${esc(label)}</b>`
+-      + (promo.target_archetype
+-        ? ` · aimed at <b>${esc(archLabel(promo.target_archetype))}</b>` : "")
+-      + (raw ? `<br><span class="mono tj-dim">${esc(raw)}</span>` : "") + "</p>");
+-
+-    const cand = promo.candidate || {};
+-    const inc = promo.incumbent || {};
+-    if (cand.total_pnl != null || inc.total_pnl != null) {
+-      const edge = num(cand.total_pnl) != null && num(inc.total_pnl) != null
+-        ? cand.total_pnl - inc.total_pnl : null;
+-      parts.push('<div class="metrics">'
+-        + metricCard("Now", sign(inc.total_pnl, 2), num(inc.total_pnl) < 0 ? "warn" : "")
+-        + metricCard("Proposed", sign(cand.total_pnl, 2), num(cand.total_pnl) < 0 ? "warn" : "")
+-        + metricCard("Difference", edge == null ? "—" : sign(edge, 2),
+-            edge == null ? "" : edge > 0 ? "pos" : "neg")
+-        + metricCard("Trades", `${inc.trades ?? "—"} → ${cand.trades ?? "—"}`)
+-        + "</div>");
+-    }
+-
+-    const gates = promo.gates || [];
+-    if (gates.length) {
+-      parts.push('<div class="lrn-rules">' + gates.map((g) =>
+-        `<span class="lrn-rule ${g.passed ? "ok" : "bad"}" title="${esc(g.detail || "")}">`
+-        + `${g.passed ? "✓" : "✗"} ${esc(GATE_LABEL[g.name] || g.name)}</span>`).join("") + "</div>");
+-      const blocked = gates.find((g) => !g.passed);
+-      if (blocked) {
+-        // Labelling this line with the check's name reads as a contradiction —
+-        // "makes more money: candidate +58.20 vs champion +77.00". Say why not.
+-        parts.push(`<p class="tj-sub"><b>Not applied because</b> `
+-          + `${dojoRejectReason(promo)} `
+-          + `<span class="tj-dim">(${esc(blocked.detail || blocked.name)})</span></p>`);
+-      }
+-    }
+-    if (promo.enacted && promo.champion_path) {
+-      parts.push('<p class="tj-sub">Saved to <span class="mono">'
+-        + `${esc(promo.champion_path)}</span> — live decisions use it from the next tick.</p>`);
+-    }
+-    return parts.join("");
+-  }
+-
+-  /* ---- everything else, for when the numbers are the question ---- */
+-  function renderDojoRaw(rep) {
+-    const m = rep.metrics || {};
+-    const phases = m.phases || {};
+-    const cfg = m.config || {};
+-    const uni = phases.universe || {};
+-    const rec = phases.recorded || {};
+-    const ev = rec.evaluation || {};
+-    const rows = dojoGapRows(uni);
+-    const matrix = rows.length
+-      ? `<h4 class="val-h4">Profit by market type</h4>
+-        <div class="dojo-scroll"><table class="tj-table dojo-matrix">
+-          <thead><tr><th>market type</th><th>worlds</th><th>sessions</th><th>trades</th>
+-          <th>total P&amp;L</th><th>per session</th><th>sessions won</th>
+-          <th title="Share of sessions whose direction the system called correctly">direction</th>
+-          </tr></thead><tbody>${rows.map((r) => {
+-            const m2 = (uni.archetype_matrix || {})[r.archetype] || {};
+-            const cls = r.mean >= 0 ? "dojo-pos" : "dojo-neg";
+-            return `<tr><td class="mono">${esc(r.archetype)}</td>
+-              <td>${m2.n_universes ?? 0}</td><td>${r.sessions}</td><td>${r.trades}</td>
+-              <td class="${cls}">${sign(r.total, 3)}</td><td class="${cls}">${sign(r.mean, 3)}</td>
+-              <td>${m2.session_win_rate == null ? "—" : pct(m2.session_win_rate, 0)}</td>
+-              <td>${r.dirHit == null ? "—" : pct(r.dirHit, 0)}</td></tr>`;
+-          }).join("")}</tbody></table></div>` : "";
+-
+-    const panels = uni.archetype_authorities || {};
+-    const panelNames = Object.keys(panels);
+-    const authorities = panelNames.length
+-      ? `<h4 class="val-h4">Current vs proposed, per market type</h4>
+-        <div class="dojo-scroll"><table class="tj-table dojo-matrix">
+-          <thead><tr><th>market type</th><th>current</th><th>proposed</th><th>baseline</th></tr></thead>
+-          <tbody>${panelNames.sort().map((a) => {
+-            const p = panels[a] || {};
+-            const cell = (x) => x ? `${sign(x.total_pnl, 2)} <span class="tj-dim">/ ${x.trades}t</span>` : "—";
+-            return `<tr><td class="mono">${esc(a)}</td><td>${cell(p.champion)}</td>
+-              <td>${cell(p.challenger || p.candidate)}</td><td>${cell(p.baseline)}</td></tr>`;
+-          }).join("")}</tbody></table></div>` : "";
+-
+-    const evo = (uni.evolution_applied || []).map((p) =>
+-      `<li>generation ${p.generation}: more worlds for `
+-      + `<span class="mono">${esc((p.targets || []).join(", "))}</span></li>`).join("");
+-
+-    return `<details class="dojo-more"><summary>Full numbers</summary>
+-      <div class="dojo-more-body">
+-        ${matrix}${authorities}
+-        ${evo ? `<h4 class="val-h4">Where the extra training went</h4><ul class="val-recs">${evo}</ul>` : ""}
+-        <h4 class="val-h4">Run</h4>
+-        <div class="metrics">
+-          ${metricCard("Snapshots scored", rec.n_snapshots == null ? "—" : String(rec.n_snapshots))}
+-          ${metricCard("Simulated snapshots", uni.n_snapshots == null ? "—" : String(uni.n_snapshots))}
+-          ${metricCard("Generations", String(cfg.generations ?? "—"))}
+-          ${metricCard("Worlds per generation", String(cfg.universes_per_gen ?? "—"))}
+-          ${metricCard("Lattice", cfg.full_lattice ? "full" : "sample")}
+-          ${metricCard("Mean session P&L", sign(ev.mean_session_pnl, 3))}
+-        </div>
+-        ${(rep.flags || []).length ? '<h4 class="val-h4">Flags</h4><div class="chips">'
+-          + rep.flags.map((f) => `<span class="chip ${f.severity === "warn" ? "warn"
+-            : f.severity === "alert" ? "veto" : ""}" title="${esc(f.detail || "")}">`
+-            + `${esc(f.flag)}</span>`).join("") + "</div>" : ""}
+-        ${(phases.learner || {}).staged_path
+-          ? `<p class="tj-sub">Staged candidate: <span class="mono">${esc(phases.learner.staged_path)}</span></p>`
+-          : ""}
+-      </div></details>`;
+-  }
+-
+-  function renderDojoDetail(rep) {
+-    $("dojo-detail-date").textContent = `${rep.report_date || "—"} · run #${rep.id}`;
+-    const m = rep.metrics || {};
+-    const phases = m.phases || {};
+-    const rec = phases.recorded || {};
+-    const uni = phases.universe || {};
+-    const ev = rec.evaluation || {};
+-    const targets = m.training_targets || {};
+-    const [pillText, pillTone] = dojoStatusPill(rep);
+-    const parts = [];
+-
+-    parts.push(`<p class="dojo-verdict"><span class="dojo-pill dojo-pill-${pillTone}">`
+-      + `${esc(pillText)}</span></p>`);
+-    // The last sentence is always what the run *did* — it gets its own line so
+-    // the answer to "did anything change?" is not buried mid-paragraph.
+-    const said = dojoStory(rep);
+-    parts.push(`<p class="dojo-story">${said.slice(0, -1).join(" ")}</p>`);
+-    parts.push(`<p class="dojo-story dojo-story-action">${said[said.length - 1]}</p>`);
+-    parts.push(renderDojoStopReason(rep.human));
+-
+-    // The four numbers a person actually asks for, in words they use.
+-    parts.push('<div class="metrics">'
+-      + metricCard("Real sessions", rec.n_sessions == null ? "—" : String(rec.n_sessions))
+-      + metricCard("Profit on real tape", sign(ev.total_pnl, 2),
+-          num(ev.total_pnl) != null && ev.total_pnl < 0 ? "warn" : "pos")
+-      + metricCard("Trades won", ev.win_rate == null ? "—" : pct(ev.win_rate, 0))
+-      + metricCard("Simulated markets", uni.n_universes == null ? "—" : String(uni.n_universes))
+-      + "</div>");
+-
+-    const thin = (rec.status && rec.status !== "ok") || uni.status === "skipped";
+-    if (thin) {
+-      const why = [rec.note, uni.note].filter(Boolean).join(" · ");
+-      parts.push(`<p class="empty" style="margin-top:10px">This run finished but had
+-        little to work with: ${esc(why || "no recorded tape")}.</p>`);
+-    }
+-
+-    parts.push(renderDojoGaps(uni, targets.targeted_archetype));
+-    parts.push(renderDojoPromotion(phases.promotion));
+-    parts.push(renderDojoCoverage(uni));
+-    parts.push(renderDojoRaw(rep));
+-
+-    $("dojo-detail").innerHTML = parts.filter(Boolean).join("");
+-  }
++  function renderLearningBadge(_pending) { /* Learning tab retired */ }
++  function renderDojoBadge(_latest) { /* Adaptive Loop owns the badge via refreshDojo */ }
++  function renderLearningV2Status(_live) { /* Learning tab retired */ }
+ 
++  /* ---------------- Adaptive Loop: mount SPY-DER tab (single renderer) ---- */
++  let spyDerTabHandle = null;
+   async function refreshDojo() {
++    const host = document.querySelector("#view-dojo [data-spy-der-tab]");
++    if (!host) return;
+     try {
+-      const data = await api("/api/dojo?limit=50");
+-      dojoReports = data.reports || [];
+-      dojoNote = data.note || "";
+-      if (dojoSelectedId == null || !dojoReports.some((r) => r.id === dojoSelectedId)) {
+-        dojoSelectedId = (dojoReports[0] || {}).id ?? null;
++      if (!spyDerTabHandle) {
++        const mod = await import("/static/spy-der-tab.js");
++        spyDerTabHandle = mod.mountSpyDerTab({
++          target: host,
++          base: host.dataset.spyDerBase || "/api/spy-der",
++          actions: true,
++        });
++      } else if (spyDerTabHandle.refresh) {
++        await spyDerTabHandle.refresh();
+       }
+-      renderDojoList();
+-      const rep = dojoReports.find((r) => r.id === dojoSelectedId);
+-      if (rep) renderDojoDetail(rep);
+-      else {
+-        $("dojo-detail-date").textContent = "—";
+-        $("dojo-detail").innerHTML = '<p class="empty">Select a training run</p>';
++      // Dot: pending challengers from SPY-DER pending endpoint when available.
++      try {
++        const pending = await api("/api/spy-der/v1/dojo/pending").catch(() => null);
++        const n = pending && Array.isArray(pending.pending) ? pending.pending.length : 0;
++        $("tab-dojo-dot").classList.toggle("hidden", !n);
++      } catch (_e) {
++        $("tab-dojo-dot").classList.add("hidden");
+       }
+     } catch (e) {
+-      if (e.message !== "Unauthorized") console.warn("dojo", e);
++      console.warn("SPY-DER Adaptive Loop mount failed", e);
+     }
+   }
+ 
++  async function refreshLearning() {
++    // Learning tab retired — Adaptive Loop owns the surface.
++    return refreshDojo();
++  }
++
+   /* ---------------- refresh loop ---------------- */
+   async function refresh() {
+     if (activeTab === "journal") refreshJournal();
+     if (activeTab === "validation") refreshValidation();
+-    if (activeTab === "learning") refreshLearning();
++    if (activeTab === "learning" || activeTab === "adaptive") refreshDojo();
+     if (activeTab === "prediction") refreshPrediction();
+     if (activeTab === "dojo") refreshDojo();
+     try {
+@@ -4450,7 +3693,9 @@
+       renderTimeline(history);
+       renderV2Timeline(history);
+       staleNote(live, market);
+-      if (activeTab === "learning") renderLearningV2Status(live);
++      if (activeTab === "dojo" || activeTab === "learning" || activeTab === "adaptive") {
++        /* Adaptive Loop refresh handles live status */
++      }
+       if (activeTab === "prediction") renderLiveCones(live);
+ 
+       // PredictionBundle: prefer store lookup, fall back to journaled v2_fc_*.
+@@ -4636,7 +3881,6 @@
+     $("tab-prediction").addEventListener("click", () => switchTab("prediction"));
+     $("tab-journal").addEventListener("click", () => switchTab("journal"));
+     $("tab-validation").addEventListener("click", () => switchTab("validation"));
+-    $("tab-learning").addEventListener("click", () => switchTab("learning"));
+     $("tab-dojo").addEventListener("click", () => switchTab("dojo"));
+     initValidationControls();
+     initJournalControls();
+diff --git a/dashboard/static/index.html b/dashboard/static/index.html
+index 9bad6dd..ed081ca 100644
+--- a/dashboard/static/index.html
++++ b/dashboard/static/index.html
+@@ -56,10 +56,7 @@
+       <button class="tab" id="tab-validation" type="button">Validation
+         <span class="val-alert-dot hidden" id="tab-validation-dot"></span>
+       </button>
+-      <button class="tab" id="tab-learning" type="button">Learning
+-        <span class="val-alert-dot hidden" id="tab-learning-dot"></span>
+-      </button>
+-      <button class="tab" id="tab-dojo" type="button">Dojo
++      <button class="tab" id="tab-dojo" type="button">Adaptive Loop
+         <span class="val-alert-dot hidden" id="tab-dojo-dot"></span>
+       </button>
+     </nav>
+@@ -476,62 +473,15 @@
+ 
+     <!-- ===================== DOJO VIEW (matrix training) ===================== -->
+     <div class="validation-view hidden" id="view-dojo">
+-      <section class="panel" id="dojo-list-panel">
+-        <h2>Training runs <span class="h2-right" id="dojo-count">—</span></h2>
+-        <p class="empty" id="dojo-intro" style="margin:0 0 10px">
+-          Each night SPY-DER re-trades recorded market days and thousands of
+-          simulated ones, finds where it loses money, and tests a fix against
+-          both before changing how it trades.
+-        </p>
+-        <div class="val-list" id="dojo-list"><p class="empty">No training run yet —
+-          enable the <span class="mono">spy-der-dojo-*</span> timers on the VPS</p></div>
+-      </section>
+-      <section class="panel" id="dojo-detail-panel">
+-        <h2>What this run did <span class="h2-right" id="dojo-detail-date">—</span></h2>
+-        <div id="dojo-detail"><p class="empty">Select a training run</p></div>
+-      </section>
+-    </div>
+-
+-    <!-- ===================== LEARNING VIEW ===================== -->
+-    <div class="validation-view hidden" id="view-learning">
+-      <section class="panel" id="lrn-v2-status-panel" style="grid-column:1/-1">
+-        <h2>V3 shadow status <span class="h2-right" id="lrn-v2-sub">live</span></h2>
+-        <div class="metrics" id="lrn-v2-metrics"></div>
+-        <div class="chips" id="lrn-v2-chips" style="margin-top:10px"></div>
+-        <p class="empty" id="lrn-v2-note" style="margin-top:8px">
+-          Learning below optimizes <b>legacy engine config</b> (gate/selector/classifier).
+-          V3 policy/ranker run in parallel shadow until promoted via
+-          <span class="mono">--policy-mode champion</span>.
+-        </p>
+-      </section>
+-
+-      <section class="panel" id="lrn-left">
+-        <h2>Diagnostics <span class="h2-right" id="lrn-diag-sub">—</span></h2>
+-        <div id="lrn-diagnostics"><p class="empty">No learning runs yet — evening timer runs
+-          <span class="mono">python3 -m adaptive_learning.learner --mode evening</span>
+-          after close (or run it manually)</p></div>
+-
+-        <h2 style="margin-top:18px">Promotion queue <span class="h2-right" id="lrn-promo-sub">—</span></h2>
+-        <div id="lrn-promotions"><p class="empty">No promotion decisions yet</p></div>
+-
+-        <h2 style="margin-top:18px">Drift <span class="h2-right" id="lrn-drift-sub">—</span></h2>
+-        <div id="lrn-drift"><p class="empty">No drift snapshots yet</p></div>
+-      </section>
+-
+-      <section class="panel" id="lrn-right">
+-        <h2>Champion vs challengers <span class="h2-right" id="lrn-cand-sub">legacy engine</span></h2>
+-        <div id="lrn-champion"><p class="empty">No champion config — dataclass defaults live</p></div>
+-        <div id="lrn-candidates"><p class="empty">No candidate configs yet</p></div>
+-
+-        <h2 style="margin-top:18px">Learning runs <span class="h2-right" id="lrn-runs-sub">—</span></h2>
+-        <div id="lrn-runs"><p class="empty">No learning runs yet</p></div>
+-
+-        <h2 style="margin-top:18px">Feature stability <span class="h2-right" id="lrn-feat-sub">—</span></h2>
+-        <div id="lrn-features"><p class="empty">No feature scores yet</p></div>
+-      </section>
++      <!-- SPY-DER owns Adaptive Loop / Dojo. One embed, no second renderer. -->
++      <div
++        data-spy-der-tab
++        data-spy-der-base="/api/spy-der"
++        data-spy-der-actions
++        data-spy-der-manual
++      ></div>
+     </div>
+ 
+-    <!-- ===================== SPY-DER ===================== -->
+     <div class="grid hidden" id="view-spyder">
+       <!-- ---------- LEFT: verdict · prediction · market context ---------- -->
+       <div class="col">
+@@ -643,6 +593,8 @@
+     <div class="foot">Read-only observability · outputs only · auto-refreshing</div>
+   </div>
+ 
++  <link rel="stylesheet" href="/static/spy-der-tab.css" />
++  <script type="module" src="/static/spy-der-tab.js"></script>
+   <script src="/static/app.js"></script>
+ </body>
+ </html>
+diff --git a/dashboard/static/spy-der-tab.css b/dashboard/static/spy-der-tab.css
+new file mode 100644
+index 0000000..ea0eda5
+--- /dev/null
++++ b/dashboard/static/spy-der-tab.css
+@@ -0,0 +1,762 @@
++/* SPY-DER dashboard tab.
++ *
++ * Every rule is scoped under `.spyder-tab`. This stylesheet is loaded into
++ * 0DTE's Vercel dashboard alongside that project's own CSS, so an unscoped
++ * selector here would restyle a page this repository cannot see. Custom
++ * properties are declared on `.spyder-tab` rather than `:root` for the same
++ * reason.
++ */
++
++.spyder-tab {
++  --sd-bg: #0d1117;
++  --sd-panel: #161b22;
++  --sd-panel-2: #1c2330;
++  --sd-border: #2d333b;
++  --sd-text: #e6edf3;
++  --sd-muted: #8b949e;
++  --sd-accent: #58a6ff;
++  --sd-ok: #3fb950;
++  --sd-warn: #d29922;
++  --sd-bad: #f85149;
++  --sd-idle: #6e7681;
++
++  color: var(--sd-text);
++  background: var(--sd-bg);
++  font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
++  font-size: 14px;
++  line-height: 1.45;
++  padding: 16px;
++  border-radius: 8px;
++}
++
++@media (prefers-color-scheme: light) {
++  .spyder-tab:not([data-force-dark]) {
++    --sd-bg: #ffffff;
++    --sd-panel: #f6f8fa;
++    --sd-panel-2: #eef1f4;
++    --sd-border: #d0d7de;
++    --sd-text: #1f2328;
++    --sd-muted: #656d76;
++    --sd-accent: #0969da;
++    --sd-ok: #1a7f37;
++    --sd-warn: #9a6700;
++    --sd-bad: #cf222e;
++    --sd-idle: #8c959f;
++  }
++}
++
++.spyder-tab * {
++  box-sizing: border-box;
++}
++
++/* Header ------------------------------------------------------------------ */
++.spyder-tab__head {
++  display: flex;
++  flex-wrap: wrap;
++  align-items: center;
++  gap: 12px;
++  margin-bottom: 16px;
++}
++
++.spyder-tab__title {
++  font-size: 15px;
++  font-weight: 600;
++  letter-spacing: 0.02em;
++  margin: 0;
++}
++
++.spyder-tab__title small {
++  color: var(--sd-muted);
++  font-weight: 400;
++  margin-left: 8px;
++}
++
++.spyder-tab__spacer {
++  flex: 1 1 auto;
++}
++
++.spyder-tab__pill {
++  display: inline-flex;
++  align-items: center;
++  gap: 6px;
++  padding: 3px 10px;
++  border-radius: 999px;
++  border: 1px solid var(--sd-border);
++  background: var(--sd-panel);
++  font-size: 12px;
++  font-weight: 600;
++  letter-spacing: 0.04em;
++  text-transform: uppercase;
++  white-space: nowrap;
++}
++
++.spyder-tab__pill::before {
++  content: "";
++  width: 7px;
++  height: 7px;
++  border-radius: 50%;
++  background: var(--sd-idle);
++}
++
++.spyder-tab__pill--ok::before { background: var(--sd-ok); }
++.spyder-tab__pill--warn::before { background: var(--sd-warn); }
++.spyder-tab__pill--bad::before { background: var(--sd-bad); }
++
++.spyder-tab__pill--pulse::before {
++  animation: spyder-tab-pulse 1.4s ease-in-out infinite;
++}
++
++@keyframes spyder-tab-pulse {
++  0%, 100% { opacity: 1; transform: scale(1); }
++  50% { opacity: 0.35; transform: scale(0.85); }
++}
++
++.spyder-tab__refresh {
++  font: inherit;
++  font-size: 12px;
++  color: var(--sd-muted);
++  background: var(--sd-panel);
++  border: 1px solid var(--sd-border);
++  border-radius: 6px;
++  padding: 4px 10px;
++  cursor: pointer;
++}
++
++.spyder-tab__refresh:hover {
++  color: var(--sd-text);
++  border-color: var(--sd-accent);
++}
++
++.spyder-tab__btn {
++  font: inherit;
++  font-size: 12px;
++  color: var(--sd-text);
++  background: var(--sd-panel-2);
++  border: 1px solid var(--sd-border);
++  border-radius: 6px;
++  padding: 5px 10px;
++  cursor: pointer;
++}
++
++.spyder-tab__btn:hover {
++  border-color: var(--sd-accent);
++}
++
++.spyder-tab__btn--ok {
++  color: var(--sd-ok);
++  border-color: color-mix(in srgb, var(--sd-ok) 45%, var(--sd-border));
++}
++
++.spyder-tab__btn--bad {
++  color: var(--sd-bad);
++  border-color: color-mix(in srgb, var(--sd-bad) 45%, var(--sd-border));
++}
++
++.spyder-tab__pending {
++  margin: 0 0 14px;
++  padding: 10px 12px;
++  border: 1px solid var(--sd-border);
++  border-radius: 8px;
++  background: var(--sd-panel-2);
++}
++
++.spyder-tab__pending-list {
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++  margin: 8px 0;
++}
++
++.spyder-tab__pending-row {
++  display: grid;
++  grid-template-columns: minmax(120px, 0.8fr) 1fr auto;
++  gap: 10px;
++  align-items: center;
++  padding: 8px 10px;
++  border: 1px solid var(--sd-border);
++  border-radius: 6px;
++  background: var(--sd-panel);
++  cursor: default;
++}
++
++.spyder-tab__pending-row--selected {
++  border-color: var(--sd-accent);
++}
++
++.spyder-tab__pending-id {
++  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
++  font-size: 12px;
++  word-break: break-all;
++}
++
++.spyder-tab__pending-meta {
++  display: flex;
++  flex-direction: column;
++  gap: 2px;
++  min-width: 0;
++}
++
++.spyder-tab__pending-actions {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 6px;
++  justify-content: flex-end;
++}
++
++.spyder-tab__operator {
++  margin-top: 8px;
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++}
++
++.spyder-tab__operator-row {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 8px;
++}
++
++.spyder-tab__operator-input {
++  flex: 1 1 220px;
++  min-width: 0;
++  font: inherit;
++  font-size: 13px;
++  color: var(--sd-text);
++  background: var(--sd-panel);
++  border: 1px solid var(--sd-border);
++  border-radius: 6px;
++  padding: 6px 10px;
++}
++
++/* Grid and panels -------------------------------------------------------- */
++.spyder-tab__grid {
++  display: grid;
++  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
++  gap: 12px;
++}
++
++.spyder-tab__panel {
++  background: var(--sd-panel);
++  border: 1px solid var(--sd-border);
++  border-radius: 8px;
++  padding: 12px 14px;
++  min-width: 0;
++}
++
++.spyder-tab__panel--wide {
++  grid-column: 1 / -1;
++}
++
++.spyder-tab__panel h3 {
++  margin: 0 0 10px;
++  font-size: 12px;
++  font-weight: 600;
++  letter-spacing: 0.06em;
++  text-transform: uppercase;
++  color: var(--sd-muted);
++}
++
++.spyder-tab__note {
++  color: var(--sd-muted);
++  font-size: 12px;
++  margin: 0;
++}
++
++.spyder-tab__note--bad {
++  color: var(--sd-bad);
++}
++
++/* Key/value rows --------------------------------------------------------- */
++.spyder-tab__kv {
++  display: grid;
++  grid-template-columns: minmax(90px, auto) 1fr;
++  gap: 4px 12px;
++  margin: 0;
++  font-variant-numeric: tabular-nums;
++}
++
++.spyder-tab__kv dt {
++  color: var(--sd-muted);
++  font-size: 12px;
++}
++
++.spyder-tab__kv dd {
++  margin: 0;
++  overflow-wrap: anywhere;
++}
++
++/* Decision chain --------------------------------------------------------- */
++.spyder-tab__chain {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 8px;
++  align-items: stretch;
++}
++
++.spyder-tab__stage {
++  flex: 1 1 150px;
++  min-width: 0;
++  background: var(--sd-panel-2);
++  border: 1px solid var(--sd-border);
++  border-left: 3px solid var(--sd-idle);
++  border-radius: 6px;
++  padding: 8px 10px;
++}
++
++.spyder-tab__stage--ok { border-left-color: var(--sd-ok); }
++.spyder-tab__stage--warn { border-left-color: var(--sd-warn); }
++.spyder-tab__stage--bad { border-left-color: var(--sd-bad); }
++.spyder-tab__stage--authority { border-left-color: var(--sd-accent); }
++
++.spyder-tab__stage-name {
++  font-size: 11px;
++  letter-spacing: 0.04em;
++  text-transform: uppercase;
++  color: var(--sd-muted);
++}
++
++.spyder-tab__stage-value {
++  font-weight: 600;
++  font-size: 15px;
++  overflow-wrap: anywhere;
++}
++
++.spyder-tab__stage-detail {
++  font-size: 12px;
++  color: var(--sd-muted);
++  overflow-wrap: anywhere;
++}
++
++.spyder-tab__chain-caption {
++  margin: 10px 0 0;
++  font-size: 12px;
++  color: var(--sd-muted);
++}
++
++/* Meters ----------------------------------------------------------------- */
++.spyder-tab__meter {
++  margin-bottom: 8px;
++}
++
++.spyder-tab__meter-head {
++  display: flex;
++  justify-content: space-between;
++  font-size: 12px;
++  color: var(--sd-muted);
++  margin-bottom: 3px;
++}
++
++.spyder-tab__meter-track {
++  height: 6px;
++  border-radius: 3px;
++  background: var(--sd-panel-2);
++  overflow: hidden;
++}
++
++.spyder-tab__meter-fill {
++  height: 100%;
++  background: var(--sd-accent);
++}
++
++.spyder-tab__meter-fill--ok { background: var(--sd-ok); }
++.spyder-tab__meter-fill--warn { background: var(--sd-warn); }
++.spyder-tab__meter-fill--bad { background: var(--sd-bad); }
++
++/* Waterfall -------------------------------------------------------------- */
++.spyder-tab__waterfall {
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++  font-variant-numeric: tabular-nums;
++}
++
++.spyder-tab__bar-row {
++  display: grid;
++  grid-template-columns: 96px 1fr 92px;
++  align-items: center;
++  gap: 8px;
++  font-size: 12px;
++}
++
++.spyder-tab__bar-label {
++  color: var(--sd-muted);
++  text-transform: capitalize;
++}
++
++/* Two half-tracks meeting at a centre line, so sign is legible as position
++ * and not only as colour. */
++.spyder-tab__bar-track {
++  display: flex;
++  height: 14px;
++  background: var(--sd-panel-2);
++  border-radius: 3px;
++  overflow: hidden;
++}
++
++.spyder-tab__bar-half {
++  flex: 1 1 50%;
++  display: flex;
++  min-width: 0;
++}
++
++.spyder-tab__bar-half--neg { justify-content: flex-end; }
++
++.spyder-tab__bar-fill {
++  height: 100%;
++}
++
++.spyder-tab__bar-fill--neg { background: var(--sd-bad); }
++.spyder-tab__bar-fill--pos { background: var(--sd-ok); }
++
++.spyder-tab__bar-value {
++  text-align: right;
++}
++
++.spyder-tab__bar-value--neg { color: var(--sd-bad); }
++.spyder-tab__bar-value--pos { color: var(--sd-ok); }
++
++/* Books side by side ----------------------------------------------------- */
++.spyder-tab__books {
++  display: grid;
++  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
++  gap: 8px;
++  margin-bottom: 12px;
++}
++
++.spyder-tab__book {
++  background: var(--sd-panel-2);
++  border: 1px solid var(--sd-border);
++  border-radius: 6px;
++  padding: 8px 10px;
++}
++
++.spyder-tab__book-name {
++  font-size: 11px;
++  letter-spacing: 0.04em;
++  text-transform: uppercase;
++  color: var(--sd-muted);
++}
++
++.spyder-tab__book-value {
++  font-size: 18px;
++  font-weight: 600;
++  font-variant-numeric: tabular-nums;
++}
++
++.spyder-tab__book-value--neg { color: var(--sd-bad); }
++.spyder-tab__book-value--pos { color: var(--sd-ok); }
++
++.spyder-tab__book-sub {
++  font-size: 12px;
++  color: var(--sd-muted);
++}
++
++/* Tag lists -------------------------------------------------------------- */
++.spyder-tab__tags {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 6px;
++  list-style: none;
++  margin: 0;
++  padding: 0;
++}
++
++.spyder-tab__tags li {
++  font-size: 11px;
++  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
++  padding: 2px 8px;
++  border-radius: 4px;
++  background: var(--sd-panel-2);
++  border: 1px solid var(--sd-border);
++  color: var(--sd-muted);
++}
++
++.spyder-tab__tags li[data-tone="ok"] {
++  border-color: var(--sd-ok);
++  color: var(--sd-ok);
++}
++
++.spyder-tab__tags li[data-tone="warn"] {
++  border-color: var(--sd-warn);
++  color: var(--sd-warn);
++}
++
++.spyder-tab__tags li[data-tone="bad"] {
++  border-color: var(--sd-bad);
++  color: var(--sd-bad);
++}
++
++/* Tables ----------------------------------------------------------------- */
++.spyder-tab__scroll {
++  overflow-x: auto;
++}
++
++.spyder-tab table {
++  width: 100%;
++  border-collapse: collapse;
++  font-size: 12px;
++  font-variant-numeric: tabular-nums;
++}
++
++.spyder-tab th,
++.spyder-tab td {
++  text-align: left;
++  padding: 5px 8px;
++  border-bottom: 1px solid var(--sd-border);
++  white-space: nowrap;
++}
++
++.spyder-tab th {
++  color: var(--sd-muted);
++  font-weight: 600;
++  font-size: 11px;
++  letter-spacing: 0.04em;
++  text-transform: uppercase;
++}
++
++.spyder-tab tbody tr:last-child td {
++  border-bottom: none;
++}
++
++.spyder-tab code {
++  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
++  font-size: 12px;
++}
++
++.spyder-tab__rationale {
++  margin: 8px 0 0;
++  padding: 8px 10px;
++  background: var(--sd-panel-2);
++  border-radius: 6px;
++  font-size: 12px;
++  color: var(--sd-muted);
++  white-space: pre-wrap;
++  overflow-wrap: anywhere;
++}
++
++.spyder-tab__footer {
++  margin-top: 14px;
++  padding-top: 10px;
++  border-top: 1px solid var(--sd-border);
++  font-size: 11px;
++  color: var(--sd-muted);
++}
++
++/* Dojo training room ----------------------------------------------------- */
++.spyder-tab__story {
++  margin: 10px 0 4px;
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++}
++
++.spyder-tab__story-row {
++  padding: 8px 10px;
++  background: var(--sd-panel-2);
++  border: 1px solid var(--sd-border);
++  border-radius: 6px;
++}
++
++.spyder-tab__story-label {
++  font-size: 11px;
++  font-weight: 600;
++  letter-spacing: 0.06em;
++  text-transform: uppercase;
++  color: var(--sd-muted);
++  margin-bottom: 2px;
++}
++
++.spyder-tab__story-body {
++  font-size: 13px;
++  line-height: 1.4;
++}
++
++.spyder-tab__subhead {
++  margin: 14px 0 6px;
++  font-size: 11px;
++  font-weight: 600;
++  letter-spacing: 0.06em;
++  text-transform: uppercase;
++  color: var(--sd-muted);
++}
++
++.spyder-tab__focus {
++  margin-top: 4px;
++  padding: 10px 12px;
++  background: var(--sd-panel-2);
++  border: 1px solid var(--sd-border);
++  border-radius: 6px;
++}
++
++.spyder-tab__focus .spyder-tab__subhead {
++  margin-top: 0;
++}
++
++.spyder-tab__focus-headline {
++  margin: 0 0 8px;
++  font-size: 14px;
++  font-weight: 600;
++  line-height: 1.35;
++}
++
++.spyder-tab__focus-list {
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++  list-style: none;
++  margin: 0;
++  padding: 0;
++}
++
++.spyder-tab__focus-item {
++  padding: 6px 10px;
++  border-radius: 4px;
++  border: 1px solid var(--sd-warn);
++  background: transparent;
++}
++
++.spyder-tab__focus-name {
++  font-size: 13px;
++  font-weight: 600;
++  color: var(--sd-warn);
++}
++
++.spyder-tab__focus-reason {
++  margin-top: 2px;
++  font-size: 12px;
++  color: var(--sd-muted);
++}
++
++.spyder-tab__chain--dojo {
++  margin-top: 12px;
++}
++
++/* Live Dojo working square ------------------------------------------------ */
++.spyder-tab__dojo-square {
++  margin: 0 0 14px;
++  padding: 12px;
++  border: 1px solid var(--sd-border);
++  border-radius: 6px;
++  background:
++    linear-gradient(160deg, rgba(88, 166, 255, 0.08), transparent 42%),
++    var(--sd-panel-2);
++}
++
++.spyder-tab__dojo-square-head {
++  display: flex;
++  flex-wrap: wrap;
++  align-items: center;
++  gap: 10px;
++  margin-bottom: 8px;
++}
++
++.spyder-tab__dojo-square-phase {
++  font-size: 13px;
++  font-weight: 600;
++  color: var(--sd-text);
++}
++
++.spyder-tab__dojo-square-detail {
++  margin: 0 0 10px;
++  font-size: 13px;
++  color: var(--sd-muted);
++}
++
++.spyder-tab__dojo-strip {
++  display: grid;
++  grid-template-columns: repeat(5, minmax(0, 1fr));
++  gap: 6px;
++}
++
++.spyder-tab__dojo-step {
++  min-height: 54px;
++  padding: 8px;
++  border-radius: 4px;
++  border: 1px solid var(--sd-border);
++  border-left-width: 3px;
++  border-left-color: var(--sd-idle);
++  background: var(--sd-panel);
++}
++
++.spyder-tab__dojo-step--pending {
++  border-left-color: var(--sd-idle);
++  opacity: 0.72;
++}
++
++.spyder-tab__dojo-step--running {
++  border-left-color: var(--sd-accent);
++}
++
++.spyder-tab__dojo-step--done {
++  border-left-color: var(--sd-ok);
++}
++
++.spyder-tab__dojo-step--skipped {
++  border-left-color: var(--sd-muted);
++}
++
++.spyder-tab__dojo-step--failed {
++  border-left-color: var(--sd-bad);
++}
++
++.spyder-tab__dojo-step-label {
++  font-size: 11px;
++  font-weight: 600;
++  letter-spacing: 0.02em;
++  color: var(--sd-text);
++}
++
++.spyder-tab__dojo-step-status {
++  margin-top: 4px;
++  font-size: 10px;
++  text-transform: uppercase;
++  letter-spacing: 0.06em;
++  color: var(--sd-muted);
++}
++
++.spyder-tab__dojo-step--running .spyder-tab__dojo-step-status {
++  color: var(--sd-accent);
++}
++
++.spyder-tab__dojo-step--done .spyder-tab__dojo-step-status {
++  color: var(--sd-ok);
++}
++
++.spyder-tab__dojo-step--failed .spyder-tab__dojo-step-status {
++  color: var(--sd-bad);
++}
++
++@media (max-width: 640px) {
++  .spyder-tab__dojo-strip {
++    grid-template-columns: 1fr 1fr;
++  }
++}
++
++.spyder-tab__robustness {
++  margin-top: 4px;
++}
++
++.spyder-tab__matrix-row--weak td:first-child {
++  color: var(--sd-warn);
++  font-weight: 600;
++}
++
++.spyder-tab__parity {
++  margin-top: 8px;
++  padding-top: 4px;
++  border-top: 1px solid var(--sd-border);
++}
++
++@media (max-width: 640px) {
++  .spyder-tab__chain--dojo .spyder-tab__stage {
++    flex: 1 1 100%;
++  }
++
++  .spyder-tab__bar-row {
++    grid-template-columns: 72px 1fr 72px;
++  }
++
++  .spyder-tab__pending-row {
++    grid-template-columns: 1fr;
++  }
++}
+diff --git a/dashboard/static/spy-der-tab.js b/dashboard/static/spy-der-tab.js
+new file mode 100644
+index 0000000..ae4e9fb
+--- /dev/null
++++ b/dashboard/static/spy-der-tab.js
+@@ -0,0 +1,1387 @@
++/* SPY-DER dashboard tab — one implementation, two mounts.
++ *
++ * Mount A: 0DTE's Vercel dashboard, as the Adaptive Loop tab.
++ * Mount B: SPY-DER's own dashboard API at `/ui`, which is what keeps working
++ *          after 0DTE is retired.
++ *
++ * Both mounts load this same file, so there is no second copy to drift. The
++ * 0DTE side needs no JavaScript edit: drop a container with `data-spy-der-tab`
++ * on it and this module finds it. See
++ * `integrations/zerodte/spy_der_tab/README.md`.
++ *
++ * Constraints this file is written to:
++ *
++ *   - No dependencies, no build step. It is loaded as a plain ES module.
++ *   - Decision path stays closed. GETs render live state; operator POSTs only
++ *     promote / reject / rollback *decision knobs* (champion.json). Nothing
++ *     here can place, size, or submit a trade — the execution guard remains
++ *     the only route to the market.
++ *   - Operator writes need `data-spy-der-actions` (or options.actions) plus a
++ *     Bearer token for SPY_DER_OPERATOR_TOKEN. Without both, Promote/Reject
++ *     stay hidden and the tab is display-only.
++ *   - No `innerHTML` with server data. Every value goes through `text()`, so a
++ *     rationale or reason code cannot inject markup into 0DTE's page.
++ *   - Panels fail independently. One unreadable artifact greys out its own
++ *     panel and says why; it never blanks the tab.
++ */
++
++const DEFAULT_ENDPOINTS = {
++  system: "/v1/system",
++  state: "/v1/state",
++  dojo: "/v1/dojo/latest",
++  dojoProgress: "/v1/dojo/progress",
++  pending: "/v1/dojo/pending",
++  champion: "/v1/dojo/champion",
++  promote: "/v1/dojo/promote",
++  reject: "/v1/dojo/reject",
++  rollback: "/v1/dojo/rollback",
++  validation: "/v1/validation/latest",
++  attribution: "/v1/attribution/latest",
++};
++
++const DEFAULT_REFRESH_MS = 30000;
++const OPERATOR_TOKEN_KEY = "spyDerOperatorToken";
++
++/* -------------------------------------------------------------------------- */
++/* DOM helpers                                                                */
++/* -------------------------------------------------------------------------- */
++
++function el(tag, className, textContent) {
++  const node = document.createElement(tag);
++  if (className) node.className = className;
++  if (textContent !== undefined && textContent !== null) {
++    node.textContent = String(textContent);
++  }
++  return node;
++}
++
++function text(value, fallback = "—") {
++  if (value === null || value === undefined || value === "") return fallback;
++  return String(value);
++}
++
++function clear(node) {
++  while (node.firstChild) node.removeChild(node.firstChild);
++}
++
++function panel(title, wide = false) {
++  const box = el("section", "spyder-tab__panel" + (wide ? " spyder-tab__panel--wide" : ""));
++  box.appendChild(el("h3", null, title));
++  return box;
++}
++
++function kv(pairs) {
++  const list = el("dl", "spyder-tab__kv");
++  for (const [key, value] of pairs) {
++    list.appendChild(el("dt", null, key));
++    list.appendChild(el("dd", null, text(value)));
++  }
++  return list;
++}
++
++function tags(values, tone) {
++  const list = el("ul", "spyder-tab__tags");
++  for (const value of values) {
++    const item = el("li", null, value);
++    const resolved = typeof tone === "function" ? tone(value) : tone;
++    if (resolved) item.dataset.tone = resolved;
++    list.appendChild(item);
++  }
++  return list;
++}
++
++function note(message, bad = false) {
++  return el("p", "spyder-tab__note" + (bad ? " spyder-tab__note--bad" : ""), message);
++}
++
++/* -------------------------------------------------------------------------- */
++/* Formatting                                                                 */
++/* -------------------------------------------------------------------------- */
++
++function num(value) {
++  const parsed = Number(value);
++  return Number.isFinite(parsed) ? parsed : null;
++}
++
++function money(value) {
++  const parsed = num(value);
++  if (parsed === null) return "—";
++  const sign = parsed < 0 ? "-" : "";
++  const body = Math.abs(parsed).toLocaleString(undefined, {
++    minimumFractionDigits: 2,
++    maximumFractionDigits: 2,
++  });
++  return `${sign}$${body}`;
++}
++
++function pct(value) {
++  const parsed = num(value);
++  return parsed === null ? "—" : `${(parsed * 100).toFixed(1)}%`;
++}
++
++function ageLabel(iso) {
++  const when = Date.parse(iso);
++  if (!Number.isFinite(when)) return "—";
++  const seconds = Math.max(0, (Date.now() - when) / 1000);
++  if (seconds < 90) return `${Math.round(seconds)}s ago`;
++  if (seconds < 5400) return `${Math.round(seconds / 60)}m ago`;
++  if (seconds < 172800) return `${Math.round(seconds / 3600)}h ago`;
++  return `${Math.round(seconds / 86400)}d ago`;
++}
++
++function signClass(prefix, value) {
++  const parsed = num(value);
++  if (parsed === null || parsed === 0) return "";
++  return parsed > 0 ? `${prefix}--pos` : `${prefix}--neg`;
++}
++
++/* -------------------------------------------------------------------------- */
++/* Normalization                                                              */
++/* -------------------------------------------------------------------------- */
++
++/* `live_state.json` carries one of two published shapes: a `spyder.dashboard.v1`
++ * DashboardPacket written by the decision service, or a `spy_der.parallel.v1`
++ * heartbeat from the VPS runner whose decision fields live under `parallel`.
++ * Both are legitimate live states, so the tab reads either rather than
++ * rendering "unknown" against a perfectly good heartbeat. */
++function normalizeState(raw) {
++  if (!raw || typeof raw !== "object") return null;
++  const parallel = raw.parallel && typeof raw.parallel === "object" ? raw.parallel : {};
++  const pick = (key) => (raw[key] !== undefined && raw[key] !== null ? raw[key] : parallel[key]);
++  return {
++    schema: text(raw.schema_version, "unknown"),
++    action: text(pick("action"), "UNKNOWN"),
++    mode: pick("mode"),
++    symbol: text(raw.symbol, "SPY"),
++    snapshotId: pick("snapshot_id"),
++    candidateId: pick("candidate_id"),
++    structure: pick("structure"),
++    direction: pick("direction"),
++    confidence: num(pick("confidence")),
++    uncertainty: num(pick("uncertainty")),
++    sizeScalar: num(raw.size_scalar !== undefined ? raw.size_scalar : parallel.size_cap),
++    reasonCodes: Array.isArray(pick("reason_codes")) ? pick("reason_codes") : [],
++    rationale: pick("rationale") || parallel.note,
++    traderModel: pick("trader_model"),
++    reviewerModel: pick("reviewer_model"),
++    provider: pick("provider") || pick("source"),
++    available: raw.available !== false,
++    generatedAt: pick("generated_at"),
++    liveExecutionEnabled: raw.live_execution_enabled === true,
++    dojo: raw.dojo && typeof raw.dojo === "object" ? raw.dojo : null,
++    openPositions: Array.isArray(raw.open_positions) ? raw.open_positions : [],
++  };
++}
++
++const ACTION_TONE = {
++  TRADE: "ok",
++  SELECT_CANDIDATE: "ok",
++  APPROVE: "ok",
++  RESIZE: "warn",
++  NO_EDGE: "",
++  IDLE: "",
++  ABSTAIN: "",
++  VETO: "bad",
++  BLOCKED: "bad",
++  UNAVAILABLE: "bad",
++  UNKNOWN: "bad",
++};
++
++/* -------------------------------------------------------------------------- */
++/* Panels                                                                     */
++/* -------------------------------------------------------------------------- */
++
++/* The decision hierarchy is what distinguishes SPY-DER from a chat wrapper, so
++ * it gets rendered as the first thing on the tab rather than buried: the AI
++ * chooses among candidates deterministic code already ruled eligible, and the
++ * guard re-derives every limit afterwards. Stages the published packet does not
++ * carry yet are drawn as "not published" rather than faked — an invented stage
++ * count would misrepresent exactly the property the panel exists to show. */
++function renderChain(state) {
++  const box = panel("Decision chain", true);
++  const chain = el("div", "spyder-tab__chain");
++
++  const stage = (name, value, detail, tone) => {
++    const card = el("div", "spyder-tab__stage" + (tone ? ` spyder-tab__stage--${tone}` : ""));
++    card.appendChild(el("div", "spyder-tab__stage-name", name));
++    card.appendChild(el("div", "spyder-tab__stage-value", text(value)));
++    if (detail) card.appendChild(el("div", "spyder-tab__stage-detail", detail));
++    return card;
++  };
++
++  const vetoed = state.action === "VETO" || state.action === "BLOCKED";
++  chain.appendChild(
++    stage("Candidates", state.candidateId ? "eligible set" : "not published", "geometry + payoff proofs", "ok")
++  );
++  chain.appendChild(
++    stage("Deterministic risk", vetoed ? "VETO" : "passed", "risk.firewall", vetoed ? "bad" : "ok")
++  );
++  chain.appendChild(
++    stage(
++      "Decision authority",
++      state.action,
++      text(state.provider, "provider unknown"),
++      "authority"
++    )
++  );
++  chain.appendChild(
++    stage(
++      "Execution guard",
++      state.sizeScalar !== null ? `size ×${state.sizeScalar.toFixed(2)}` : "not published",
++      "limits re-derived, can only shrink",
++      state.sizeScalar !== null && state.sizeScalar < 1 ? "warn" : "ok"
++    )
++  );
++  chain.appendChild(
++    stage(
++      "Executor",
++      state.liveExecutionEnabled ? "LIVE" : "shadow / paper",
++      state.liveExecutionEnabled ? "live routing enabled" : "live routing disabled",
++      state.liveExecutionEnabled ? "warn" : "ok"
++    )
++  );
++
++  box.appendChild(chain);
++  box.appendChild(
++    el(
++      "p",
++      "spyder-tab__chain-caption",
++      "The AI may only choose among candidates deterministic code already ruled " +
++        "eligible. The guard re-derives every limit from the candidate set and " +
++        "account state, so a decision can only shrink exposure — never assert " +
++        "its way past a limit, and never invent a candidate."
++    )
++  );
++  return box;
++}
++
++function renderDecision(state) {
++  const box = panel("Current decision");
++
++  const meter = (label, value, tone) => {
++    const wrap = el("div", "spyder-tab__meter");
++    const head = el("div", "spyder-tab__meter-head");
++    head.appendChild(el("span", null, label));
++    head.appendChild(el("span", null, pct(value)));
++    wrap.appendChild(head);
++    const track = el("div", "spyder-tab__meter-track");
++    const fill = el("div", "spyder-tab__meter-fill" + (tone ? ` spyder-tab__meter-fill--${tone}` : ""));
++    const width = value === null ? 0 : Math.max(0, Math.min(1, value)) * 100;
++    fill.style.width = `${width}%`;
++    track.appendChild(fill);
++    wrap.appendChild(track);
++    return wrap;
++  };
++
++  box.appendChild(meter("Confidence", state.confidence, "ok"));
++  box.appendChild(meter("Uncertainty", state.uncertainty, "warn"));
++  box.appendChild(
++    kv([
++      ["Structure", state.structure],
++      ["Direction", state.direction],
++      ["Candidate", state.candidateId],
++      ["Snapshot", state.snapshotId],
++      ["Mode", state.mode],
++      ["Trader", state.traderModel],
++      ["Reviewer", state.reviewerModel],
++    ])
++  );
++
++  if (state.reasonCodes.length) {
++    box.appendChild(el("h3", null, "Reason codes"));
++    box.appendChild(tags(state.reasonCodes, (code) => (/veto|block|reject/i.test(code) ? "bad" : null)));
++  }
++  if (state.rationale) {
++    box.appendChild(el("p", "spyder-tab__rationale", state.rationale));
++  }
++  return box;
++}
++
++/* The point of the shadow account: two books scored separately, and the gap
++ * between them decomposed. `verdict` names which side is costing money, which
++ * is the question a single P&L number cannot answer. */
++function renderAttribution(body) {
++  const box = panel("Shadow account — model vs execution", true);
++  if (!body) {
++    box.appendChild(note("No attribution report yet. Run settlement to produce one."));
++    return box;
++  }
++
++  const VERDICTS = {
++    healthy: ["ok", "Model profitable and executed faithfully."],
++    execution_drag: ["warn", "The model made money; execution gave some back."],
++    model_weak: ["bad", "Executed faithfully — the forecast is the problem."],
++    model_weak_and_execution_drag: ["bad", "Both sides are losing money."],
++    no_data: ["", "Not enough settled trades to judge."],
++  };
++  const [tone, blurb] = VERDICTS[body.verdict] || ["", ""];
++
++  const verdict = el("p", "spyder-tab__pill" + (tone ? ` spyder-tab__pill--${tone}` : ""));
++  verdict.textContent = text(body.verdict).replace(/_/g, " ");
++  box.appendChild(verdict);
++  if (blurb) box.appendChild(note(blurb));
++
++  const books = el("div", "spyder-tab__books");
++  const book = (name, value, sub) => {
++    const card = el("div", "spyder-tab__book");
++    card.appendChild(el("div", "spyder-tab__book-name", name));
++    card.appendChild(
++      el("div", "spyder-tab__book-value " + signClass("spyder-tab__book-value", value), money(value))
++    );
++    if (sub) card.appendChild(el("div", "spyder-tab__book-sub", sub));
++    return card;
++  };
++  books.appendChild(
++    book("Model book", body.model_pnl, `win rate ${pct(body.model_win_rate)} · n=${text(body.n_planned, "0")}`)
++  );
++  books.appendChild(
++    book("Actual book", body.actual_pnl, `win rate ${pct(body.actual_win_rate)} · n=${text(body.n_taken, "0")}`)
++  );
++  books.appendChild(book("Gap", body.gap, "actual − model"));
++  box.appendChild(books);
++
++  const components = body.components && typeof body.components === "object" ? body.components : {};
++  const entries = Object.entries(components);
++  if (entries.length) {
++    const magnitudes = entries.map(([, v]) => Math.abs(num(v) || 0));
++    const scale = Math.max(...magnitudes, 1);
++    const waterfall = el("div", "spyder-tab__waterfall");
++    for (const [name, value] of entries) {
++      const parsed = num(value) || 0;
++      const row = el("div", "spyder-tab__bar-row");
++      row.appendChild(el("div", "spyder-tab__bar-label", name));
++
++      const track = el("div", "spyder-tab__bar-track");
++      const negHalf = el("div", "spyder-tab__bar-half spyder-tab__bar-half--neg");
++      const posHalf = el("div", "spyder-tab__bar-half");
++      const fill = el("div", "spyder-tab__bar-fill " + (parsed < 0 ? "spyder-tab__bar-fill--neg" : "spyder-tab__bar-fill--pos"));
++      fill.style.width = `${(Math.abs(parsed) / scale) * 100}%`;
++      (parsed < 0 ? negHalf : posHalf).appendChild(fill);
++      track.appendChild(negHalf);
++      track.appendChild(posHalf);
++      row.appendChild(track);
++
++      row.appendChild(
++        el("div", "spyder-tab__bar-value " + signClass("spyder-tab__bar-value", parsed), money(parsed))
++      );
++      waterfall.appendChild(row);
++    }
++    box.appendChild(el("h3", null, "Gap decomposition"));
++    box.appendChild(waterfall);
++    box.appendChild(
++      note("Components sum to the gap exactly — there is no residual bucket.")
++    );
++  }
++
++  const flags = body.flag_counts && typeof body.flag_counts === "object" ? body.flag_counts : {};
++  const flagNames = Object.keys(flags);
++  if (flagNames.length) {
++    box.appendChild(el("h3", null, "Behavioural flags"));
++    box.appendChild(
++      tags(
++        flagNames.map((name) => `${name.replace(/_/g, " ")} ×${flags[name]}`),
++        (label) => (/unapproved|revenge|overtrading/.test(label) ? "bad" : "warn")
++      )
++    );
++  }
++  return box;
++}
++
++/* Mirrors `runtime/system_status.py`: `services` is a list of
++ * {service, purpose, state, detail}, and feed / ai / deploy each carry a
++ * `state` plus a human note. */
++const SERVICE_TONE = {
++  ok: "ok",
++  alive: "ok",
++  stale: "warn",
++  late: "warn",
++  never_seen: "bad",
++  dead: "bad",
++};
++
++function renderHealth(body) {
++  const box = panel("System health");
++  if (!body) {
++    box.appendChild(note("System status unavailable."));
++    return box;
++  }
++
++  if (body.overall) {
++    const tone = body.overall === "ok" ? "ok" : body.overall === "degraded" ? "warn" : "bad";
++    box.appendChild(el("p", `spyder-tab__pill spyder-tab__pill--${tone}`, body.overall));
++  }
++
++  const services = Array.isArray(body.services) ? body.services : [];
++  if (services.length) {
++    const scroll = el("div", "spyder-tab__scroll");
++    const table = el("table");
++    const head = el("thead");
++    const headRow = el("tr");
++    for (const label of ["Service", "State", "Last seen"]) headRow.appendChild(el("th", null, label));
++    head.appendChild(headRow);
++    table.appendChild(head);
++    const tbody = el("tbody");
++    for (const info of services) {
++      const tr = el("tr");
++      const name = el("td", null, text(info.service));
++      if (info.purpose) name.title = String(info.purpose);
++      tr.appendChild(name);
++      const state = el("td", null, text(info.state));
++      const tone = SERVICE_TONE[info.state];
++      if (tone) state.style.color = `var(--sd-${tone === "ok" ? "ok" : tone === "warn" ? "warn" : "bad"})`;
++      if (info.detail) state.title = String(info.detail);
++      tr.appendChild(state);
++      tr.appendChild(
++        el("td", null, info.last_seen ? ageLabel(info.last_seen) : info.age_seconds !== undefined && info.age_seconds !== null ? `${Math.round(Number(info.age_seconds))}s` : "—")
++      );
++      tbody.appendChild(tr);
++    }
++    table.appendChild(tbody);
++    scroll.appendChild(table);
++    box.appendChild(scroll);
++  }
++
++  const section = (value) => (value && typeof value === "object" ? value : {});
++  const feed = section(body.feed);
++  const ai = section(body.ai);
++  const deploy = section(body.deploy);
++  const aiGate =
++    ai.allowed_now === true
++      ? `open${ai.reason ? ` (${ai.reason})` : ""}`
++      : ai.allowed_now === false
++        ? `closed${ai.reason ? ` (${ai.reason})` : ""}`
++        : ai.state;
++  box.appendChild(
++    kv([
++      ["Feed", feed.state],
++      ["AI gate", aiGate],
++      ["Deploy", deploy.commit || deploy.state],
++    ])
++  );
++
++  // The notes are where the actionable detail lives ("market/ does not exist"),
++  // so they are shown rather than collapsed into the state word above.
++  for (const [label, value] of [
++    ["Feed", feed.note],
++    ["Deploy", deploy.note],
++  ]) {
++    if (value) box.appendChild(note(`${label}: ${value}`));
++  }
++  return box;
++}
++
++/* Human labels for synthetic market archetypes. Keep in sync with
++ * spy_der.synthetic.archetypes.ARCHETYPES — unknown ids fall back to spaces. */
++const ARCHETYPE_LABELS = {
++  calm_pin: "Calm pin",
++  grind_up: "Grind up",
++  grind_down: "Grind down",
++  range_chop: "Range chop",
++  vol_expansion: "Vol expansion",
++  squeeze_melt_up: "Squeeze melt-up",
++  crash: "Crash",
++  gap_shock: "Gap shock",
++};
++
++function humanLabel(raw) {
++  const key = text(raw, "");
++  if (!key || key === "—") return "—";
++  if (ARCHETYPE_LABELS[key]) return ARCHETYPE_LABELS[key];
++  return key.replace(/_/g, " ");
++}
++
++function phasesOf(dojo) {
++  const metrics = dojo && dojo.metrics && typeof dojo.metrics === "object" ? dojo.metrics : {};
++  const phases = metrics.phases && typeof metrics.phases === "object" ? metrics.phases : {};
++  return {
++    recorded: phases.recorded && typeof phases.recorded === "object" ? phases.recorded : {},
++    sequential: phases.sequential && typeof phases.sequential === "object" ? phases.sequential : {},
++    learner: phases.learner && typeof phases.learner === "object" ? phases.learner : {},
++    universe: phases.universe && typeof phases.universe === "object" ? phases.universe : {},
++    promotion: phases.promotion && typeof phases.promotion === "object" ? phases.promotion : {},
++  };
++}
++
++function dojoVerdict(dojo, phases) {
++  const flags = Array.isArray(dojo.flags) ? dojo.flags : [];
++  const flagNames = flags.map((f) => text(f && f.flag ? f.flag : f));
++  const promoted = flagNames.some((f) => /^champion_promoted/.test(f));
++  const rejected = flagNames.find((f) => /^promotion_rejected/.test(f));
++  const remediation = phases.universe.remediation || {};
++  const focus = Array.isArray(remediation.focus) ? remediation.focus : [];
++
++  if (promoted) {
++    return ["ok", "Promoted a safer setting", "The re-run beat the champion on every gate."];
++  }
++  if (rejected) {
++    const gate = rejected.split(":").slice(1).join(" ").replace(/_/g, " ") || "a gate";
++    return ["warn", "Change held back", `Blocked by ${gate} — champion unchanged.`];
++  }
++  if (focus.length) {
++    const names = focus
++      .slice(0, 2)
++      .map((row) => humanLabel(row.label || row.archetype))
++      .join(", ");
++    return [
++      "warn",
++      "Gaps found — next sparring will focus there",
++      remediation.headline || `Sampling will overweight ${names}.`,
++    ];
++  }
++  if (phases.universe.status === "skipped") {
++    return ["", "Sparring skipped", "Need more real market tape before synthetic worlds run."];
++  }
++  if (dojo.summary) {
++    return ["ok", "Dojo run complete", text(dojo.summary)];
++  }
++  return ["", "Dojo run complete", "No major flags this run."];
++}
++
++function stageCard(name, value, detail, tone) {
++  const card = el("div", "spyder-tab__stage" + (tone ? ` spyder-tab__stage--${tone}` : ""));
++  card.appendChild(el("div", "spyder-tab__stage-name", name));
++  card.appendChild(el("div", "spyder-tab__stage-value", text(value)));
++  if (detail) card.appendChild(el("div", "spyder-tab__stage-detail", detail));
++  return card;
++}
++
++function recordedStage(recorded) {
++  const status = text(recorded.status, "unknown");
++  if (status === "insufficient_data" || status === "skipped") {
++    return stageCard("Real market tape", "Not enough yet", "Need more settled sessions.", "warn");
++  }
++  const evaluation = recorded.evaluation && typeof recorded.evaluation === "object" ? recorded.evaluation : {};
++  const pnl = evaluation.total_pnl;
++  const wr = evaluation.win_rate;
++  const trades = evaluation.trades != null ? evaluation.trades : evaluation.n_matched;
++  const tone = num(pnl) != null && num(pnl) < 0 ? "bad" : status === "ok" ? "ok" : "warn";
++  const value =
++    num(pnl) != null ? money(pnl) : status === "ok" ? "OK" : humanLabel(status);
++  const detail = [
++    wr != null ? `win rate ${pct(wr)}` : null,
++    trades != null ? `${trades} trades` : null,
++    recorded.n_sessions != null ? `${recorded.n_sessions} sessions` : null,
++  ]
++    .filter(Boolean)
++    .join(" · ");
++  return stageCard("Real market tape", value, detail || "Scored against settled outcomes.", tone);
++}
++
++function sequentialStage(sequential) {
++  const status = text(sequential.status, "unknown");
++  if (status === "skipped" || status === "insufficient_data") {
++    return stageCard("Blind-day check", "Skipped", "Not enough days for a leak-free walk.", "");
++  }
++  const ft = num(sequential.mean_forward_transfer);
++  const retention = sequential.retention && typeof sequential.retention === "object" ? sequential.retention : {};
++  const retentionOk = retention.ok !== false;
++  let tone = "ok";
++  let value = "Held up";
++  if (ft != null && ft < 0) {
++    tone = "bad";
++    value = "Behind baseline";
++  } else if (!retentionOk) {
++    tone = "bad";
++    value = "Forgot prior days";
++  } else if (status !== "ok") {
++    tone = "warn";
++    value = humanLabel(status);
++  }
++  const detail = [
++    ft != null ? `transfer ${ft >= 0 ? "+" : ""}${ft.toFixed(2)}` : null,
++    retentionOk ? "retention OK" : "retention slipped",
++  ]
++    .filter(Boolean)
++    .join(" · ");
++  return stageCard("Blind-day check", value, detail || "Leak-free forward walk.", tone);
++}
++
++function learnerStage(learner, promotion) {
++  const outcome = text(learner.outcome || learner.status, "idle");
++  const enacted = promotion && promotion.enacted === true;
++  if (enacted || outcome === "promoted") {
++    const knobs = promotion && promotion.staged_changes ? Object.keys(promotion.staged_changes) : [];
++    return stageCard(
++      "Adaptive change",
++      "Promoted",
++      knobs.length ? `Now live: ${knobs.map(humanLabel).join(", ")}` : "Champion updated after a winning re-run.",
++      "ok"
++    );
++  }
++  if (/^promotion_rejected/.test(outcome) || (promotion && promotion.status === "rejected")) {
++    return stageCard("Adaptive change", "Held back", "Re-run did not clear every gate.", "warn");
++  }
++  if (outcome === "promotion_recommended" || outcome === "staged") {
++    return stageCard("Adaptive change", "Staged", "Waiting for a validating re-run.", "warn");
++  }
++  if (outcome === "no_change" || outcome === "gated" || outcome === "hold") {
++    return stageCard("Adaptive change", "No change", "Champion left alone this run.", "ok");
++  }
++  return stageCard("Adaptive change", humanLabel(outcome), "Diagnose → hypothesize → stage.", "");
++}
++
++function sparringStage(universe) {
++  const status = text(universe.status, "unknown");
++  if (status === "skipped") {
++    return stageCard("Synthetic sparring", "Skipped", "Refused until real tape is thick enough.", "warn");
++  }
++  if (status === "unscored") {
++    return stageCard("Synthetic sparring", "Unscored", "Worlds generated but not scored.", "bad");
++  }
++  const remediation = universe.remediation || {};
++  const weak = Array.isArray(remediation.weak_archetypes) ? remediation.weak_archetypes : [];
++  const n = universe.n_universes != null ? universe.n_universes : 0;
++  const tone = weak.length ? "warn" : status === "ok" ? "ok" : "warn";
++  const value = weak.length ? `${weak.length} weak type${weak.length === 1 ? "" : "s"}` : `${n} worlds`;
++  const detail = weak.length
++    ? `${n} worlds · next run overweighting the losers`
++    : status === "ok"
++      ? `${n} worlds · no losing market types`
++      : humanLabel(status);
++  return stageCard("Synthetic sparring", value, detail, tone);
++}
++
++function renderFocus(universe) {
++  const remediation = universe.remediation || {};
++  const focus = Array.isArray(remediation.focus) ? remediation.focus : [];
++  const wrap = el("div", "spyder-tab__focus");
++  wrap.appendChild(el("h4", "spyder-tab__subhead", "Tonight’s focus"));
++  const headline = text(remediation.headline, "");
++  if (headline && headline !== "—") {
++    wrap.appendChild(el("p", "spyder-tab__focus-headline", headline));
++  } else if (!focus.length) {
++    wrap.appendChild(note("No elevated sampling targets — sparring stays balanced."));
++    return wrap;
++  }
++  if (focus.length) {
++    const list = el("ul", "spyder-tab__focus-list");
++    for (const row of focus) {
++      const label = humanLabel(row.label || row.archetype);
++      const reasons = Array.isArray(row.reasons) ? row.reasons.filter(Boolean) : [];
++      const reasonText = reasons.length ? reasons.join("; ") : null;
++      const item = el("li", "spyder-tab__focus-item");
++      item.appendChild(el("div", "spyder-tab__focus-name", label));
++      if (reasonText) {
++        item.appendChild(el("div", "spyder-tab__focus-reason", reasonText));
++      }
++      list.appendChild(item);
++    }
++    wrap.appendChild(list);
++  }
++  const priorNote = text(remediation.prior_note, "");
++  if (priorNote && priorNote !== "—") {
++    wrap.appendChild(note(priorNote));
++  } else if (remediation.prior_influenced_sampling) {
++    wrap.appendChild(note("This run sampled with last night’s gap weights."));
++  } else if (remediation.prior_blended_into_plan) {
++    wrap.appendChild(
++      note("Prior curriculum was blended into the next-run plan (lattice measurement does not re-sample).")
++    );
++  }
++  return wrap;
++}
++
++function renderRobustness(universe) {
++  const matrix = universe.archetype_matrix && typeof universe.archetype_matrix === "object"
++    ? universe.archetype_matrix
++    : null;
++  const wrap = el("div", "spyder-tab__robustness");
++  wrap.appendChild(el("h4", "spyder-tab__subhead", "Where we’re weak"));
++  if (!matrix || !Object.keys(matrix).length) {
++    wrap.appendChild(note("No robustness matrix yet — sparring has not produced scored worlds."));
++    return wrap;
++  }
++
++  const scroll = el("div", "spyder-tab__scroll");
++  const table = el("table", "spyder-tab__matrix");
++  const head = el("thead");
++  const headRow = el("tr");
++  for (const label of ["Market type", "P&L", "Win rate", "Sessions"]) {
++    headRow.appendChild(el("th", null, label));
++  }
++  head.appendChild(headRow);
++  table.appendChild(head);
++
++  const tbody = el("tbody");
++  const rows = Object.entries(matrix).sort((a, b) => {
++    const pa = num(a[1] && a[1].mean_session_pnl);
++    const pb = num(b[1] && b[1].mean_session_pnl);
++    if (pa == null && pb == null) return a[0].localeCompare(b[0]);
++    if (pa == null) return 1;
++    if (pb == null) return -1;
++    return pa - pb;
++  });
++
++  for (const [arch, metrics] of rows) {
++    const tr = el("tr");
++    const mean = num(metrics.mean_session_pnl);
++    const weak = mean != null && mean < 0;
++    if (weak) tr.className = "spyder-tab__matrix-row--weak";
++    tr.appendChild(el("td", null, humanLabel(arch)));
++    tr.appendChild(
++      el("td", signClass("spyder-tab__bar-value", mean), mean != null ? money(mean) : "—")
++    );
++    tr.appendChild(el("td", null, pct(metrics.session_win_rate)));
++    tr.appendChild(el("td", null, text(metrics.n_sessions, "0")));
++    tbody.appendChild(tr);
++  }
++  table.appendChild(tbody);
++  scroll.appendChild(table);
++  wrap.appendChild(scroll);
++
++  const visited = universe.coverage_cells_visited;
++  const total = universe.coverage_cells_total;
++  if (visited != null && total != null) {
++    const unvisited = universe.remediation && universe.remediation.unvisited_count;
++    const coverageNote =
++      unvisited != null && unvisited > 0
++        ? `Situation coverage: ${visited} of ${total} cells visited · ${unvisited} still unseen.`
++        : `Situation coverage: ${visited} of ${total} cells visited.`;
++    wrap.appendChild(note(coverageNote));
++  }
++  return wrap;
++}
++
++function renderHumanStory(human) {
++  if (!human || typeof human !== "object") return null;
++  const wrap = el("div", "spyder-tab__story");
++  const lines = [
++    ["What this checked", human.what_ran],
++    ["Data used", human.data_story],
++    ["Why it stopped", human.stop_reason],
++    ["What changes", human.change],
++    ["Next", human.next_step],
++  ];
++  for (const [label, value] of lines) {
++    if (!value) continue;
++    const row = el("div", "spyder-tab__story-row");
++    row.appendChild(el("div", "spyder-tab__story-label", label));
++    row.appendChild(el("div", "spyder-tab__story-body", text(value)));
++    wrap.appendChild(row);
++  }
++  return wrap.firstChild ? wrap : null;
++}
++
++function formatElapsed(seconds) {
++  const total = Math.max(0, Math.floor(Number(seconds) || 0));
++  const hours = Math.floor(total / 3600);
++  const mins = Math.floor((total % 3600) / 60);
++  const secs = total % 60;
++  if (hours > 0) return `${hours}h ${mins}m`;
++  if (mins > 0) return `${mins}m ${secs}s`;
++  return `${secs}s`;
++}
++
++function progressTone(status) {
++  if (status === "running" || status === "live") return "ok";
++  if (status === "failed" || status === "stale") return "bad";
++  if (status === "finished") return "ok";
++  return "";
++}
++
++function progressHeadline(progress) {
++  const status = text(progress && progress.status, "idle");
++  if (status === "running") return "WORKING";
++  if (status === "finished") return "FINISHED";
++  if (status === "failed") return "FAILED";
++  if (status === "stale") return "STALE";
++  return "IDLE";
++}
++
++function renderDojoProgress(progress) {
++  const square = el("div", "spyder-tab__dojo-square");
++  const payload = progress && typeof progress === "object" ? progress : null;
++  const status = payload ? text(payload.status, "idle") : "idle";
++  const live = Boolean(payload && payload.live);
++
++  const head = el("div", "spyder-tab__dojo-square-head");
++  const pill = el(
++    "p",
++    "spyder-tab__pill" +
++      (progressTone(status) ? ` spyder-tab__pill--${progressTone(status)}` : "") +
++      (live ? " spyder-tab__pill--pulse" : "")
++  );
++  pill.textContent = progressHeadline(payload);
++  head.appendChild(pill);
++  if (payload && payload.phase_label && status !== "idle") {
++    head.appendChild(el("span", "spyder-tab__dojo-square-phase", text(payload.phase_label)));
++  }
++  if (payload && Number(payload.elapsed_seconds) > 0) {
++    head.appendChild(
++      el("span", "spyder-tab__note", `elapsed ${formatElapsed(payload.elapsed_seconds)}`)
++    );
++  }
++  square.appendChild(head);
++
++  const detail = el(
++    "p",
++    "spyder-tab__dojo-square-detail",
++    payload && payload.detail
++      ? text(payload.detail)
++      : "Waiting for the next Dojo oneshot."
++  );
++  square.appendChild(detail);
++
++  const strip = el("div", "spyder-tab__dojo-strip");
++  const phases = Array.isArray(payload && payload.phases) ? payload.phases : [];
++  const defaults = [
++    ["recorded", "Real tape"],
++    ["sequential", "Blind days"],
++    ["learner", "Adaptive change"],
++    ["universe", "Synthetic sparring"],
++    ["promotion", "Promotion trial"],
++  ];
++  const entries = phases.length
++    ? phases
++    : defaults.map(([name, label]) => ({ name, label, status: "pending", detail: "" }));
++  for (const phase of entries) {
++    const cell = el(
++      "div",
++      "spyder-tab__dojo-step spyder-tab__dojo-step--" + text(phase.status, "pending")
++    );
++    cell.appendChild(el("div", "spyder-tab__dojo-step-label", text(phase.label || phase.name)));
++    cell.appendChild(el("div", "spyder-tab__dojo-step-status", text(phase.status, "pending")));
++    if (phase.detail) {
++      cell.title = text(phase.detail);
++    }
++    strip.appendChild(cell);
++  }
++  square.appendChild(strip);
++  return square;
++}
++
++function knobsSummary(knobs) {
++  if (!knobs || typeof knobs !== "object") return "—";
++  const parts = Object.entries(knobs)
++    .filter(([, value]) => value !== null && value !== undefined && value !== "")
++    .slice(0, 6)
++    .map(([key, value]) => `${key}=${value}`);
++  return parts.length ? parts.join(", ") : "—";
++}
++
++function renderPendingReview(pendingBody, actions) {
++  const box = el("div", "spyder-tab__pending");
++  box.appendChild(el("h4", "spyder-tab__subhead", "Knob challengers · pending review"));
++
++  const pending = pendingBody && Array.isArray(pendingBody.pending) ? pendingBody.pending : [];
++  const actionsEnabled = Boolean(pendingBody && pendingBody.actions_enabled);
++  const canAct = Boolean(actions && actions.enabled);
++
++  if (!pending.length) {
++    box.appendChild(
++      note(
++        "No staged knob challengers. Auto-promote clears this queue when a trial passes; " +
++          "with SPY_DER_DOJO_AUTO_PROMOTE=0 the Dojo leaves candidates here for you."
++      )
++    );
++  } else {
++    const list = el("div", "spyder-tab__pending-list");
++    for (const candidate of pending) {
++      const row = el("div", "spyder-tab__pending-row");
++      if (actions && actions.selectedId === candidate.candidate_id) {
++        row.classList.add("spyder-tab__pending-row--selected");
++      }
++      row.appendChild(
++        el("div", "spyder-tab__pending-id", text(candidate.candidate_id))
++      );
++      const meta = el("div", "spyder-tab__pending-meta");
++      meta.appendChild(
++        el(
++          "span",
++          null,
++          candidate.target_archetype
++            ? `focus ${text(candidate.target_archetype)}`
++            : text(candidate.mode, "knob change")
++        )
++      );
++      meta.appendChild(el("span", "spyder-tab__note", knobsSummary(candidate.knobs)));
++      row.appendChild(meta);
++
++      if (canAct) {
++        const btns = el("div", "spyder-tab__pending-actions");
++        const promoteBtn = el("button", "spyder-tab__btn spyder-tab__btn--ok", "Promote");
++        promoteBtn.type = "button";
++        promoteBtn.addEventListener("click", (event) => {
++          event.stopPropagation();
++          void actions.onPromote(candidate.candidate_id);
++        });
++        const rejectBtn = el("button", "spyder-tab__btn spyder-tab__btn--bad", "Reject");
++        rejectBtn.type = "button";
++        rejectBtn.addEventListener("click", (event) => {
++          event.stopPropagation();
++          void actions.onReject(candidate.candidate_id);
++        });
++        btns.appendChild(promoteBtn);
++        btns.appendChild(rejectBtn);
++        row.appendChild(btns);
++      } else {
++        row.addEventListener("click", () => {
++          if (actions && actions.onSelect) actions.onSelect(candidate.candidate_id);
++        });
++      }
++      list.appendChild(row);
++    }
++    box.appendChild(list);
++  }
++
++  if (actions && actions.enabled) {
++    const unlock = el("div", "spyder-tab__operator");
++    if (actions.hasToken) {
++      unlock.appendChild(
++        note(
++          actionsEnabled
++            ? "Operator unlocked — Promote / Reject write decision knobs only (not forecast models)."
++            : "Token saved locally, but the API has no SPY_DER_OPERATOR_TOKEN configured."
++        )
++      );
++      const rollbackBtn = el("button", "spyder-tab__btn", "Rollback champion");
++      rollbackBtn.type = "button";
++      rollbackBtn.addEventListener("click", () => {
++        void actions.onRollback();
++      });
++      const lockBtn = el("button", "spyder-tab__btn", "Lock");
++      lockBtn.type = "button";
++      lockBtn.addEventListener("click", () => actions.onLock());
++      unlock.appendChild(rollbackBtn);
++      unlock.appendChild(lockBtn);
++    } else {
++      unlock.appendChild(
++        note(
++          "Unlock with the operator token to Promote / Reject staged knob challengers."
++        )
++      );
++      const row = el("div", "spyder-tab__operator-row");
++      const input = el("input", "spyder-tab__operator-input");
++      input.type = "password";
++      input.placeholder = "SPY_DER_OPERATOR_TOKEN";
++      input.autocomplete = "off";
++      const unlockBtn = el("button", "spyder-tab__btn spyder-tab__btn--ok", "Unlock");
++      unlockBtn.type = "button";
++      unlockBtn.addEventListener("click", () => {
++        actions.onUnlock(input.value);
++      });
++      row.appendChild(input);
++      row.appendChild(unlockBtn);
++      unlock.appendChild(row);
++    }
++    if (actions.message) {
++      unlock.appendChild(
++        note(actions.message, /fail|refus|unauth|error/i.test(actions.message))
++      );
++    }
++    box.appendChild(unlock);
++  } else if (pending.length) {
++    box.appendChild(
++      note(
++        "Display only on this mount — enable data-spy-der-actions to Promote / Reject."
++      )
++    );
++  }
++  return box;
++}
++
++function renderDojo(dojo, validation, progress, pendingBody, actions) {
++  const box = panel("Adaptive Loop · Dojo", true);
++  box.appendChild(renderDojoProgress(progress));
++  box.appendChild(renderPendingReview(pendingBody, actions));
++  if (!dojo) {
++    box.appendChild(note("No Dojo report yet. The nightly run will fill this in."));
++  } else {
++    const phases = phasesOf(dojo);
++    const human = dojo.human && typeof dojo.human === "object" ? dojo.human : null;
++    const [tone, title, blurb] = dojoVerdict(dojo, phases);
++
++    const verdict = el("p", "spyder-tab__pill" + (tone ? ` spyder-tab__pill--${tone}` : ""));
++    verdict.textContent = human && human.headline ? text(human.headline) : title;
++    box.appendChild(verdict);
++    if (blurb && !(human && human.headline)) box.appendChild(note(blurb));
++
++    box.appendChild(
++      kv([
++        ["Run date", dojo.report_date],
++        ["Generated", dojo.generated_at ? ageLabel(dojo.generated_at) : null],
++      ])
++    );
++
++    const story = renderHumanStory(human);
++    if (story) box.appendChild(story);
++
++    if (phases.universe && (phases.universe.remediation || phases.universe.archetype_matrix)) {
++      box.appendChild(renderFocus(phases.universe));
++    }
++
++    const chain = el("div", "spyder-tab__chain spyder-tab__chain--dojo");
++    chain.appendChild(recordedStage(phases.recorded));
++    chain.appendChild(sequentialStage(phases.sequential));
++    chain.appendChild(learnerStage(phases.learner, phases.promotion));
++    chain.appendChild(sparringStage(phases.universe));
++    box.appendChild(chain);
++
++    if (phases.universe && phases.universe.archetype_matrix) {
++      box.appendChild(renderRobustness(phases.universe));
++    }
++
++    const flags = Array.isArray(dojo.flags) ? dojo.flags : [];
++    const humanFlags = flags
++      .map((f) => text(f && f.flag ? f.flag : f))
++      .filter((label) => label && label !== "—")
++      .map((label) => humanLabel(label.replace(/^weak_archetype:/, "weak: ")));
++    if (humanFlags.length) {
++      box.appendChild(el("h4", "spyder-tab__subhead", "Flags"));
++      box.appendChild(
++        tags(humanFlags, (label) => {
++          if (/promotion write failed|regress|fail|weak:/i.test(label)) return "bad";
++          if (/champion promoted|promoted/i.test(label)) return "ok";
++          return "warn";
++        })
++      );
++    }
++  }
++
++  const parity = el("div", "spyder-tab__parity");
++  parity.appendChild(el("h4", "spyder-tab__subhead", "Parity check"));
++  if (validation) {
++    const ok = validation.ok === true;
++    const fail = validation.ok === false;
++    parity.appendChild(
++      kv([
++        ["Result", ok ? "PASS" : fail ? "FAIL" : "unknown"],
++        ["Gates", Array.isArray(validation.gates) ? validation.gates.length : null],
++        ["Checked", validation.generated_at ? ageLabel(validation.generated_at) : null],
++      ])
++    );
++  } else {
++    parity.appendChild(note("No parity-validation report yet."));
++  }
++  box.appendChild(parity);
++  return box;
++}
++
++function renderPositions(state) {
++  const box = panel("Open positions");
++  if (!state.openPositions.length) {
++    box.appendChild(note("No open positions."));
++    return box;
++  }
++  const scroll = el("div", "spyder-tab__scroll");
++  const table = el("table");
++  const head = el("thead");
++  const headRow = el("tr");
++  for (const label of ["Candidate", "Qty", "Entry", "Mark", "Unrealized"]) {
++    headRow.appendChild(el("th", null, label));
++  }
++  head.appendChild(headRow);
++  table.appendChild(head);
++  const tbody = el("tbody");
++  for (const position of state.openPositions) {
++    const tr = el("tr");
++    tr.appendChild(el("td", null, text(position.candidate_id)));
++    tr.appendChild(el("td", null, text(position.open_contracts)));
++    tr.appendChild(el("td", null, money(position.entry_price)));
++    tr.appendChild(el("td", null, money(position.mark_price)));
++    const pnl = el("td", signClass("spyder-tab__bar-value", position.unrealized_pnl), money(position.unrealized_pnl));
++    tr.appendChild(pnl);
++    tbody.appendChild(tr);
++  }
++  table.appendChild(tbody);
++  scroll.appendChild(table);
++  box.appendChild(scroll);
++  return box;
++}
++
++/* -------------------------------------------------------------------------- */
++/* Fetching                                                                   */
++/* -------------------------------------------------------------------------- */
++
++async function readJson(url, options = {}) {
++  const headers = { Accept: "application/json", ...(options.headers || {}) };
++  const response = await fetch(url, {
++    method: options.method || "GET",
++    headers,
++    body: options.body,
++    cache: "no-store",
++  });
++  const body = await response.json().catch(() => null);
++  // A 404 here is a real answer ("no Dojo run has completed"), so it is
++  // reported as absence rather than as a failure the user should chase.
++  if (!response.ok) return { ok: false, status: response.status, body };
++  return { ok: true, status: response.status, body };
++}
++
++function loadOperatorToken() {
++  try {
++    return sessionStorage.getItem(OPERATOR_TOKEN_KEY) || "";
++  } catch (_err) {
++    return "";
++  }
++}
++
++function saveOperatorToken(token) {
++  try {
++    if (token) sessionStorage.setItem(OPERATOR_TOKEN_KEY, token);
++    else sessionStorage.removeItem(OPERATOR_TOKEN_KEY);
++  } catch (_err) {
++    /* private mode — actions still work for this page lifetime via closure */
++  }
++}
++
++/* -------------------------------------------------------------------------- */
++/* Mount                                                                      */
++/* -------------------------------------------------------------------------- */
++
++export function mountSpyDerTab(options = {}) {
++  const target =
++    typeof options.target === "string"
++      ? document.querySelector(options.target)
++      : options.target || document.querySelector("[data-spy-der-tab]");
++  if (!target) {
++    throw new Error("mountSpyDerTab: no target element (expected [data-spy-der-tab])");
++  }
++
++  const base = (options.base || target.dataset.spyDerBase || "").replace(/\/$/, "");
++  const endpoints = { ...DEFAULT_ENDPOINTS, ...(options.endpoints || {}) };
++  const refreshMs = Number(options.refreshMs || target.dataset.spyDerRefresh || DEFAULT_REFRESH_MS);
++  const actionsEnabled =
++    options.actions === true ||
++    target.dataset.spyDerActions !== undefined;
++  const url = (key) => `${base}${endpoints[key]}`;
++
++  target.classList.add("spyder-tab");
++
++  const head = el("div", "spyder-tab__head");
++  const title = el("h2", "spyder-tab__title", "SPY-DER");
++  const subtitle = el("small", null, "prediction · risk · Adaptive Loop · Dojo");
++  title.appendChild(subtitle);
++  const statusPill = el("span", "spyder-tab__pill", "loading");
++  const freshness = el("span", "spyder-tab__note", "");
++  const refreshButton = el("button", "spyder-tab__refresh", "Refresh");
++  refreshButton.type = "button";
++  head.appendChild(title);
++  head.appendChild(statusPill);
++  head.appendChild(freshness);
++  head.appendChild(el("span", "spyder-tab__spacer"));
++  head.appendChild(refreshButton);
++
++  const grid = el("div", "spyder-tab__grid");
++  const footer = el("div", "spyder-tab__footer", "");
++
++  clear(target);
++  target.appendChild(head);
++  target.appendChild(grid);
++  target.appendChild(footer);
++
++  let timer = null;
++  let disposed = false;
++  let operatorToken = options.operatorToken || loadOperatorToken();
++  let selectedId = null;
++  let actionMessage = "";
++  let actionBusy = false;
++
++  async function postAction(key, payload) {
++    if (actionBusy) return;
++    if (!operatorToken) {
++      actionMessage = "Unlock with the operator token first.";
++      void refresh();
++      return;
++    }
++    actionBusy = true;
++    actionMessage = "Working…";
++    void refresh();
++    const result = await readJson(url(key), {
++      method: "POST",
++      headers: {
++        "Content-Type": "application/json",
++        Authorization: `Bearer ${operatorToken}`,
++        // Vercel→0DTE rewrites Authorization to DASHBOARD_TOKEN; this header
++        // carries the operator secret through that hop to spy-der-dashboard-api.
++        "X-Spy-Der-Operator-Token": operatorToken,
++      },
++      body: JSON.stringify(payload || {}),
++    }).catch((error) => ({ ok: false, status: 0, body: { detail: String(error) } }));
++    actionBusy = false;
++    if (result.ok) {
++      actionMessage = `${text(result.body && result.body.action, key)} ok`;
++      selectedId = null;
++    } else {
++      const detail =
++        (result.body && (result.body.detail || result.body.error)) ||
++        `HTTP ${result.status}`;
++      actionMessage = String(detail);
++      if (result.status === 401) {
++        operatorToken = "";
++        saveOperatorToken("");
++      }
++    }
++    void refresh();
++  }
++
++  const actions = actionsEnabled
++    ? {
++        get enabled() {
++          return true;
++        },
++        get hasToken() {
++          return Boolean(operatorToken);
++        },
++        get selectedId() {
++          return selectedId;
++        },
++        get message() {
++          return actionMessage;
++        },
++        onSelect(id) {
++          selectedId = id;
++          void refresh();
++        },
++        onUnlock(token) {
++          operatorToken = String(token || "").trim();
++          saveOperatorToken(operatorToken);
++          actionMessage = operatorToken ? "Unlocked for this browser session." : "";
++          void refresh();
++        },
++        onLock() {
++          operatorToken = "";
++          saveOperatorToken("");
++          actionMessage = "Locked.";
++          void refresh();
++        },
++        onPromote(id) {
++          return postAction("promote", { candidate_id: id, human_ack: "PROMOTE" });
++        },
++        onReject(id) {
++          return postAction("reject", { candidate_id: id });
++        },
++        onRollback() {
++          return postAction("rollback", {});
++        },
++      }
++    : null;
++
++  async function refresh() {
++    refreshButton.disabled = true;
++    const keys = [
++      "system",
++      "state",
++      "dojo",
++      "dojoProgress",
++      "pending",
++      "validation",
++      "attribution",
++    ];
++    const settled = await Promise.all(
++      keys.map((key) =>
++        readJson(url(key)).catch((error) => ({ ok: false, status: 0, body: null, error }))
++      )
++    );
++    if (disposed) return;
++
++    const results = {};
++    keys.forEach((key, index) => {
++      results[key] = settled[index];
++    });
++
++    const state = normalizeState(results.state.ok ? results.state.body : null);
++
++    clear(grid);
++    if (state) {
++      statusPill.textContent = state.action;
++      statusPill.className =
++        "spyder-tab__pill" +
++        (ACTION_TONE[state.action] ? ` spyder-tab__pill--${ACTION_TONE[state.action]}` : "");
++      freshness.textContent = state.generatedAt
++        ? `${state.symbol} · updated ${ageLabel(state.generatedAt)}`
++        : state.symbol;
++      grid.appendChild(renderChain(state));
++      grid.appendChild(renderDecision(state));
++    } else {
++      statusPill.textContent = "no live state";
++      statusPill.className = "spyder-tab__pill spyder-tab__pill--bad";
++      freshness.textContent = "";
++      const box = panel("Current decision", true);
++      box.appendChild(
++        note(
++          results.state.status === 404
++            ? "No live state published yet. The market service writes it on the first tick."
++            : "Live state unreadable — check the state root and its permissions.",
++          results.state.status !== 404
++        )
++      );
++      grid.appendChild(box);
++    }
++
++    // Health sits beside the decision so the two single-width panels share a
++    // row; the full-width shadow account follows rather than splitting them.
++    grid.appendChild(renderHealth(results.system.ok ? results.system.body : null));
++    grid.appendChild(renderAttribution(results.attribution.ok ? results.attribution.body : null));
++    grid.appendChild(
++      renderDojo(
++        results.dojo.ok ? results.dojo.body : null,
++        results.validation.ok ? results.validation.body : null,
++        results.dojoProgress.ok ? results.dojoProgress.body : null,
++        results.pending.ok ? results.pending.body : { pending: [], actions_enabled: false },
++        actions
++      )
++    );
++    if (state) grid.appendChild(renderPositions(state));
++
++    const schema = state ? state.schema : "unknown";
++    const pendingCount =
++      results.pending.ok && results.pending.body
++        ? Number(results.pending.body.count || 0)
++        : 0;
++    footer.textContent = actionsEnabled
++      ? `Adaptive Loop · schema ${schema} · ${pendingCount} pending knob challenger(s) · ` +
++        `refreshed ${new Date().toLocaleTimeString()} · trades still go only through the execution guard.`
++      : `Display view · schema ${schema} · refreshed ${new Date().toLocaleTimeString()} · ` +
++        "Promote/Reject hidden on this mount (no data-spy-der-actions).";
++    refreshButton.disabled = false;
++  }
++
++  refreshButton.addEventListener("click", () => {
++    void refresh();
++  });
++  void refresh();
++  if (refreshMs > 0) {
++    timer = setInterval(() => {
++      void refresh();
++    }, refreshMs);
++  }
++
++  return {
++    refresh,
++    dispose() {
++      disposed = true;
++      if (timer !== null) clearInterval(timer);
++      clear(target);
++      target.classList.remove("spyder-tab");
++    },
++  };
++}
++
++/* Auto-mount so embedding needs no JavaScript edit on the host page: a
++ * container carrying `data-spy-der-tab` is enough. Hosts that manage their own
++ * tab lifecycle should add `data-spy-der-manual` and call `mountSpyDerTab`
++ * themselves when their tab is first shown. */
++function autoMount() {
++  for (const node of document.querySelectorAll("[data-spy-der-tab]")) {
++    if (node.dataset.spyDerManual !== undefined) continue;
++    if (node.dataset.spyDerMounted !== undefined) continue;
++    node.dataset.spyDerMounted = "1";
++    try {
++      mountSpyDerTab({ target: node });
++    } catch (error) {
++      // Never let a mount failure break the host dashboard's own scripts.
++      console.error("SPY-DER tab failed to mount", error);
++    }
++  }
++}
++
++if (typeof document !== "undefined") {
++  if (document.readyState === "loading") {
++    document.addEventListener("DOMContentLoaded", autoMount);
++  } else {
++    autoMount();
++  }
++}
++
++export default mountSpyDerTab;
+diff --git a/scripts/vercel-build.sh b/scripts/vercel-build.sh
+index 47cbe44..3f2f89e 100755
+--- a/scripts/vercel-build.sh
++++ b/scripts/vercel-build.sh
+@@ -5,4 +5,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ rm -rf "$ROOT/public"
+ mkdir -p "$ROOT/public/static"
+ cp "$ROOT/dashboard/static/index.html" "$ROOT/public/"
+-cp "$ROOT/dashboard/static/app.js" "$ROOT/dashboard/static/style.css" "$ROOT/public/static/"
++cp "$ROOT/dashboard/static/app.js" \
++   "$ROOT/dashboard/static/style.css" \
++   "$ROOT/dashboard/static/spy-der-tab.js" \
++   "$ROOT/dashboard/static/spy-der-tab.css" \
++   "$ROOT/public/static/"
+-- 
+2.43.0
+
