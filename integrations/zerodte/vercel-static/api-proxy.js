@@ -1,11 +1,10 @@
 /**
  * Vercel serverless proxy — forwards /api/* to the VPS dashboard.
  * Set VPS_API_URL and DASHBOARD_TOKEN in Vercel project environment variables.
+ * The browser never needs to paste DASHBOARD_TOKEN; Vercel adds it server-side.
  *
  * GET/HEAD stay read-only. POST is allowed only for SPY-DER operator knob
- * writes (promote / reject / rollback). The browser's operator secret travels
- * as X-Spy-Der-Operator-Token because Authorization is reserved for
- * DASHBOARD_TOKEN on this hop.
+ * writes (promote / reject / rollback) via X-Spy-Der-Operator-Token.
  */
 export default async function handler(req, res) {
   const requestUrl = new URL(req.url, "http://localhost");
@@ -44,22 +43,20 @@ export default async function handler(req, res) {
   if (operator) {
     headers["X-Spy-Der-Operator-Token"] = operator;
   }
+
+  let requestBody;
   if (req.method === "POST") {
     headers["Content-Type"] = req.headers["content-type"] || "application/json";
-  }
-
-  let body;
-  if (req.method === "POST") {
-    if (typeof req.body === "string") body = req.body;
-    else if (Buffer.isBuffer(req.body)) body = req.body;
-    else body = JSON.stringify(req.body ?? {});
+    if (typeof req.body === "string") requestBody = req.body;
+    else if (typeof Buffer !== "undefined" && Buffer.isBuffer(req.body)) requestBody = req.body;
+    else requestBody = JSON.stringify(req.body ?? {});
   }
 
   try {
     const upstream = await fetch(target, {
       method: req.method,
       headers,
-      body,
+      body: requestBody,
     });
 
     const contentType = upstream.headers.get("content-type") || "application/json";
@@ -67,8 +64,8 @@ export default async function handler(req, res) {
     res.setHeader("Content-Type", contentType);
     res.setHeader("Cache-Control", "no-store");
 
-    const body = await upstream.text();
-    return res.send(body);
+    const responseText = await upstream.text();
+    return res.send(responseText);
   } catch (err) {
     return res.status(502).json({
       detail: "VPS dashboard unreachable — check VPS_API_URL and tunnel",
