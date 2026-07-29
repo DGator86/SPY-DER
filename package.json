@@ -1,0 +1,8 @@
+{
+  "name": "spy-der-dashboard",
+  "private": true,
+  "description": "SPY-DER Adaptive Loop dashboard on Vercel (static UI + Node API proxy to VPS)",
+  "engines": {
+    "node": ">=18"
+  }
+}

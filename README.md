@@ -74,9 +74,11 @@ spy-der-mcp --state-root /var/lib/spy-der             # stdio MCP, read-only
 
 Both are read-only over published state and share one read path
 (`dashboard_api.handle_get`). Neither can place, size, approve or promote
-anything. See [`docs/ops/DASHBOARD_TAB.md`](docs/ops/DASHBOARD_TAB.md) and
-[`integrations/zerodte/spy_der_tab/`](integrations/zerodte/spy_der_tab) for the
-0DTE Vercel embed.
+anything. See [`docs/ops/DASHBOARD_TAB.md`](docs/ops/DASHBOARD_TAB.md).
+
+**Public Vercel page (SPY-DER-owned):** [`docs/ops/VERCEL_DASHBOARD.md`](docs/ops/VERCEL_DASHBOARD.md)
+— static `/ui` + Node `/api` proxy on the `spy-der` Vercel project. Optional
+0DTE embed: [`integrations/zerodte/spy_der_tab/`](integrations/zerodte/spy_der_tab).
 
 ## Deployment
 

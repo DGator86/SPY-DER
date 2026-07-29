@@ -7,9 +7,13 @@ migration; it does not own Learning/Dojo.
 ```
 src/spy_der/runtime/ui/          the tab (index.html, spy-der-tab.js, .css)
         |
-        +-- spy-der-dashboard-api  GET /ui        primary (Learning · Dojo lives here)
+        +-- spy-der-dashboard-api  GET /ui        primary on the VPS
+        +-- spy-der Vercel project /              public SPY-DER-owned page
         +-- 0DTE Vercel dashboard  a tab pane      optional embed during migration
 ```
+
+Public hosting: [`VERCEL_DASHBOARD.md`](VERCEL_DASHBOARD.md) (`vercel.json` +
+`/api` proxy → `SPY_DER_DASHBOARD_URL`).
 
 The assets ship inside the installed package (`[tool.setuptools.package-data]`),
 so the systemd unit reads them out of the venv rather than depending on a
@@ -29,6 +33,12 @@ The service stays read-only: `deploy/spy-der-dashboard-api.service` sets
 `ReadOnlyPaths=/var/lib/spy-der`, and `/ui` only reads files inside the
 installed package directory.
 
+## Public: spy-der Vercel project
+
+See [`VERCEL_DASHBOARD.md`](VERCEL_DASHBOARD.md). After `vercel.json` lands on
+`main` and `SPY_DER_DASHBOARD_URL` points at a tunnel to `:8788`, open the
+`spy-der` project URL — no 0DTE involvement.
+
 ## Optional: embed in 0DTE
 
 See [`integrations/zerodte/spy_der_tab/README.md`](../../integrations/zerodte/spy_der_tab/README.md)
@@ -37,8 +47,8 @@ and the ready Vercel patch
 
 Summary: serve the two assets, replace Learning/Dojo with an Adaptive Loop
 container carrying `data-spy-der-tab` + `data-spy-der-actions`, and proxy
-`/api/spy-der/v1/*` (including `/v1/dojo/progress` and operator POSTs). Prefer
-SPY-DER `/ui` unless you specifically need the Vercel host.
+`/api/spy-der/v1/*`. Prefer the `spy-der` Vercel project or VPS `/ui` unless
+you specifically need the legacy Command Center host.
 
 ## What it shows
 
