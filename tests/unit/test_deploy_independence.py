@@ -139,11 +139,41 @@ def test_dashboard_api_serves_the_dojo_report_the_timers_write() -> None:
     assert "--state-root %S/spy-der" in api
 
 
+#: The one state subdirectory the dashboard API may write. Operator promote /
+#: reject / rollback rewrite `champion.json` and the pending_review queue, and
+#: both live here — `dashboard_api.DashboardState` calls it "the only
+#: subdirectory the operator write routes may mutate". Runtime state proper
+#: (market, journal, reports, positions) stays read-only.
+DASHBOARD_WRITABLE_PATHS = frozenset({"/var/lib/spy-der/configs"})
+
+
 def test_dashboard_api_cannot_mutate_state() -> None:
-    """A read-only data service must not be able to write runtime state."""
+    """The data service may write decision knobs, and nothing else.
+
+    This asserted `"ReadWritePaths=/var/lib/spy-der" not in text`, which is a
+    substring check: the narrower, deliberate grant of
+    `/var/lib/spy-der/configs` contains that string, so the suite failed on a
+    unit file that was correct. Parsing the values states the real invariant
+    instead, and states it more strictly than the old check ever did — a grant
+    to any other subdirectory now fails too, where before only the exact state
+    root was considered.
+    """
     text = (_DEPLOY / "spy-der-dashboard-api.service").read_text(encoding="utf-8")
     assert "ReadOnlyPaths=/var/lib/spy-der" in text
-    assert "ReadWritePaths=/var/lib/spy-der" not in text
+
+    # systemd allows several space-separated paths per directive, and the
+    # directive may be repeated.
+    writable = {
+        path
+        for line in text.splitlines()
+        if line.strip().startswith("ReadWritePaths=")
+        for path in line.strip().split("=", 1)[1].split()
+    }
+    assert "/var/lib/spy-der" not in writable, "the state root itself must stay read-only"
+    assert writable <= DASHBOARD_WRITABLE_PATHS, (
+        f"dashboard API may write only {sorted(DASHBOARD_WRITABLE_PATHS)}, "
+        f"got {sorted(writable)}"
+    )
 
 
 def test_dashboard_api_binds_loopback_only() -> None:
