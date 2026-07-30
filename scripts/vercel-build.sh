@@ -1,48 +1,44 @@
 #!/usr/bin/env bash
-# Build the static Adaptive Loop shell for the spy-der Vercel project.
-# Copies canonical UI assets from the package source and rewrites the
-# standalone index so API calls go through /api → api/[...path].js.
+# Assemble public/ for the spy-der Vercel project.
+#
+# Two sources, deliberately:
+#   web/                     — chrome that only this host needs (top bar,
+#                              connection indicator, /api base).
+#   src/spy_der/runtime/ui/  — the dashboard itself, vendored unchanged so
+#                              there is one implementation and no copy to drift.
+#
+# This used to derive index.html from the canonical shell with string
+# replacement. That silently produced the wrong page whenever the canonical
+# comment was reworded, so the shell is now an explicit file and the copy is
+# verified below instead of assumed.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UI_SRC="${ROOT}/src/spy_der/runtime/ui"
+WEB_SRC="${ROOT}/web"
 OUT="${ROOT}/public"
 
-if [[ ! -f "${UI_SRC}/spy-der-tab.js" || ! -f "${UI_SRC}/spy-der-tab.css" || ! -f "${UI_SRC}/index.html" ]]; then
-  echo "vercel-build: missing UI assets under ${UI_SRC}" >&2
-  exit 1
-fi
+for asset in "${UI_SRC}/spy-der-tab.js" "${UI_SRC}/spy-der-tab.css" \
+             "${WEB_SRC}/index.html" "${WEB_SRC}/favicon.svg"; do
+  if [[ ! -f "${asset}" ]]; then
+    echo "vercel-build: missing required asset ${asset}" >&2
+    exit 1
+  fi
+done
 
 rm -rf "${OUT}"
 mkdir -p "${OUT}/ui"
+
 cp "${UI_SRC}/spy-der-tab.js" "${OUT}/ui/spy-der-tab.js"
 cp "${UI_SRC}/spy-der-tab.css" "${OUT}/ui/spy-der-tab.css"
+cp "${WEB_SRC}/index.html" "${OUT}/index.html"
+cp "${WEB_SRC}/favicon.svg" "${OUT}/favicon.svg"
 
-python3 - "${UI_SRC}/index.html" "${OUT}/index.html" <<'PY'
-"""Emit the Vercel shell: same assets, API via /api proxy."""
-from __future__ import annotations
+# The one thing that makes this host different from the VPS shell. If it is
+# missing, every panel silently requests the wrong origin and the page is blank.
+if ! grep -q 'data-spy-der-base="/api"' "${OUT}/index.html"; then
+  echo "vercel-build: web/index.html must mount the tab with data-spy-der-base=\"/api\"" >&2
+  exit 1
+fi
 
-import sys
-from pathlib import Path
-
-src = Path(sys.argv[1]).read_text(encoding="utf-8")
-# Point the tab at the Node proxy. Canonical /ui is same-origin with /v1;
-# on Vercel the browser cannot reach the VPS loopback.
-if 'data-spy-der-base=' not in src:
-    src = src.replace(
-        'data-spy-der-tab data-spy-der-actions',
-        'data-spy-der-tab data-spy-der-base="/api" data-spy-der-actions',
-        1,
-    )
-src = src.replace(
-    "Same-origin: the API serving this page also serves /v1/*, so the\n"
-    "         default endpoints need no base prefix.",
-    "Vercel shell: data-spy-der-base=/api routes reads and operator POSTs\n"
-    "         through api/[...path].js to SPY_DER_DASHBOARD_URL on the VPS.",
-    1,
-)
-Path(sys.argv[2]).write_text(src, encoding="utf-8")
-print(f"wrote {sys.argv[2]}")
-PY
-
-echo "vercel-build: public/ ready (index.html + ui/spy-der-tab.{js,css})"
+echo "vercel-build: public/ ready (index.html + favicon.svg + ui/spy-der-tab.{js,css})"

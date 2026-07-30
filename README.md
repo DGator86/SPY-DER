@@ -76,8 +76,12 @@ Both are read-only over published state and share one read path
 (`dashboard_api.handle_get`). Neither can place, size, approve or promote
 anything. See [`docs/ops/DASHBOARD_TAB.md`](docs/ops/DASHBOARD_TAB.md).
 
-**Public Vercel page (SPY-DER-owned):** [`docs/ops/VERCEL_DASHBOARD.md`](docs/ops/VERCEL_DASHBOARD.md)
-— static `/ui` + Node `/api` proxy on the `spy-der` Vercel project. Optional
+**Public Vercel page (SPY-DER-owned):** [spy-der.vercel.app](https://spy-der.vercel.app)
+— static shell + Node `/api` gateway on the `spy-der` Vercel project. It needs no
+configuration to show live data: without a tunnel to `spy-der-dashboard-api` it
+reads published state through the 0DTE host, and upgrades itself to the full
+`/v1` surface once `SPY_DER_DASHBOARD_URL` is set. See
+[`docs/ops/VERCEL_DASHBOARD.md`](docs/ops/VERCEL_DASHBOARD.md). Optional
 0DTE embed: [`integrations/zerodte/spy_der_tab/`](integrations/zerodte/spy_der_tab).
 
 ## Deployment
