@@ -257,14 +257,41 @@ export default async function handler(req, res) {
   // `__path` comes from the rewrite. Falling back to the raw pathname keeps the
   // function correct if it is ever reached directly rather than through it.
   const params = requestUrl.searchParams;
-  const rewritten = params.get("__path");
+  const clean = (value) => String(value || "").replace(/^\/+/, "").replace(/\/+$/, "");
+
+  // Three ways the tail can arrive, tried in order of trustworthiness. The
+  // rewrite is `/api/:path* -> /api/proxy?__path=:path*`, but neither half of
+  // that is guaranteed: a token that fails to expand arrives literally as
+  // ":path*", and whether req.url carries the original path or the rewritten
+  // destination is a routing-layer detail. Vercel also auto-appends any source
+  // param the destination path does not consume, which is the third form.
+  // Guessing wrong here is what made the whole page 404, so all three are read
+  // rather than assumed.
+  const explicit = params.get("__path");
   params.delete("__path");
-  // A literal ":path" means the rewrite token did not expand; the pathname is
-  // then the only trustworthy source.
-  const fromRewrite = rewritten && !rewritten.includes(":") ? rewritten : null;
-  const subpath = String(fromRewrite ?? requestUrl.pathname.replace(/^\/api\/?/, ""))
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
+  const fromPathname = clean(requestUrl.pathname.replace(/^\/api\/?/, ""));
+  const auto = params.get("path");
+
+  let subpath = "";
+  if (explicit && !explicit.includes(":")) {
+    subpath = clean(explicit);
+  } else if (fromPathname && fromPathname !== "proxy") {
+    subpath = fromPathname;
+  } else if (auto && !auto.includes(":")) {
+    subpath = clean(auto);
+    // Only injected by the rewrite in this branch, so it is ours to consume —
+    // forwarding it would append a query the upstream never asked for.
+    params.delete("path");
+  }
+
+  if (!subpath && fromPathname === "proxy") {
+    return json(res, 500, {
+      detail:
+        "The /api rewrite did not carry the request path. Check the rewrite in " +
+        "vercel.json: /api/:path* must forward the tail to /api/proxy.",
+    });
+  }
+
   const qs = params.toString();
   const search = qs ? `?${qs}` : "";
 

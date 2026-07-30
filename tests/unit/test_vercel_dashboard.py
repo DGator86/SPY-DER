@@ -67,6 +67,22 @@ def test_proxy_serves_both_modes() -> None:
     assert "proxy to itself" in proxy
 
 
+def test_proxy_recovers_the_request_tail_three_ways() -> None:
+    """Which form the tail arrives in is a routing-layer detail, not a promise.
+
+    The rewrite token may fail to expand, `req.url` may carry either the
+    original path or the rewritten destination, and Vercel auto-appends source
+    params the destination path does not consume. Reading only one of those is
+    what left every /v1 endpoint 404ing, so all three are tried and an
+    unrecoverable tail fails loudly instead of querying the wrong upstream path.
+    """
+    proxy = (_ROOT / "api" / "proxy.js").read_text(encoding="utf-8")
+    assert '__path' in proxy
+    assert 'requestUrl.pathname' in proxy
+    assert 'params.get("path")' in proxy
+    assert 'did not carry the request path' in proxy
+
+
 def test_tab_assets_are_vendored_not_forked() -> None:
     """One implementation. The build copies; it must not keep an edited copy."""
     for name in ("spy-der-tab.js", "spy-der-tab.css"):
