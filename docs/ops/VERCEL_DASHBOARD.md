@@ -1,86 +1,138 @@
 # SPY-DER on its own Vercel page
 
-Host the Adaptive Loop · Dojo dashboard at the **`spy-der`** Vercel project
-([vercel.com/.../spy-der](https://vercel.com/darrins-projects-5d4fb02f/spy-der)),
-independent of the legacy `0-dte` Command Center.
+The Adaptive Loop · Dojo dashboard at **[spy-der.vercel.app](https://spy-der.vercel.app)**
+([project](https://vercel.com/darrins-projects-5d4fb02f/spy-der)), independent of
+the legacy `0-dte` Command Center.
 
 ```
-Browser  →  spy-der.vercel.app          (static / + /ui/*)
-         →  /api/v1/*                   (Node serverless proxy)
-         →  SPY_DER_DASHBOARD_URL       (tunnel / reverse proxy)
-         →  127.0.0.1:8788              (spy-der-dashboard-api on the VPS)
+Browser  →  spy-der.vercel.app        static shell + /ui/spy-der-tab.{js,css}
+         →  /api/v1/*                 rewritten to api/proxy.js
+         →  native  SPY_DER_DASHBOARD_URL → 127.0.0.1:8788   (full /v1 surface)
+            bridge  0DTE host /api/spy-der + /api/system      (read-only subset)
 ```
 
-This is **not** a Python serverless app. The failed deploy
-(`No python entrypoint found`) happened because Vercel auto-detected
-`pyproject.toml`. Root [`vercel.json`](../../vercel.json) sets
-`"framework": null` so the project builds as static + Node instead.
+This is **not** a Python serverless app. The first deploy failed with
+`No python entrypoint found` because Vercel auto-detected `pyproject.toml`.
+Root [`vercel.json`](../../vercel.json) sets `"framework": null` so the project
+builds as static + Node instead.
 
-## One-time setup
+## It works with no configuration
 
-### 1. Merge this repo config
+There is nothing to set for the page to show live data. With
+`SPY_DER_DASHBOARD_URL` unset, `api/proxy.js` runs in **bridge** mode and reads
+SPY-DER state through the 0DTE host, which publishes it from the same files on
+the same box. The decision, health and Dojo panels are real.
 
-Ship on `main`:
+Bridge mode cannot serve what that host does not publish: validation reports,
+the attribution waterfall, live Dojo progress, pending challengers, and operator
+Promote / Reject / Rollback. Those panels say so rather than rendering empty.
 
-- `vercel.json` — framework Other, build → `public/`
-- `api/[...path].js` — proxy
-- `scripts/vercel-build.sh` — copies `src/spy_der/runtime/ui/` into `public/`
-- `.env.vercel.example` — env template
+Set `SPY_DER_DASHBOARD_URL` to upgrade to **native** mode and get all of it.
 
-After merge, Vercel rebuilds from GitHub. Confirm Framework Preset is
-**Other** (Project → Settings → General). `vercel.json` overrides it; if an
-old Python setting sticks, set Other manually once.
+## Routing: why the rewrite exists
 
-### 2. Expose the VPS API to Vercel
+`vercel.json` rewrites `/api/:path*` to `/api/proxy?__path=:path*`.
 
-`spy-der-dashboard-api` binds **loopback only** (`127.0.0.1:8788`). The
-browser and Vercel cannot reach that address directly. Pick one:
+That rule is load-bearing. The proxy was originally a zero-config catch-all at
+`api/[...path].js`, which in production matched only a **single** segment:
+`/api/health` reached the function, `/api/v1/system` returned Vercel's own 404
+before the function ran. Every endpoint the tab reads is nested under `/v1`, so
+the entire page was dark while the deployment looked healthy — build green,
+function compiled, static assets served. `0-dte` carries the same file and never
+hit it, because all of its endpoints are single-segment (`/api/system`,
+`/api/dojo`).
 
-| Approach | `SPY_DER_DASHBOARD_URL` | Notes |
-| --- | --- | --- |
-| Dedicated tunnel (preferred) | `https://<your-tunnel-host>` | Cloudflare Tunnel, Tailscale Funnel, Caddy, etc. forward to `127.0.0.1:8788` |
-| Temporary via 0DTE hop | `https://<vps-public>/api/spy-der` | Requires `DASHBOARD_TOKEN`; keep until a SPY-DER-only tunnel exists |
+If `/api/v1/system` ever 404s with `x-vercel-error: NOT_FOUND`, the rewrite is
+missing — the function is not being reached at all.
 
-Do **not** set the URL to `http://127.0.0.1:8788` in Vercel — that is the
-function's own loopback, not the VPS.
+## Upgrading to a direct connection
 
-### 3. Set Vercel env vars
+`spy-der-dashboard-api` binds **loopback only** (`127.0.0.1:8788`); neither the
+browser nor Vercel can reach that address. Expose it, on the VPS:
 
-Project → Settings → Environment Variables (Production + Preview):
+```bash
+cloudflared tunnel --url http://127.0.0.1:8788    # or Tailscale Funnel, Caddy, …
+```
+
+Then in Project → Settings → Environment Variables (Production + Preview):
 
 | Name | Required | Value |
 | --- | --- | --- |
-| `SPY_DER_DASHBOARD_URL` | yes | Reachable base of the dashboard API (no trailing slash) |
-| `DASHBOARD_TOKEN` | only for 0DTE hop | Bearer token that hop expects |
+| `SPY_DER_DASHBOARD_URL` | no — unset means bridge | Reachable base of the dashboard API, no trailing slash |
+| `DASHBOARD_TOKEN` | only behind a hop that wants `Authorization` | Bearer token that hop expects |
+| `SPY_DER_DASHBOARD_MODE` | no | Force `native` or `bridge` instead of inferring from the URL |
 
-Redeploy after saving.
+Redeploy is not required — the next request picks the value up.
 
-### 4. Operator Promote / Reject
+Two values that will **not** work:
 
-On the VPS:
+- `http://127.0.0.1:8788` — that is the serverless function's own loopback, not the VPS.
+- `https://spy-der.vercel.app` — the page itself. The proxy would call its own
+  rewrite until the invocation times out, so it is rejected with an explanatory 500.
+
+A URL ending in `/api/spy-der` is read as the 0DTE hop and handled in bridge
+mode. That hop is a **read-only adapter over published files** — it is not a
+proxy to `:8788`, so it cannot carry operator writes no matter how it is
+addressed.
+
+### Operator Promote / Reject
+
+Native mode only. On the VPS:
 
 ```bash
 sudoedit /etc/spy-der/spy-der.env   # SPY_DER_OPERATOR_TOKEN=...
 sudo systemctl restart spy-der-dashboard-api
 ```
 
-On the Vercel page: Unlock → paste the same token. It travels as
-`X-Spy-Der-Operator-Token` (never places trades — decision knobs only).
+On the page: Unlock → paste the same token. It travels as
+`X-Spy-Der-Operator-Token`, separate from `DASHBOARD_TOKEN`, and reaches only
+decision knobs — it cannot place, size or submit a trade. The execution guard
+remains the only route to the market.
 
-## Local check before relying on Vercel
+## Checking it
+
+`/api/__status` reports which mode the deployment resolved, and the host it
+reads from — never the token. The page's own connection chip is built on it.
 
 ```bash
-bash scripts/vercel-build.sh
-# public/index.html should contain data-spy-der-base="/api"
-# public/ui/spy-der-tab.js and .css should exist
-
-# On the VPS / via SSH tunnel:
-spy-der-dashboard-api --state-root /var/lib/spy-der --port 8788
-open http://127.0.0.1:8788/ui
+curl -s https://spy-der.vercel.app/api/__status | jq
+curl -s https://spy-der.vercel.app/api/v1/system | jq '.overall, .source'
+curl -s https://spy-der.vercel.app/api/v1/state  | jq '.action, .schema_version'
 ```
 
-If `/ui` looks right locally, a blank Vercel page is almost always env or
-tunnel wiring — not the tab itself.
+Locally:
+
+```bash
+bash scripts/vercel-build.sh   # emits public/{index.html,favicon.svg,ui/*}
+python -m pytest tests/unit/test_vercel_dashboard.py
+```
+
+| Symptom | Cause |
+| --- | --- |
+| `404 NOT_FOUND` on `/api/v1/*` | rewrite missing from `vercel.json` |
+| `503` naming `SPY_DER_DASHBOARD_URL` | native mode with an unreachable upstream |
+| `500` about proxying to itself | `SPY_DER_DASHBOARD_URL` set to this page |
+| Panels say "not published through the 0DTE bridge" | expected in bridge mode — set a tunnel |
+
+## Layout
+
+| Path | Role |
+| --- | --- |
+| `web/index.html` | Shell for **this host**: top bar, connection chip, `data-spy-der-base="/api"` |
+| `web/favicon.svg` | Tab icon |
+| `api/proxy.js` | Gateway — native passthrough or bridge translation |
+| `scripts/vercel-build.sh` | Assembles `public/` from `web/` + `src/spy_der/runtime/ui/` |
+
+`web/index.html` is a separate file from the canonical
+[`src/spy_der/runtime/ui/index.html`](../../src/spy_der/runtime/ui/index.html)
+because the hosts genuinely differ: that one is served by
+`spy-der-dashboard-api` same-origin with `/v1/*`, this one is static and has to
+name its upstream. The build used to derive one from the other by string
+replacement, which produced a silently wrong page whenever the canonical
+comment was reworded.
+
+The tab itself is **not** forked. `spy-der-tab.js` and `.css` are copied
+byte-for-byte from `src/spy_der/runtime/ui/`, and a test asserts it.
 
 ## Relation to 0DTE
 
@@ -90,5 +142,5 @@ tunnel wiring — not the tab itself.
 | **`spy-der` Vercel project** | Public SPY-DER-owned page (this doc) |
 | `0-dte` Vercel + Adaptive Loop patch | Optional embed during migration; not required once `spy-der` is live |
 
-Canonical assets stay in [`src/spy_der/runtime/ui/`](../../src/spy_der/runtime/ui/).
-There is one implementation; Vercel only vendors a build-time copy.
+Bridge mode is a migration convenience and the last runtime dependency this page
+has on 0DTE. Standing up the tunnel removes it.

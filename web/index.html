@@ -1,0 +1,469 @@
+<!doctype html>
+<!--
+  SPY-DER's own Vercel page.
+
+  The dashboard itself is `spy-der-tab.js`, vendored unchanged from
+  `src/spy_der/runtime/ui/` by scripts/vercel-build.sh — one implementation,
+  no second copy to drift. This file is only the chrome around it: document
+  head, top bar, connection indicator and footer.
+
+  It is a separate file from the canonical `src/spy_der/runtime/ui/index.html`
+  because the two hosts genuinely differ. That shell is served by
+  spy-der-dashboard-api, same-origin with /v1/*. This one is static on Vercel
+  and reaches the API through /api → api/proxy.js, so it also has to explain
+  which upstream it landed on. The build used to patch one into the other with
+  string replacement, which broke silently whenever the canonical comment
+  changed wording.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#010409" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f6f8fa" media="(prefers-color-scheme: light)" />
+    <meta
+      name="description"
+      content="SPY-DER — SPY 0DTE prediction, deterministic risk, Adaptive Loop and Dojo. Read-only operator dashboard."
+    />
+    <title>SPY-DER · Adaptive Loop · Dojo</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/ui/spy-der-tab.css" />
+    <style>
+      /* Page chrome only. Every rule is scoped under `sd-page*` so nothing here
+         can reach into `.spyder-tab`, which owns its own styling. Tokens are
+         re-declared to match that stylesheet so the two read as one system. */
+      :root {
+        --sd-page-bg: #010409;
+        --sd-page-card: #0d1117;
+        --sd-page-border: #2d333b;
+        --sd-page-text: #e6edf3;
+        --sd-page-muted: #8b949e;
+        --sd-page-accent: #58a6ff;
+        --sd-page-ok: #3fb950;
+        --sd-page-warn: #d29922;
+        --sd-page-bad: #f85149;
+        --sd-page-idle: #6e7681;
+      }
+
+      @media (prefers-color-scheme: light) {
+        :root {
+          --sd-page-bg: #f6f8fa;
+          --sd-page-card: #ffffff;
+          --sd-page-border: #d0d7de;
+          --sd-page-text: #1f2328;
+          --sd-page-muted: #656d76;
+          --sd-page-accent: #0969da;
+          --sd-page-ok: #1a7f37;
+          --sd-page-warn: #9a6700;
+          --sd-page-bad: #cf222e;
+          --sd-page-idle: #8c959f;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        min-height: 100%;
+      }
+
+      body {
+        background: var(--sd-page-bg);
+        color: var(--sd-page-text);
+        font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font-size: 14px;
+        line-height: 1.45;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* Top bar ------------------------------------------------------------ */
+      .sd-bar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 20px;
+        background: color-mix(in srgb, var(--sd-page-bg) 88%, transparent);
+        backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--sd-page-border);
+      }
+
+      .sd-bar__brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-decoration: none;
+        color: inherit;
+      }
+
+      .sd-bar__mark {
+        width: 20px;
+        height: 20px;
+        flex: none;
+      }
+
+      .sd-bar__sub {
+        color: var(--sd-page-muted);
+        font-weight: 400;
+        letter-spacing: 0.01em;
+      }
+
+      @media (max-width: 640px) {
+        .sd-bar__sub {
+          display: none;
+        }
+      }
+
+      .sd-bar__spacer {
+        flex: 1 1 auto;
+      }
+
+      .sd-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--sd-page-border);
+        background: var(--sd-page-card);
+        color: var(--sd-page-text);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        text-decoration: none;
+      }
+
+      .sd-chip::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--sd-page-idle);
+        flex: none;
+      }
+
+      .sd-chip--ok::before { background: var(--sd-page-ok); }
+      .sd-chip--warn::before { background: var(--sd-page-warn); }
+      .sd-chip--bad::before { background: var(--sd-page-bad); }
+
+      .sd-chip--checking::before {
+        animation: sd-pulse 1.4s ease-in-out infinite;
+      }
+
+      @keyframes sd-pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.3; transform: scale(0.8); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .sd-chip--checking::before { animation: none; }
+      }
+
+      /* A plain chip with no status dot — used for the source label. */
+      .sd-chip--plain {
+        color: var(--sd-page-muted);
+        font-weight: 500;
+        text-transform: none;
+        letter-spacing: 0;
+      }
+
+      .sd-chip--plain::before { display: none; }
+
+      .sd-chip--link:hover {
+        border-color: var(--sd-page-accent);
+        color: var(--sd-page-accent);
+      }
+
+      /* Body --------------------------------------------------------------- */
+      .sd-main {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+
+      /* Boot placeholder — replaced by the tab on mount. Without it the page is
+         a blank dark rectangle for as long as the first fetches take. */
+      .sd-boot {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        min-height: 320px;
+        padding: 40px 20px;
+        border: 1px solid var(--sd-page-border);
+        border-radius: 8px;
+        background: var(--sd-page-card);
+        text-align: center;
+      }
+
+      .sd-boot__mark {
+        width: 44px;
+        height: 44px;
+        opacity: 0.9;
+        animation: sd-breathe 2.4s ease-in-out infinite;
+      }
+
+      @keyframes sd-breathe {
+        0%, 100% { opacity: 0.9; transform: scale(1); }
+        50% { opacity: 0.45; transform: scale(0.94); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .sd-boot__mark { animation: none; }
+      }
+
+      .sd-boot__text {
+        color: var(--sd-page-muted);
+      }
+
+      .sd-boot--failed .sd-boot__mark { animation: none; opacity: 0.4; }
+      .sd-boot--failed .sd-boot__text { color: var(--sd-page-bad); }
+
+      /* Footer ------------------------------------------------------------- */
+      .sd-foot {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 4px 20px 40px;
+        color: var(--sd-page-muted);
+        font-size: 12px;
+      }
+
+      .sd-foot__rule {
+        border: 0;
+        border-top: 1px solid var(--sd-page-border);
+        margin: 0 0 14px;
+      }
+
+      .sd-foot p {
+        margin: 0 0 8px;
+      }
+
+      .sd-foot code {
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+        font-size: 11px;
+        padding: 1px 5px;
+        border-radius: 4px;
+        border: 1px solid var(--sd-page-border);
+        background: var(--sd-page-card);
+        color: var(--sd-page-text);
+        overflow-wrap: anywhere;
+      }
+
+      .sd-foot a {
+        color: var(--sd-page-accent);
+      }
+
+      .sd-foot__hint {
+        display: none;
+        margin-top: 10px;
+        padding: 10px 12px;
+        border: 1px solid var(--sd-page-border);
+        border-left: 3px solid var(--sd-page-warn);
+        border-radius: 6px;
+        background: var(--sd-page-card);
+      }
+
+      .sd-foot__hint--show {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="sd-bar">
+      <a class="sd-bar__brand" href="/">
+        <svg class="sd-bar__mark" viewBox="0 0 32 32" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            <path d="M16 4.5v23M4.5 16h23M8.1 8.1l15.8 15.8M23.9 8.1L8.1 23.9" />
+            <circle cx="16" cy="16" r="4.6" />
+            <circle cx="16" cy="16" r="9.2" stroke-opacity="0.75" />
+          </g>
+        </svg>
+        <span>SPY-DER<span class="sd-bar__sub"> · prediction · risk · Adaptive Loop · Dojo</span></span>
+      </a>
+
+      <span class="sd-bar__spacer"></span>
+
+      <span id="sd-source" class="sd-chip sd-chip--plain" hidden></span>
+      <span
+        id="sd-conn"
+        class="sd-chip sd-chip--checking"
+        role="status"
+        aria-live="polite"
+        >connecting</span
+      >
+      <a
+        class="sd-chip sd-chip--plain sd-chip--link"
+        href="https://github.com/DGator86/SPY-DER"
+        rel="noreferrer noopener"
+        target="_blank"
+        >GitHub</a
+      >
+    </header>
+
+    <main class="sd-main">
+      <!-- Static host: data-spy-der-base="/api" routes reads and operator POSTs
+           through api/proxy.js. data-spy-der-actions unlocks Promote / Reject /
+           Rollback for decision knobs once an operator token is pasted in — it
+           still cannot place, size or submit a trade. -->
+      <div id="spy-der" data-spy-der-tab data-spy-der-base="/api" data-spy-der-actions>
+        <div class="sd-boot" id="sd-boot">
+          <svg class="sd-boot__mark" viewBox="0 0 32 32" aria-hidden="true">
+            <g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+              <path d="M16 4.5v23M4.5 16h23M8.1 8.1l15.8 15.8M23.9 8.1L8.1 23.9" />
+              <circle cx="16" cy="16" r="4.6" />
+              <circle cx="16" cy="16" r="9.2" stroke-opacity="0.75" />
+            </g>
+          </svg>
+          <div class="sd-boot__text" id="sd-boot-text">Connecting to SPY-DER…</div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="sd-foot">
+      <hr class="sd-foot__rule" />
+      <p id="sd-foot-line">
+        Read-only dashboard over published state. Trades go only through the
+        deterministic execution guard.
+      </p>
+      <div class="sd-foot__hint" id="sd-foot-hint"></div>
+    </footer>
+
+    <script type="module" src="/ui/spy-der-tab.js"></script>
+
+    <script>
+      /* Connection indicator.
+       *
+       * The tab reports the decision it read; this reports whether the page is
+       * reading anything at all, and from where. Those fail separately: a
+       * healthy tab with an unset upstream still renders "no live state", which
+       * looks like a quiet market rather than a wiring problem. */
+      (function () {
+        var conn = document.getElementById("sd-conn");
+        var source = document.getElementById("sd-source");
+        var footLine = document.getElementById("sd-foot-line");
+        var footHint = document.getElementById("sd-foot-hint");
+
+        function setChip(node, tone, label) {
+          node.className = "sd-chip" + (tone ? " sd-chip--" + tone : "");
+          node.textContent = label;
+        }
+
+        function host(url) {
+          try {
+            return new URL(url).host;
+          } catch (_err) {
+            return url || "—";
+          }
+        }
+
+        async function getJson(path) {
+          var response = await fetch(path, {
+            headers: { Accept: "application/json" },
+            cache: "no-store",
+          });
+          var body = await response.json().catch(function () {
+            return null;
+          });
+          return { ok: response.ok, status: response.status, body: body };
+        }
+
+        async function poll() {
+          var status;
+          try {
+            status = await getJson("/api/__status");
+          } catch (_err) {
+            setChip(conn, "bad", "offline");
+            source.hidden = true;
+            return;
+          }
+
+          if (!status.ok || !status.body) {
+            setChip(conn, "bad", "gateway error");
+            source.hidden = true;
+            if (status.body && status.body.detail) {
+              footHint.textContent = status.body.detail;
+              footHint.className = "sd-foot__hint sd-foot__hint--show";
+            }
+            return;
+          }
+
+          var mode = status.body.mode;
+          var bridged = mode === "bridge";
+
+          source.hidden = false;
+          source.textContent = (bridged ? "via " : "direct · ") + host(status.body.upstream);
+          source.title = bridged
+            ? "SPY-DER state is being read through the 0DTE host, which publishes it from the same files on the same box."
+            : "Reading spy-der-dashboard-api directly.";
+
+          // Config alone does not prove data is flowing — ask for something real.
+          var live;
+          try {
+            live = await getJson("/api/v1/system");
+          } catch (_err) {
+            live = { ok: false, status: 0, body: null };
+          }
+
+          if (!live.ok) {
+            setChip(conn, "bad", "no data");
+          } else {
+            var overall = (live.body && live.body.overall) || "ok";
+            setChip(
+              conn,
+              overall === "ok" ? "ok" : overall === "degraded" ? "bad" : "warn",
+              overall === "ok" ? "live" : overall
+            );
+          }
+
+          footLine.textContent =
+            "Read-only dashboard over published state. Trades go only through the " +
+            "deterministic execution guard." +
+            (status.body.operator_actions
+              ? ""
+              : " Operator Promote / Reject needs a direct connection.");
+
+          if (bridged) {
+            footHint.innerHTML =
+              "<strong>Bridged source.</strong> SPY-DER's own API binds " +
+              "<code>127.0.0.1:8788</code> and has no public tunnel yet, so this page reads " +
+              "state through the 0DTE host. Live decision and Dojo panels are real; " +
+              "validation, attribution and operator actions need a direct connection. " +
+              "To upgrade, run <code>cloudflared tunnel --url http://127.0.0.1:8788</code> " +
+              "on the VPS and set <code>SPY_DER_DASHBOARD_URL</code> to the tunnel host in " +
+              "the Vercel project — the page switches over on the next request.";
+            footHint.className = "sd-foot__hint sd-foot__hint--show";
+          } else {
+            footHint.className = "sd-foot__hint";
+          }
+        }
+
+        void poll();
+        setInterval(poll, 30000);
+
+        /* If the module never mounts, the boot placeholder would otherwise sit
+           there implying work in progress forever. */
+        setTimeout(function () {
+          var boot = document.getElementById("sd-boot");
+          if (!boot || !boot.isConnected) return;
+          boot.className = "sd-boot sd-boot--failed";
+          document.getElementById("sd-boot-text").textContent =
+            "The dashboard module did not load. Check that /ui/spy-der-tab.js was deployed.";
+        }, 8000);
+      })();
+    </script>
+  </body>
+</html>

@@ -102,6 +102,23 @@
 .spyder-tab__pill--warn::before { background: var(--sd-warn); }
 .spyder-tab__pill--bad::before { background: var(--sd-bad); }
 
+/* Verdict lines are paragraphs carrying a whole sentence, not inline chips.
+   `nowrap` is right for `NO_EDGE` and wrong here: a Dojo headline such as
+   "Next sparring will focus on gap shock, range chop, crash." measures ~470px
+   and pushed the entire page into horizontal scroll on a phone. */
+p.spyder-tab__pill {
+  white-space: normal;
+  max-width: 100%;
+  align-items: flex-start;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+p.spyder-tab__pill::before {
+  flex: none;
+  margin-top: 6px; /* keep the dot beside the first line, not centred on all */
+}
+
 .spyder-tab__pill--pulse::before {
   animation: spyder-tab-pulse 1.4s ease-in-out infinite;
 }

@@ -4,6 +4,9 @@
   "installCommand": "",
   "buildCommand": "bash scripts/vercel-build.sh",
   "outputDirectory": "public",
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/proxy?__path=:path*" }
+  ],
   "headers": [
     {
       "source": "/api/(.*)",
