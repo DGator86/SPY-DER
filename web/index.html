@@ -194,6 +194,15 @@
         padding: 20px;
       }
 
+      /* The top bar already brands the page, so the tab repeating its own
+         wordmark directly underneath is duplication unique to this host — the
+         VPS shell has no bar and needs the tab's header to carry it. Scoped
+         here rather than in the canonical stylesheet for exactly that reason.
+         The Refresh button keeps its row. */
+      .sd-main .spyder-tab__title {
+        display: none;
+      }
+
       /* Boot placeholder — replaced by the tab on mount. Without it the page is
          a blank dark rectangle for as long as the first fetches take. */
       .sd-boot {

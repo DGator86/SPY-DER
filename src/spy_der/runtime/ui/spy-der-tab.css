@@ -245,6 +245,55 @@ p.spyder-tab__pill::before {
   padding: 6px 10px;
 }
 
+/* Hero --------------------------------------------------------------------
+ *
+ * The headline figure, and there is exactly one. Everything below it is
+ * supporting detail, which is the hierarchy the tab previously lacked: twenty
+ * cards of identical weight, with the current action set in the same 12px pill
+ * as every other label.
+ *
+ * Sized with clamp because the actions are words, not digits, and they vary
+ * from IDLE to SELECT_CANDIDATE. 48px is the target; a phone gets the largest
+ * size the longest action still fits at, and may wrap rather than overflow. */
+.spyder-tab__hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 20px;
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--sd-border);
+}
+
+.spyder-tab__hero-value {
+  margin: 0;
+  /* Proportional figures on purpose — tabular-nums makes a large standalone
+     value look loose. Columns of numbers get tabular; this is not one. */
+  font-size: clamp(32px, 10vw, 48px);
+  font-weight: 650;
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.spyder-tab__hero-value--ok { color: var(--sd-ok); }
+.spyder-tab__hero-value--warn { color: var(--sd-warn); }
+.spyder-tab__hero-value--bad { color: var(--sd-bad); }
+
+.spyder-tab__hero-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.spyder-tab__hero-meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--sd-muted);
+}
+
 /* Grid and panels -------------------------------------------------------- */
 .spyder-tab__grid {
   display: grid;
@@ -320,10 +369,15 @@ p.spyder-tab__pill::before {
   padding: 8px 10px;
 }
 
-.spyder-tab__stage--ok { border-left-color: var(--sd-ok); }
+/* Emphasis, not a rainbow.
+ *
+ * Every stage used to carry its own colour — green, blue, amber, red down the
+ * row — so five status hues competed at equal strength and none of them read
+ * as a signal. Status colour is reserved for status: a stage doing its job is
+ * not news and stays neutral, and only an exception is tinted. The stage name
+ * and value already say which stage it is, so nothing here is colour-alone. */
 .spyder-tab__stage--warn { border-left-color: var(--sd-warn); }
 .spyder-tab__stage--bad { border-left-color: var(--sd-bad); }
-.spyder-tab__stage--authority { border-left-color: var(--sd-accent); }
 
 .spyder-tab__stage-name {
   font-size: 11px;
@@ -765,6 +819,13 @@ p.spyder-tab__pill::before {
 }
 
 @media (max-width: 640px) {
+  /* The strapline costs a whole wrapped line on a phone and says nothing the
+     hero underneath it does not. The wordmark stays — on the VPS shell this
+     header is the only branding there is. */
+  .spyder-tab__title small {
+    display: none;
+  }
+
   .spyder-tab__chain--dojo .spyder-tab__stage {
     flex: 1 1 100%;
   }
