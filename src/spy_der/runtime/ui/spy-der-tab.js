@@ -70,11 +70,34 @@ function panel(title, wide = false) {
   return box;
 }
 
-function kv(pairs) {
+/* A 64-character snapshot hash or a 40-character commit SHA wraps onto three
+ * lines on a phone and pushes the rest of the card out of shape. Only the
+ * display is shortened — the full value stays in `title`, so it is still
+ * readable and still copyable from the tooltip. */
+function compact(value) {
+  const str = String(value);
+  // Hex only. Shortening on length alone also hit readable identifiers —
+  // "grok-4.20-0309-non-reasoning" became "grok-4.20-…soning", which is worse
+  // than letting it wrap. A digest carries no meaning in its middle; a model
+  // name is nothing but meaning.
+  if (!/^[0-9a-f]{24,}$/i.test(str)) return str;
+  return `${str.slice(0, 10)}…${str.slice(-6)}`;
+}
+
+/* `hideEmpty` is opt-in rather than the default: elsewhere an em dash is the
+ * point — the decision chain uses it to say a stage published nothing. It is
+ * only noise where a whole group is empty for one understood reason, such as
+ * a decision with no candidate to describe. */
+function kv(pairs, { hideEmpty = false } = {}) {
   const list = el("dl", "spyder-tab__kv");
   for (const [key, value] of pairs) {
+    if (hideEmpty && (value === null || value === undefined || value === "")) continue;
     list.appendChild(el("dt", null, key));
-    list.appendChild(el("dd", null, text(value)));
+    const full = text(value);
+    const shown = compact(full);
+    const cell = el("dd", null, shown);
+    if (shown !== full) cell.title = full;
+    list.appendChild(cell);
   }
   return list;
 }
@@ -275,8 +298,11 @@ function renderDecision(state) {
 
   box.appendChild(meter("Confidence", state.confidence, "ok"));
   box.appendChild(meter("Uncertainty", state.uncertainty, "warn"));
-  box.appendChild(
-    kv([
+  // With no candidate, Structure / Direction / Candidate / Reviewer are all
+  // empty at once, and printing four em dashes said nothing four times. The
+  // rationale below already explains why there is nothing to describe.
+  const rows = kv(
+    [
       ["Structure", state.structure],
       ["Direction", state.direction],
       ["Candidate", state.candidateId],
@@ -284,8 +310,10 @@ function renderDecision(state) {
       ["Mode", state.mode],
       ["Trader", state.traderModel],
       ["Reviewer", state.reviewerModel],
-    ])
+    ],
+    { hideEmpty: true }
   );
+  if (rows.childElementCount) box.appendChild(rows);
 
   if (state.reasonCodes.length) {
     box.appendChild(el("h3", null, "Reason codes"));
@@ -788,10 +816,18 @@ function progressHeadline(progress) {
   return "IDLE";
 }
 
+/* Returns null when nothing is published. No progress feed is not the same as
+ * a Dojo sitting idle: rendering the skeleton for an absent payload invented a
+ * run that was not happening — an "IDLE" pill over five PENDING stage cards,
+ * directly above the completed report those cards contradict. It is the same
+ * mistake the decision chain is careful to avoid, and it shows up on every
+ * mount that cannot read /v1/dojo/progress. Absent means absent. */
 function renderDojoProgress(progress) {
-  const square = el("div", "spyder-tab__dojo-square");
   const payload = progress && typeof progress === "object" ? progress : null;
-  const status = payload ? text(payload.status, "idle") : "idle";
+  if (!payload) return null;
+
+  const square = el("div", "spyder-tab__dojo-square");
+  const status = text(payload.status, "idle");
   const live = Boolean(payload && payload.live);
 
   const head = el("div", "spyder-tab__dojo-square-head");
@@ -982,7 +1018,8 @@ function renderPendingReview(pendingBody, actions) {
 
 function renderDojo(dojo, validation, progress, pendingBody, actions) {
   const box = panel("Adaptive Loop · Dojo", true);
-  box.appendChild(renderDojoProgress(progress));
+  const progressPanel = renderDojoProgress(progress);
+  if (progressPanel) box.appendChild(progressPanel);
   box.appendChild(renderPendingReview(pendingBody, actions));
   if (!dojo) {
     box.appendChild(note("No Dojo report yet. The nightly run will fill this in."));
