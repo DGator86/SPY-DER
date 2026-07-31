@@ -48,11 +48,34 @@ missing — the function is not being reached at all.
 ## Upgrading to a direct connection
 
 `spy-der-dashboard-api` binds **loopback only** (`127.0.0.1:8788`); neither the
-browser nor Vercel can reach that address. Expose it, on the VPS:
+browser nor Vercel can reach that address. It needs a tunnel of its own — the
+0DTE tunnel does not reach it. That one terminates at `127.0.0.1:8765`, the 0DTE
+dashboard, which is a different process; nothing on that host forwards to 8788.
+Borrowing 0DTE's `VPS_API_URL` and `DASHBOARD_TOKEN` therefore changes nothing
+except removing a hop — it is still bridge mode, still the same missing panels.
+
+Use a **named** tunnel, on the VPS:
 
 ```bash
-cloudflared tunnel --url http://127.0.0.1:8788    # or Tailscale Funnel, Caddy, …
+cloudflared tunnel login
+cloudflared tunnel create spy-der-api
+cloudflared tunnel route dns spy-der-api spy-der-api.example.com
+cloudflared tunnel run --url http://127.0.0.1:8788 spy-der-api
 ```
+
+Then install it as a service so it survives reboot:
+
+```bash
+sudo cloudflared service install
+```
+
+Not `cloudflared tunnel --url http://127.0.0.1:8788`. That is the quick form and
+it mints a fresh `trycloudflare.com` hostname every start, so `SPY_DER_DASHBOARD_URL`
+goes stale the first time cloudflared restarts. The page does **not** fall back to
+bridge when that happens — a configured-but-unreachable upstream is a 502, and
+every panel reads "no data". Native mode is only as stable as the hostname behind
+it. Tailscale Funnel or a Caddy reverse proxy are equally fine, on the same
+condition: the hostname has to be stable.
 
 Then in Project → Settings → Environment Variables (Production + Preview):
 
