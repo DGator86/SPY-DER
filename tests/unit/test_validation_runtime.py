@@ -14,12 +14,29 @@ from pathlib import Path
 from spy_der.contracts.common import content_hash
 from spy_der.runtime.validation import (
     _PARITY_GATES_NEEDING_BOTH_RUNTIMES,
+    ET,
     ValidationConfig,
     main,
     run_validation,
 )
 
+#: Safe as a fixed date only because every test that uses it also passes
+#: `today=TODAY` into `run_validation`, which pins the window to it.
 TODAY = dt.date(2026, 7, 25)
+
+
+def _today_et() -> dt.date:
+    """The date `main` will actually compute its window from.
+
+    `main` takes no `today` override — it reads the wall clock in ET — so a
+    test driving the CLI has to place its recording relative to the real date
+    or the recording ages out of the window. Anchoring to a fixed TODAY made
+    `test_main_exits_nonzero_on_a_failing_gate` pass for the five days the
+    default `recent` window spans and fail every day after: the session fell
+    before the cutoff, no snapshots were replayed, no gate could fail, and the
+    run exited 0 while asserting 1.
+    """
+    return dt.datetime.now(ET).date()
 
 
 def _snapshot(
@@ -257,12 +274,16 @@ def test_main_exits_zero_when_no_gate_fails(tmp_path: Path) -> None:
 
 def test_main_exits_nonzero_on_a_failing_gate(tmp_path: Path) -> None:
     """A failing gate must fail the unit, not hide in JSON under a green status."""
-    _write_session(tmp_path, TODAY, [_snapshot("s1", feed_status="STALE")])
+    # Driven through `main`, so the session has to sit inside the window `main`
+    # derives from the wall clock. `--report-date` does not move that window —
+    # it only labels the report.
+    session = _today_et()
+    _write_session(tmp_path, session, [_snapshot("s1", feed_status="STALE")])
     code = main(
         [
             "--state-root", str(tmp_path),
             "--reports-dir", str(tmp_path / "reports" / "validation"),
-            "--report-date", TODAY.isoformat(),
+            "--report-date", session.isoformat(),
         ]
     )
     assert code == 1

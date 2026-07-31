@@ -210,6 +210,17 @@ const ACTION_TONE = {
   UNKNOWN: "bad",
 };
 
+/* `read_system_status` reports these five. "unreachable" is this file's own
+ * word for a /v1/system that did not answer, which is a worse state than any
+ * the service reports about itself. */
+const SYSTEM_TONE = {
+  ok: "ok",
+  warn: "warn",
+  degraded: "bad",
+  unknown: "warn",
+  unreachable: "bad",
+};
+
 /* -------------------------------------------------------------------------- */
 /* Panels                                                                     */
 /* -------------------------------------------------------------------------- */
@@ -1189,21 +1200,36 @@ export function mountSpyDerTab(options = {}) {
   const title = el("h2", "spyder-tab__title", "SPY-DER");
   const subtitle = el("small", null, "prediction · risk · Adaptive Loop · Dojo");
   title.appendChild(subtitle);
-  const statusPill = el("span", "spyder-tab__pill", "loading");
-  const freshness = el("span", "spyder-tab__note", "");
   const refreshButton = el("button", "spyder-tab__refresh", "Refresh");
   refreshButton.type = "button";
   head.appendChild(title);
-  head.appendChild(statusPill);
-  head.appendChild(freshness);
   head.appendChild(el("span", "spyder-tab__spacer"));
   head.appendChild(refreshButton);
+
+  /* The one thing this page leads with.
+   *
+   * The current action used to be a 12px pill in a row of twenty equal-weight
+   * cards, so the two facts an operator actually opens this for — what the
+   * system is doing and whether it is healthy — carried no more weight than
+   * "AI gate —". A dashboard's headline number is a hero figure, and there is
+   * exactly one of them. Colour only reinforces it: the word is the message,
+   * so a red/amber/green reading never depends on seeing the hue. */
+  const hero = el("div", "spyder-tab__hero");
+  const heroValue = el("p", "spyder-tab__hero-value", "…");
+  const heroSide = el("div", "spyder-tab__hero-side");
+  const heroHealth = el("span", "spyder-tab__pill", "checking");
+  const freshness = el("p", "spyder-tab__hero-meta", "");
+  heroSide.appendChild(heroHealth);
+  heroSide.appendChild(freshness);
+  hero.appendChild(heroValue);
+  hero.appendChild(heroSide);
 
   const grid = el("div", "spyder-tab__grid");
   const footer = el("div", "spyder-tab__footer", "");
 
   clear(target);
   target.appendChild(head);
+  target.appendChild(hero);
   target.appendChild(grid);
   target.appendChild(footer);
 
@@ -1319,20 +1345,30 @@ export function mountSpyDerTab(options = {}) {
 
     const state = normalizeState(results.state.ok ? results.state.body : null);
 
+    // Health rides in the hero beside the action: "what is it doing" and "is it
+    // healthy" are the two reasons to open this page, and they used to be
+    // fifteen panels apart.
+    const systemBody = results.system.ok ? results.system.body : null;
+    const overall = systemBody ? text(systemBody.overall, "unknown") : "unreachable";
+    heroHealth.textContent = `system ${overall}`;
+    heroHealth.className =
+      "spyder-tab__pill" +
+      (SYSTEM_TONE[overall] ? ` spyder-tab__pill--${SYSTEM_TONE[overall]}` : "");
+
     clear(grid);
     if (state) {
-      statusPill.textContent = state.action;
-      statusPill.className =
-        "spyder-tab__pill" +
-        (ACTION_TONE[state.action] ? ` spyder-tab__pill--${ACTION_TONE[state.action]}` : "");
+      heroValue.textContent = state.action;
+      heroValue.className =
+        "spyder-tab__hero-value" +
+        (ACTION_TONE[state.action] ? ` spyder-tab__hero-value--${ACTION_TONE[state.action]}` : "");
       freshness.textContent = state.generatedAt
         ? `${state.symbol} · updated ${ageLabel(state.generatedAt)}`
         : state.symbol;
       grid.appendChild(renderChain(state));
       grid.appendChild(renderDecision(state));
     } else {
-      statusPill.textContent = "no live state";
-      statusPill.className = "spyder-tab__pill spyder-tab__pill--bad";
+      heroValue.textContent = "NO LIVE STATE";
+      heroValue.className = "spyder-tab__hero-value spyder-tab__hero-value--bad";
       freshness.textContent = "";
       const box = panel("Current decision", true);
       box.appendChild(
