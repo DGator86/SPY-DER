@@ -4,6 +4,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 BASELINE = Path(__file__).parents[2] / "baseline" / "frozen_models" / "spy_der_v1"
 REGISTRY = BASELINE.parent / "registry.json"
 PAYLOAD_FILES = {"README.md", "configuration.json", "provenance.json", "expected_results.json"}
@@ -13,6 +15,15 @@ APPROVED_MANIFEST_SHA256 = "23b4c05e6223740fa5c4b7efb36092484450e6e5ee54c3032f80
 
 def load_json(name: str) -> dict[str, Any]:
     return json.loads((BASELINE / name).read_text(encoding="utf-8"))
+
+
+def parse_checksums(text: str) -> dict[str, str]:
+    entries: dict[str, str] = {}
+    for line in text.splitlines():
+        digest, name = line.split(maxsplit=1)
+        assert name not in entries, f"duplicate checksum entry: {name}"
+        entries[name] = digest
+    return entries
 
 
 def test_baseline_has_exactly_the_immutable_allowlist() -> None:
@@ -66,14 +77,20 @@ def test_frozen_model_authority_and_parameters() -> None:
 
 
 def test_checksums_cover_and_match_every_payload() -> None:
-    entries: dict[str, str] = {}
-    for line in (BASELINE / "CHECKSUMS.sha256").read_text(encoding="utf-8").splitlines():
-        digest, name = line.split(maxsplit=1)
-        entries[name] = digest
+    entries = parse_checksums((BASELINE / "CHECKSUMS.sha256").read_text(encoding="utf-8"))
 
     assert set(entries) == PAYLOAD_FILES
     for name, expected_digest in entries.items():
         assert hashlib.sha256((BASELINE / name).read_bytes()).hexdigest() == expected_digest
+
+
+def test_checksum_manifest_rejects_duplicate_filenames() -> None:
+    duplicate_manifest = "a" * 64 + "  configuration.json\n" + "b" * 64 + (
+        "  configuration.json\n"
+    )
+
+    with pytest.raises(AssertionError, match=r"duplicate checksum entry: configuration\.json"):
+        parse_checksums(duplicate_manifest)
 
 
 def test_registry_anchors_the_exact_frozen_manifest() -> None:
