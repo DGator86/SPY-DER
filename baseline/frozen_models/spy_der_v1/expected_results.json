@@ -1,0 +1,18 @@
+{
+  "schema_version": "spy_der.frozen_expected_results.v1",
+  "warning": "Same-world reproduction establishes internal consistency, not independent external validity.",
+  "point_models": {
+    "5m": {"status": "PASS", "decision": "ACTIVE", "mae": 0.386328, "improvement": 0.000789},
+    "15m": {"status": "PASS", "decision": "ACTIVE", "mae": 0.689928, "improvement": 0.003486},
+    "30m": {"status": "PASS", "decision": "ACTIVE", "mae": 1.018034, "improvement": 0.007501},
+    "60m": {"status": "INCONCLUSIVE", "decision": "ADVISORY_ONLY", "mae": 1.530484}
+  },
+  "quantile_coverage": {"5m": 0.8000, "15m": 0.7942, "30m": 0.7997, "60m": 0.8183},
+  "failed_path_models": {
+    "pure_joint_recursive_60m_mae": 2.572,
+    "flat_path_60m_mae": 1.487,
+    "controlled_path_high_mae_points": 9.489,
+    "analog_claimed_simultaneous_coverage": 0.80,
+    "analog_observed_simultaneous_coverage": 0.255
+  }
+}
