@@ -1,0 +1,31 @@
+{
+  "schema_version": "spy_der.frozen_provenance.v1",
+  "source": {
+    "title": "SPY-DER Complete Model and Dataset Handoff",
+    "version": "1.0",
+    "prepared_date": "2026-07-31",
+    "type": "portable research handoff"
+  },
+  "validation": {
+    "scope": "1,000 self-correlated synthetic market worlds",
+    "constituents_per_world": 500,
+    "minutes_per_world": 390,
+    "aggregate_rows": 390000,
+    "aggregate_columns": 78,
+    "base_seed": 2026073001
+  },
+  "implementation": {
+    "timestamp_utc": "2026-08-01T23:08:46Z",
+    "source_base_commit_sha": "2470786cca2539733013188b20c42cddbee6cea1"
+  },
+  "artifact_status": {
+    "original_full_package_vendored": false,
+    "generator_package_checksum_status": "unavailable_in_this_workspace",
+    "original_artifacts_verified": false,
+    "statement": "Original full package artifacts are not yet vendored and were not verified in this workspace."
+  },
+  "real_market_validation": {
+    "required": true,
+    "statement": "Timestamp-accurate real-data VPS replay is still required."
+  }
+}
