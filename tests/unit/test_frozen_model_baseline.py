@@ -1,11 +1,14 @@
 import hashlib
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
 BASELINE = Path(__file__).parents[2] / "baseline" / "frozen_models" / "spy_der_v1"
+REGISTRY = BASELINE.parent / "registry.json"
 PAYLOAD_FILES = {"README.md", "configuration.json", "provenance.json", "expected_results.json"}
 EXPECTED_FILES = PAYLOAD_FILES | {"CHECKSUMS.sha256"}
+APPROVED_MANIFEST_SHA256 = "23b4c05e6223740fa5c4b7efb36092484450e6e5ee54c3032f80d4c37de7b4f7"
 
 
 def load_json(name: str) -> dict[str, Any]:
@@ -73,9 +76,50 @@ def test_checksums_cover_and_match_every_payload() -> None:
         assert hashlib.sha256((BASELINE / name).read_bytes()).hexdigest() == expected_digest
 
 
-def test_provenance_does_not_claim_unavailable_artifacts_were_verified() -> None:
-    status = load_json("provenance.json")["artifact_status"]
+def test_registry_anchors_the_exact_frozen_manifest() -> None:
+    registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
 
+    assert registry == {
+        "spy_der_v1": {
+            "manifest_sha256": APPROVED_MANIFEST_SHA256,
+            "status": "frozen",
+        }
+    }
+    assert hashlib.sha256((BASELINE / "CHECKSUMS.sha256").read_bytes()).hexdigest() == (
+        APPROVED_MANIFEST_SHA256
+    )
+
+
+def test_regenerated_local_manifest_cannot_redefine_v1(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "spy_der_v1"
+    shutil.copytree(BASELINE, candidate)
+    configuration = candidate / "configuration.json"
+    configuration.write_bytes(configuration.read_bytes() + b"\n")
+
+    manifest_lines = []
+    manifest_names = [
+        line.split(maxsplit=1)[1]
+        for line in (BASELINE / "CHECKSUMS.sha256").read_text(encoding="utf-8").splitlines()
+    ]
+    for name in manifest_names:
+        digest = hashlib.sha256((candidate / name).read_bytes()).hexdigest()
+        manifest_lines.append(f"{digest}  {name}\n")
+    (candidate / "CHECKSUMS.sha256").write_text("".join(manifest_lines), encoding="utf-8")
+
+    candidate_digest = hashlib.sha256((candidate / "CHECKSUMS.sha256").read_bytes()).hexdigest()
+    assert candidate_digest != APPROVED_MANIFEST_SHA256
+
+
+def test_provenance_does_not_claim_unavailable_artifacts_were_verified() -> None:
+    provenance = load_json("provenance.json")
+    status = provenance["artifact_status"]
+
+    assert provenance["implementation"]["source_base_commit_sha"] == (
+        "2470786cca2539733013188b20c42cddbee6cea1"
+    )
+    assert "repository_commit_sha" not in provenance["implementation"]
     assert status["original_full_package_vendored"] is False
     assert status["original_artifacts_verified"] is False
     assert status["generator_package_checksum_status"] == "unavailable_in_this_workspace"
