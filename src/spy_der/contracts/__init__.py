@@ -164,6 +164,12 @@ from .value import (
     MetaDecision,
     SnapshotRanking,
 )
+from .verification import (
+    FORECAST_VERIFICATION_VERSION,
+    ForecastMaturityStatus,
+    MarketForecastVerification,
+    MarketOutcome,
+)
 
 __all__ = [
     "AGENT_DECISION_SCHEMA",
@@ -181,6 +187,7 @@ __all__ = [
     "FACTORY_VERSION",
     "FEATURE_VERSION",
     "FILL_RECORD_VERSION",
+    "FORECAST_VERIFICATION_VERSION",
     "ISOLATED_ACCOUNTS",
     "JOURNAL_SCHEMA",
     "LABEL_VERSION",
@@ -239,6 +246,7 @@ __all__ = [
     "FeedObservation",
     "FeedStatus",
     "FillRecord",
+    "ForecastMaturityStatus",
     "HardVeto",
     "JournalEvent",
     "JournalEventType",
@@ -246,6 +254,8 @@ __all__ = [
     "LockoutState",
     "MarketCandidateView",
     "MarketForecastBundle",
+    "MarketForecastVerification",
+    "MarketOutcome",
     "MarketPacket",
     "MarketState",
     "MarketStateAxis",
