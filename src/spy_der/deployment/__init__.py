@@ -1,4 +1,4 @@
-"""Deployment and operations: manifests, promotion, drift, rollback, cutover."""
+"""Deployment and operations: manifests, evidence, promotion, drift, rollback."""
 
 from spy_der.deployment.agent_manifest import AGENT_DEPLOYMENT_SCHEMA, AgentDeploymentManifest
 from spy_der.deployment.cutover import (
@@ -16,6 +16,14 @@ from spy_der.deployment.cutover import (
 )
 from spy_der.deployment.dashboard import OpsDashboardView, build_ops_dashboard, dashboard_as_dict
 from spy_der.deployment.drift import DriftLevel, DriftReport, evaluate_drift
+from spy_der.deployment.evidence import (
+    EvidenceGate,
+    EvidenceMetrics,
+    EvidenceReport,
+    EvidenceStatus,
+    EvidenceThresholds,
+    evaluate_evidence,
+)
 from spy_der.deployment.manifest import (
     DEPLOYMENT_SCHEMA,
     DeploymentError,
@@ -46,6 +54,11 @@ __all__ = [
     "DeploymentPointer",
     "DriftLevel",
     "DriftReport",
+    "EvidenceGate",
+    "EvidenceMetrics",
+    "EvidenceReport",
+    "EvidenceStatus",
+    "EvidenceThresholds",
     "LiveExecutionGate",
     "ModelRegistry",
     "Notification",
@@ -63,6 +76,7 @@ __all__ = [
     "default_system_a_rollback_manifest",
     "default_system_b_primary_manifest",
     "evaluate_drift",
+    "evaluate_evidence",
     "freeze_deployment",
     "get_runbook",
     "promote",
