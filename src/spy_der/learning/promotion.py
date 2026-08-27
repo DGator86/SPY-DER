@@ -1,15 +1,9 @@
-"""Promotion to champion.json — by validated Dojo trial, or by human ack.
+"""Human-gated promotion to ``champion.json``.
 
-Two doors lead to ``champion.json`` and both are locked:
-
-* :func:`promote_pending` needs an operator to say ``PROMOTE``.
-* :func:`auto_promote_pending` needs a promotion trial report that says
-  ``validated`` — the Dojo re-ran the system with the recommended change and
-  every gate passed (see :mod:`spy_der.learning.promotion_trial`).
-
-Neither door opens on a recommendation alone. Every promotion snapshots the
-config it replaced into ``champion_history/`` so
-:func:`rollback_champion` can put the previous one back without a rebuild.
+The Dojo may discover, test, validate, and stage challengers autonomously, but
+it may not grant itself authority. A validated automatic trial is evidence for
+review; only :func:`promote_pending` may replace ``champion.json`` and it
+requires an explicit human ``PROMOTE`` acknowledgement.
 """
 
 from __future__ import annotations
@@ -99,9 +93,7 @@ def stage_pending_review(
         **payload,
     }
     atomic_write_json(target, body)
-    # Also keep a copy under challengers/ for audit.
-    challenger = _challengers_dir(configs_dir) / f"{candidate_id}.json"
-    atomic_write_json(challenger, body)
+    atomic_write_json(_challengers_dir(configs_dir) / f"{candidate_id}.json", body)
     return target
 
 
@@ -112,25 +104,22 @@ def list_pending(configs_dir: str | Path) -> list[StagedCandidate]:
     out: list[StagedCandidate] = []
     for path in sorted(root.glob("*.json")):
         payload = _read_json(path)
-        if payload is None:
-            continue
-        out.append(
-            StagedCandidate(
-                candidate_id=str(payload.get("candidate_id") or path.stem),
-                path=path,
-                payload=payload,
+        if payload is not None:
+            out.append(
+                StagedCandidate(
+                    candidate_id=str(payload.get("candidate_id") or path.stem),
+                    path=path,
+                    payload=payload,
+                )
             )
-        )
     return out
 
 
 def current_champion(configs_dir: str | Path) -> dict[str, Any] | None:
-    """The promoted config, or None when nothing has been promoted yet."""
     return _read_json(Path(configs_dir) / CHAMPION_FILENAME)
 
 
 def _archive_champion(configs_dir: str | Path) -> Path | None:
-    """Snapshot the outgoing champion so a promotion is always reversible."""
     champion = Path(configs_dir) / CHAMPION_FILENAME
     payload = _read_json(champion)
     if payload is None:
@@ -138,7 +127,6 @@ def _archive_champion(configs_dir: str | Path) -> Path | None:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     history = _subdir(configs_dir, HISTORY_DIRNAME)
     archived = history / f"champion-{stamp}.json"
-    # Second-granularity stamps collide when a promotion is rolled back at once.
     suffix = 1
     while archived.exists():
         archived = history / f"champion-{stamp}-{suffix}.json"
@@ -155,14 +143,16 @@ def _write_champion(
 ) -> Path:
     previous = _archive_champion(configs_dir)
     champion = Path(configs_dir) / CHAMPION_FILENAME
-    body = {
-        **payload,
-        "status": "champion",
-        "promoted_at": datetime.now(UTC).isoformat(),
-        "previous_champion": str(previous) if previous else None,
-        **extra,
-    }
-    atomic_write_json(champion, body)
+    atomic_write_json(
+        champion,
+        {
+            **payload,
+            "status": "champion",
+            "promoted_at": datetime.now(UTC).isoformat(),
+            "previous_champion": str(previous) if previous else None,
+            **extra,
+        },
+    )
     return champion
 
 
@@ -177,12 +167,12 @@ def _take_pending(configs_dir: str | Path, candidate_id: str) -> dict[str, Any]:
 
 
 def _retire_pending(configs_dir: str | Path, candidate_id: str) -> None:
-    """Move the staged file out of pending_review/ once it has been promoted."""
     pending = Path(configs_dir) / PENDING_DIRNAME / f"{candidate_id}.json"
-    if not pending.is_file():
-        return
-    promoted = _subdir(configs_dir, PROMOTED_DIRNAME) / f"{candidate_id}.json"
-    shutil.move(str(pending), str(promoted))
+    if pending.is_file():
+        shutil.move(
+            str(pending),
+            str(_subdir(configs_dir, PROMOTED_DIRNAME) / f"{candidate_id}.json"),
+        )
 
 
 def promote_pending(
@@ -211,46 +201,15 @@ def auto_promote_pending(
     validation: dict[str, Any],
     knobs: dict[str, Any] | None = None,
 ) -> Path:
-    """Promote automatically on the strength of a validated promotion trial.
-
-    ``validation`` is the report from
-    :func:`spy_der.learning.promotion_trial.run_promotion_trial`. It must say
-    ``status == "validated"`` and carry the gates that were checked — an
-    unvalidated or gate-less report is refused, so a caller cannot fabricate a
-    promotion by passing an empty dict.
-    """
-    if not isinstance(validation, dict):
-        raise PromotionError("validation report required")
-    if validation.get("status") != "validated":
-        raise PromotionError(
-            f"promotion trial not validated (status={validation.get('status')!r})"
-        )
-    gates = validation.get("gates")
-    if not isinstance(gates, list) or not gates:
-        raise PromotionError("validation report carries no gates")
-    failed = [g for g in gates if isinstance(g, dict) and not g.get("passed")]
-    if failed:
-        raise PromotionError(
-            "validation report has failing gates: "
-            + ", ".join(str(g.get("name")) for g in failed)
-        )
-
-    payload = _take_pending(configs_dir, candidate_id)
-    champion = _write_champion(
-        configs_dir,
-        payload=payload,
-        extra={
-            "promoted_by": "dojo_auto",
-            "validation": validation,
-            "knobs": dict(knobs) if knobs else validation.get("knobs") or {},
-        },
+    """Compatibility guard: automatic champion promotion is prohibited."""
+    del configs_dir, candidate_id, validation, knobs
+    raise PromotionError(
+        "automatic champion promotion is disabled; validated challengers must "
+        "remain pending until promote_pending(..., human_ack='PROMOTE')"
     )
-    _retire_pending(configs_dir, candidate_id)
-    return champion
 
 
 def rollback_champion(configs_dir: str | Path) -> Path | None:
-    """Restore the most recently archived champion. Returns its path, or None."""
     history = Path(configs_dir) / HISTORY_DIRNAME
     if not history.is_dir():
         return None
@@ -261,7 +220,9 @@ def rollback_champion(configs_dir: str | Path) -> Path | None:
     if payload is None:
         return None
     restored = {
-        k: v for k, v in payload.items() if k not in {"archived_at", "previous_champion"}
+        key: value
+        for key, value in payload.items()
+        if key not in {"archived_at", "previous_champion"}
     }
     champion = _write_champion(
         configs_dir,
