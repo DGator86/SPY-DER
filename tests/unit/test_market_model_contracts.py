@@ -4,6 +4,7 @@ from dataclasses import fields
 
 import pytest
 
+from spy_der.contracts.common import ValidationError
 from spy_der.contracts.forecasts import MarketForecastBundle
 from spy_der.contracts.market_model import (
     PROHIBITED_MODEL_FIELD_TOKENS,
@@ -13,7 +14,6 @@ from spy_der.contracts.market_model import (
     RegimePosterior,
     RegimeProbability,
 )
-from spy_der.contracts.common import ValidationError
 
 
 def _posterior() -> RegimePosterior:
