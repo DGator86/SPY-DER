@@ -1,7 +1,7 @@
 """Alpha V2 forecast-verification contracts.
 
 Verification is intentionally independent of whether the Trader acted on a
-forecast.  Every matured market forecast can therefore be scored, including
+forecast. Every matured market forecast can therefore be scored, including
 forecasts that produced WAIT, NO_EDGE, or ABSTAIN downstream.
 """
 
@@ -80,7 +80,7 @@ class MarketOutcome:
             require_finite(getattr(self, field_name), f"MarketOutcome.{field_name}")
         if self.start_price <= 0.0 or self.end_price <= 0.0:
             raise ValidationError(
-                ErrorCode.NON_POSITIVE_PRICE,
+                ErrorCode.MALFORMED_RECORD,
                 "MarketOutcome prices must be positive",
             )
         for field_name in ("realized_mfe", "realized_mae", "transition_minutes"):
