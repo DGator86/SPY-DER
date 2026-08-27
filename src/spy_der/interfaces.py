@@ -12,9 +12,15 @@ from spy_der.contracts import (
     JournalEvent,
     LegacyDecisionView,
     MarketForecastBundle,
+    MarketForecastVerification,
+    MarketOutcome,
+    MarketState,
+    MeasurementBundle,
     OrderIntent,
     OrderState,
     PositionState,
+    RegimeLifecycleForecast,
+    RegimePosterior,
     RiskDecision,
     RiskEnvelope,
     SystemDecision,
@@ -25,15 +31,71 @@ class MarketDataProvider(Protocol):
     def get_snapshot(self, timestamp: datetime) -> CanonicalMarketSnapshot: ...
 
 
+class ObservationEngine(Protocol):
+    """Convert a point-in-time snapshot into stable, versioned measurements."""
+
+    def build(self, snapshot: CanonicalMarketSnapshot) -> MeasurementBundle: ...
+
+
+class MarketStateEngine(Protocol):
+    """Describe the current market without producing a trading opinion."""
+
+    def build(self, measurements: MeasurementBundle) -> MarketState: ...
+
+
+class RegimeInferenceEngine(Protocol):
+    """Infer the full posterior over the current latent regime."""
+
+    def infer(self, state: MarketState) -> RegimePosterior: ...
+
+
+class RegimeLifecycleEngine(Protocol):
+    """Forecast regime persistence, successor state, and transition timing."""
+
+    def forecast(
+        self,
+        state: MarketState,
+        regime: RegimePosterior,
+    ) -> RegimeLifecycleForecast: ...
+
+
+class PhysicalMarketForecaster(Protocol):
+    """Produce physical market distribution P before candidate generation."""
+
+    def forecast(
+        self,
+        measurements: MeasurementBundle,
+        state: MarketState,
+        regime: RegimePosterior,
+        lifecycle: RegimeLifecycleForecast,
+    ) -> MarketForecastBundle: ...
+
+
+class MarketForecastVerifier(Protocol):
+    """Verify frozen physical forecasts against realized market outcomes."""
+
+    def verify(
+        self,
+        forecast: MarketForecastBundle,
+        outcome: MarketOutcome,
+    ) -> MarketForecastVerification: ...
+
+
 class FeaturePipeline(Protocol):
+    """Compatibility interface for the pre-Alpha-V2 feature pipeline."""
+
     def build(self, snapshot: CanonicalMarketSnapshot) -> FeatureBundle: ...
 
 
 class StructuralAnalyzer(Protocol):
+    """Legacy Trader/policy adapter; not an Alpha V2 market-model interface."""
+
     def analyze(self, features: FeatureBundle) -> LegacyDecisionView: ...
 
 
 class MarketForecaster(Protocol):
+    """Compatibility interface for the pre-Alpha-V2 forecast service."""
+
     def forecast(self, features: FeatureBundle) -> MarketForecastBundle: ...
 
 
