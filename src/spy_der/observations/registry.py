@@ -85,9 +85,12 @@ class ObservationRegistry:
 
 def _load_manifest(path: Path) -> dict[str, Any]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        raw: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ObservationRegistryError(f"unable to read registry manifest: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ObservationRegistryError("registry manifest must be a JSON object")
+    data: dict[str, Any] = {str(key): value for key, value in raw.items()}
     required = (
         "manifest_version",
         "source_dictionary",
