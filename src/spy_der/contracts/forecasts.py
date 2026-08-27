@@ -56,7 +56,7 @@ def _require_optional_probability(value: float | None, name: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class MarketForecastBundle:
-    """Canonical multi-horizon forecast object (spec §30)."""
+    """Canonical multi-horizon physical market forecast object (P)."""
 
     snapshot_id: str
     ts: str
@@ -70,6 +70,15 @@ class MarketForecastBundle:
     label_version: str = LABEL_VERSION
     # Convenience alias used by synthesis/smoke tests; prefer model_group_id.
     model_version: str = ""
+
+    # Alpha V2 market-model lineage. Empty strings retain compatibility with
+    # pre-reset forecasts; new physical forecasts should populate all available
+    # upstream IDs so P can be reproduced without policy/candidate context.
+    measurement_bundle_id: str = ""
+    market_state_id: str = ""
+    regime_posterior_id: str = ""
+    lifecycle_forecast_id: str = ""
+    calibration_version: str = ""
 
     p_up_5m: float | None = None
     p_up_15m: float | None = None
@@ -146,18 +155,29 @@ class MarketForecastBundle:
         object.__setattr__(self, "model_version", model_version)
 
         if not self.forecast_id:
+            identity_parts: list[object] = [
+                self.snapshot_id,
+                self.feature_version,
+                self.label_version,
+                self.model_group_id or self.model_version,
+            ]
+            lineage = (
+                self.measurement_bundle_id,
+                self.market_state_id,
+                self.regime_posterior_id,
+                self.lifecycle_forecast_id,
+                self.calibration_version,
+            )
+            # Preserve legacy forecast IDs when no Alpha V2 lineage is supplied,
+            # while making lineage-bearing forecasts content-addressable to the
+            # exact market-model chain that produced them.
+            if any(lineage):
+                identity_parts.extend(lineage)
+            identity_parts.extend((self.p_up_30m, self.expected_return_30m))
             object.__setattr__(
                 self,
                 "forecast_id",
-                deterministic_id(
-                    "fcst",
-                    self.snapshot_id,
-                    self.feature_version,
-                    self.label_version,
-                    self.model_group_id or self.model_version,
-                    self.p_up_30m,
-                    self.expected_return_30m,
-                ),
+                deterministic_id("fcst", *identity_parts),
             )
         if not self.content_hash:
             identity = {
@@ -168,18 +188,20 @@ class MarketForecastBundle:
             object.__setattr__(self, "content_hash", content_hash(identity))
 
     @property
-    def prob_up(self) -> float:
-        """Backward-compatible alias: primary horizon up-probability."""
+    def prob_up(self) -> float | None:
+        """Backward-compatible primary-horizon alias; missing stays missing."""
         if self.p_up_30m is not None:
             return self.p_up_30m
         for value in (self.p_up_15m, self.p_up_60m, self.p_up_close, self.p_up_5m):
             if value is not None:
                 return value
-        return 0.0
+        return None
 
     @property
-    def prob_down(self) -> float:
-        return 1.0 - self.prob_up
+    def prob_down(self) -> float | None:
+        """Complement of :attr:`prob_up`; unavailable direction remains unavailable."""
+        p_up = self.prob_up
+        return None if p_up is None else 1.0 - p_up
 
     def to_dict(self) -> dict[str, Any]:
         from dataclasses import asdict
