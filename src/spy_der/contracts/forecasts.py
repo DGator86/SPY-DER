@@ -168,18 +168,20 @@ class MarketForecastBundle:
             object.__setattr__(self, "content_hash", content_hash(identity))
 
     @property
-    def prob_up(self) -> float:
-        """Backward-compatible alias: primary horizon up-probability."""
+    def prob_up(self) -> float | None:
+        """Backward-compatible primary-horizon alias; missing stays missing."""
         if self.p_up_30m is not None:
             return self.p_up_30m
         for value in (self.p_up_15m, self.p_up_60m, self.p_up_close, self.p_up_5m):
             if value is not None:
                 return value
-        return 0.0
+        return None
 
     @property
-    def prob_down(self) -> float:
-        return 1.0 - self.prob_up
+    def prob_down(self) -> float | None:
+        """Complement of :attr:`prob_up`; unavailable direction remains unavailable."""
+        p_up = self.prob_up
+        return None if p_up is None else 1.0 - p_up
 
     def to_dict(self) -> dict[str, Any]:
         from dataclasses import asdict
