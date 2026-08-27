@@ -1,15 +1,13 @@
-"""Promotion to champion.json — by validated Dojo trial, or by human ack.
+"""Human-gated promotion to ``champion.json``.
 
-Two doors lead to ``champion.json`` and both are locked:
+The Dojo may discover, test, validate, and stage challengers autonomously, but
+it may not grant itself authority.  A validated automatic trial is evidence for
+review; only :func:`promote_pending` may replace ``champion.json`` and it
+requires an explicit human ``PROMOTE`` acknowledgement.
 
-* :func:`promote_pending` needs an operator to say ``PROMOTE``.
-* :func:`auto_promote_pending` needs a promotion trial report that says
-  ``validated`` — the Dojo re-ran the system with the recommended change and
-  every gate passed (see :mod:`spy_der.learning.promotion_trial`).
-
-Neither door opens on a recommendation alone. Every promotion snapshots the
-config it replaced into ``champion_history/`` so
-:func:`rollback_champion` can put the previous one back without a rebuild.
+Every human promotion snapshots the config it replaced into
+``champion_history/`` so :func:`rollback_champion` can restore it without a
+rebuild.
 """
 
 from __future__ import annotations
@@ -95,11 +93,11 @@ def stage_pending_review(
     body = {
         "candidate_id": candidate_id,
         "status": "pending_review",
+        # Retained for compatibility/audit only. It never grants authority.
         "auto_promote": bool(auto_promote),
         **payload,
     }
     atomic_write_json(target, body)
-    # Also keep a copy under challengers/ for audit.
     challenger = _challengers_dir(configs_dir) / f"{candidate_id}.json"
     atomic_write_json(challenger, body)
     return target
@@ -138,7 +136,6 @@ def _archive_champion(configs_dir: str | Path) -> Path | None:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     history = _subdir(configs_dir, HISTORY_DIRNAME)
     archived = history / f"champion-{stamp}.json"
-    # Second-granularity stamps collide when a promotion is rolled back at once.
     suffix = 1
     while archived.exists():
         archived = history / f"champion-{stamp}-{suffix}.json"
@@ -211,42 +208,17 @@ def auto_promote_pending(
     validation: dict[str, Any],
     knobs: dict[str, Any] | None = None,
 ) -> Path:
-    """Promote automatically on the strength of a validated promotion trial.
+    """Compatibility guard: automatic champion promotion is prohibited.
 
-    ``validation`` is the report from
-    :func:`spy_der.learning.promotion_trial.run_promotion_trial`. It must say
-    ``status == "validated"`` and carry the gates that were checked — an
-    unvalidated or gate-less report is refused, so a caller cannot fabricate a
-    promotion by passing an empty dict.
+    Older code called this after a validated Dojo trial.  Keeping the symbol
+    makes stale callers fail loudly rather than silently bypassing governance.
+    The candidate remains in ``pending_review`` for an explicit human decision.
     """
-    if not isinstance(validation, dict):
-        raise PromotionError("validation report required")
-    if validation.get("status") != "validated":
-        raise PromotionError(
-            f"promotion trial not validated (status={validation.get('status')!r})"
-        )
-    gates = validation.get("gates")
-    if not isinstance(gates, list) or not gates:
-        raise PromotionError("validation report carries no gates")
-    failed = [g for g in gates if isinstance(g, dict) and not g.get("passed")]
-    if failed:
-        raise PromotionError(
-            "validation report has failing gates: "
-            + ", ".join(str(g.get("name")) for g in failed)
-        )
-
-    payload = _take_pending(configs_dir, candidate_id)
-    champion = _write_champion(
-        configs_dir,
-        payload=payload,
-        extra={
-            "promoted_by": "dojo_auto",
-            "validation": validation,
-            "knobs": dict(knobs) if knobs else validation.get("knobs") or {},
-        },
+    del configs_dir, candidate_id, validation, knobs
+    raise PromotionError(
+        "automatic champion promotion is disabled; validated challengers must "
+        "remain pending until promote_pending(..., human_ack='PROMOTE')"
     )
-    _retire_pending(configs_dir, candidate_id)
-    return champion
 
 
 def rollback_champion(configs_dir: str | Path) -> Path | None:
