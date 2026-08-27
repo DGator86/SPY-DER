@@ -1,4 +1,4 @@
-"""Human-gated promotion reviews (no automatic promotion)."""
+"""Human-gated deployment promotion with objective evidence requirements."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from spy_der.contracts.common import content_hash
+from spy_der.deployment.evidence import EvidenceReport, EvidenceStatus
 from spy_der.deployment.manifest import (
     DeploymentError,
     DeploymentManifest,
@@ -34,12 +35,14 @@ class PromotionReviewPacket:
     drift_status: tuple[tuple[str, str], ...] = ()
     known_weaknesses: tuple[str, ...] = ()
     git_commit: str = ""
+    evidence_report: EvidenceReport | None = None
     reviewer: str | None = None
     approval_status: str = "pending"
     approval_note: str = ""
     review_timestamp: str | None = None
 
     def packet_hash(self) -> str:
+        evidence = self.evidence_report.to_dict() if self.evidence_report is not None else None
         return content_hash(
             {
                 "review_id": self.review_id,
@@ -50,6 +53,7 @@ class PromotionReviewPacket:
                 "rollback": self.rollback_target.deployment_id,
                 "folds": list(self.fold_definitions),
                 "git_commit": self.git_commit,
+                "evidence": evidence,
             }
         )
 
@@ -67,6 +71,21 @@ def validate_promotion_packet(packet: PromotionReviewPacket) -> None:
         raise DeploymentError("promotion requires rollback_target")
     if not packet.fold_definitions:
         raise DeploymentError("promotion requires fold_definitions")
+
+
+def _validate_champion_evidence(packet: PromotionReviewPacket) -> None:
+    report = packet.evidence_report
+    if report is None:
+        raise DeploymentError("champion promotion requires an evidence_report")
+    if report.automatic_live_enable:
+        raise DeploymentError("evidence report may not grant automatic live authority")
+    if report.status is not EvidenceStatus.SIGNIFICANT_EDGE_CANDIDATE:
+        raise DeploymentError(
+            "champion promotion requires SIGNIFICANT_EDGE_CANDIDATE evidence; "
+            f"got {report.status.value}"
+        )
+    if report.failed_gates:
+        raise DeploymentError("champion evidence contains failed gates")
 
 
 def promote(
@@ -97,6 +116,7 @@ def promote(
             raise DeploymentError(
                 f"cannot promote status {current_status!r} to champion"
             )
+        _validate_champion_evidence(packet)
         assert_mode_permission("candidate", "candidate")
 
     if set_status is not None:
@@ -105,6 +125,9 @@ def promote(
             set_status(model_id, target_mode.value, note)
 
     ts = datetime.now(tz=UTC).isoformat()
+    evidence_status = (
+        packet.evidence_report.status.value if packet.evidence_report is not None else "none"
+    )
     return DeploymentManifest(
         mode=target_mode,
         config_version=packet.rollback_target.config_version,
@@ -121,5 +144,10 @@ def promote(
         account_id=packet.rollback_target.account_id,
         git_commit=packet.git_commit or packet.rollback_target.git_commit,
         previous_deployment_id=packet.rollback_target.deployment_id,
-        notes=(f"promoted_by={reviewer}", f"review={packet.review_id}", f"at={ts}"),
+        notes=(
+            f"promoted_by={reviewer}",
+            f"review={packet.review_id}",
+            f"evidence={evidence_status}",
+            f"at={ts}",
+        ),
     )
