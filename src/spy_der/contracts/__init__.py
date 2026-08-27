@@ -119,6 +119,7 @@ from .models import (
     SystemDecision,
     V3DecisionView,
 )
+from .observations import MEASUREMENT_BUNDLE_VERSION, MeasurementBundle, MeasurementValue
 from .outcomes import (
     OUTCOME_SCHEMA,
     CounterfactualOutcome,
@@ -186,6 +187,7 @@ __all__ = [
     "LIFECYCLE_FORECAST_VERSION",
     "MARKET_PACKET_SCHEMA",
     "MARKET_STATE_VERSION",
+    "MEASUREMENT_BUNDLE_VERSION",
     "META_MODEL_VERSION",
     "OUTCOME_PACKET_SCHEMA",
     "OUTCOME_SCHEMA",
@@ -247,6 +249,8 @@ __all__ = [
     "MarketPacket",
     "MarketState",
     "MarketStateAxis",
+    "MeasurementBundle",
+    "MeasurementValue",
     "MetaAction",
     "MetaDecision",
     "MissingInputError",
