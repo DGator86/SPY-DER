@@ -1,0 +1,40 @@
+{
+  "manifest_version": "alpha-v2-donors.v1",
+  "captured_date": "2026-08-27",
+  "donors": [
+    {
+      "repository": "DGator86/Alpha-Spy",
+      "commit_sha": "4cc4907a87792a4f3f2a8c07d965b9447d2e8b16",
+      "role": "production-data, sandbox-paper, physical-P/Q, replay, validation, broker-reconciliation donor",
+      "allowed_migration": [
+        "point-in-time market-data transport and integrity",
+        "P/Q distribution separation",
+        "paper/sandbox execution and reconciliation",
+        "forecast verification and calibration",
+        "promotion evidence collection",
+        "deterministic replay",
+        "operational fail-closed controls"
+      ],
+      "prohibited_shortcut": "Do not copy fitted strategy thresholds or historical trade rules directly into the Alpha V2 market model."
+    },
+    {
+      "repository": "DGator86/Beta-spy",
+      "commit_sha": "ac2ac8dae7965276f27a6da748a19b06068e0086",
+      "role": "independent breadth/constituent/situation forecasting witness",
+      "allowed_migration": [
+        "causal constituent measurements",
+        "breadth and participation features",
+        "independent forecast probabilities",
+        "uncertainty and disagreement diagnostics",
+        "situation-state evidence after leakage audit"
+      ],
+      "prohibited_shortcut": "Do not turn Beta's named debit/condor situations into Alpha V2 trading rules without independent out-of-sample P/Q valuation evidence."
+    }
+  ],
+  "rules": [
+    "Every migrated donor component must retain source repository and commit provenance.",
+    "Donor code must pass SPY-DER contracts, point-in-time rules, strict CI, replay and evidence gates before promotion.",
+    "No donor's historical P&L may redefine MarketState or the physical forecast P.",
+    "Independent donor disagreement is retained as evidence rather than averaged away automatically."
+  ]
+}
