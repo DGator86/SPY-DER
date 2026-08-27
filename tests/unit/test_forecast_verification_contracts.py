@@ -87,7 +87,7 @@ def test_matured_verification_is_trade_independent() -> None:
 
 
 def test_return_quantiles_must_be_ordered() -> None:
-    with pytest.raises(ValidationError, match="q10 cannot exceed q50"):
+    with pytest.raises(ValidationError, match="return_q10 cannot exceed return_q50"):
         MarketForecastVerification(
             forecast_id="fcst-1",
             snapshot_id="snap-1",
