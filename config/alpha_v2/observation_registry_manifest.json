@@ -1,0 +1,37 @@
+{
+  "manifest_version": "alpha-v2-observation-registry.v1",
+  "source_dictionary": "SPY_UTPM_Variable_Dictionary.csv",
+  "source_sha256": "60d594c3591ba5f56ceaeba9dc23803795df40a5267de079559d092ccc0ad16a",
+  "source_rows": 441,
+  "admissible_pre_trader_modules": [
+    "Infrastructure",
+    "Raw Market Data",
+    "Technical",
+    "Psychological"
+  ],
+  "prohibited_pre_trader_modules": [
+    "Decision",
+    "Output"
+  ],
+  "admissible_variable_count": 385,
+  "admissible_tier_counts": {
+    "Core": 264,
+    "Research": 102,
+    "Institutional": 19
+  },
+  "module_counts": {
+    "Infrastructure": 35,
+    "Raw Market Data": 30,
+    "Technical": 256,
+    "Psychological": 64,
+    "Decision": 25,
+    "Output": 31
+  },
+  "rules": [
+    "Only variables from admissible_pre_trader_modules may enter the Observation Engine, Market State, Regime Model, or physical forecast P.",
+    "Decision and Output variables are downstream Trader or reporting fields and may not be forecast sensors.",
+    "A dictionary change requires a new source hash, manifest version, measurement dictionary version, and reproducibility test.",
+    "Research and Institutional variables may be unavailable without being imputed silently.",
+    "Normalization state must be versioned independently of the dictionary and fitted without future data."
+  ]
+}
