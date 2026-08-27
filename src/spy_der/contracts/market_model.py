@@ -14,12 +14,12 @@ objects regardless of any later trade outcome.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from spy_der.contracts.common import (
     SCHEMA_VERSION,
-    ValidationError,
     ErrorCode,
+    ValidationError,
     deterministic_id,
     require_finite,
     require_non_negative,
@@ -105,8 +105,8 @@ def _validate_probability_vector(
 class MarketStateAxis:
     """One standardized continuous description of current market state.
 
-    ``value`` is intentionally not bounded to [0, 1].  State axes may be robust
-    z-scores or other stable normalized quantities.  ``confidence`` describes
+    ``value`` is intentionally not bounded to [0, 1]. State axes may be robust
+    z-scores or other stable normalized quantities. ``confidence`` describes
     measurement support and is a probability-like [0, 1] value.
     """
 
@@ -196,7 +196,7 @@ class RegimePosterior:
     """Full posterior over the current latent regime.
 
     Consumers should use the probability vector rather than treating the
-    dominant label as certain.  The dominant label remains a diagnostic view.
+    dominant label as certain. The dominant label remains a diagnostic view.
     """
 
     market_state_id: str
@@ -252,7 +252,7 @@ class RegimePosterior:
 
 @dataclass(frozen=True, slots=True)
 class RegimeLifecycleForecast:
-    """Forecast of persistence, transition destination, and transition timing."""
+    """Forecast persistence, transition destination, and transition timing."""
 
     regime_posterior_id: str
     current_regime: str
