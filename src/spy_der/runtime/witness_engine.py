@@ -24,13 +24,13 @@ from spy_der.journal.store import SqliteJournalStore
 from spy_der.runtime.artifacts import StageArtifactStore
 from spy_der.runtime.engine import (
     _NO_FORECAST_GROUP,
-    _Stores,
     DEFAULT_STATE_ROOT,
     DEPLOYMENT_ID,
     ENV_FORECAST_GROUP,
     ENV_FORECAST_LOAD_MODE,
     EngineConfig,
     EngineService,
+    _Stores,
 )
 
 log = logging.getLogger("spy_der.engine")
