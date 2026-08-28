@@ -35,6 +35,7 @@ from spy_der.runtime.market_service import (
 )
 
 _DEFAULT_STATE_ROOT = "/var/lib/spy-der"
+_DEFAULT_BETA_STATE_URL = "http://127.0.0.1:8790"
 ENV_BETA_STATE_URL = "SPY_DER_BETA_STATE_URL"
 ENV_BETA_MAX_AGE_SECONDS = "SPY_DER_BETA_MAX_AGE_SECONDS"
 
@@ -51,7 +52,14 @@ class WitnessMarketService(MarketService):
     def _client(self) -> BetaStateClient | None:
         if self._beta_client is not None:
             return self._beta_client
-        url = os.environ.get(ENV_BETA_STATE_URL, "").strip()
+        # Production colocates Alpha and Beta. Defaulting to the loopback endpoint
+        # makes the witness active after a normal package deploy even when the
+        # existing secret env file predates this feature. Operators can still
+        # disable it explicitly by setting SPY_DER_BETA_STATE_URL to an empty value.
+        if ENV_BETA_STATE_URL in os.environ:
+            url = os.environ.get(ENV_BETA_STATE_URL, "").strip()
+        else:
+            url = _DEFAULT_BETA_STATE_URL
         if not url:
             return None
         try:
