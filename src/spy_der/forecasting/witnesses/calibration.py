@@ -14,9 +14,9 @@ P&L.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
