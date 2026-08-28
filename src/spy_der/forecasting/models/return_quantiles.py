@@ -18,7 +18,7 @@ from spy_der.forecasting.models.base import (
 
 __all__ = ["QUANTILES", "QUANTILE_HORIZONS", "ReturnQuantileConfig", "ReturnQuantileModel"]
 
-QUANTILE_HORIZONS: tuple[str, ...] = ("30m", "60m", "close")
+QUANTILE_HORIZONS: tuple[str, ...] = ("15m", "30m", "60m", "close")
 QUANTILES: tuple[float, ...] = (0.1, 0.5, 0.9)
 
 
@@ -50,6 +50,8 @@ class ReturnQuantileModel:
         sessions: Sequence[str] | None = None,
     ) -> ReturnQuantileModel:
         del sessions  # reserved for grouped evaluation
+        if self.config.horizon not in QUANTILE_HORIZONS:
+            raise ValueError(f"unsupported horizon {self.config.horizon!r}")
         y_arr = np.asarray(y, dtype=float)
         x = self.vectorizer.fit_transform(rows)
         self.estimators = {}

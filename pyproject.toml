@@ -18,6 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "build>=1.2",
   "pytest>=8.2",
   "pytest-cov>=5.0",
   "mypy>=1.11",
@@ -31,10 +32,10 @@ spy-der-ai-check = "spy_der.runtime.ai_check:main"
 spy-der-decision-service = "spy_der.runtime.decision_service:main"
 spy-der-dashboard-api = "spy_der.runtime.dashboard_api:main"
 spy-der-validate = "spy_der.runtime.validation:main"
-spy-der-engine = "spy_der.runtime.engine:main"
+spy-der-engine = "spy_der.runtime.witness_engine:main"
 spy-der-settlement = "spy_der.runtime.settlement:main"
 spy-der-dojo = "spy_der.runtime.dojo_runner:main"
-spy-der-market = "spy_der.runtime.market_service:main"
+spy-der-market = "spy_der.runtime.witness_market_service:main"
 spy-der-mcp = "spy_der.runtime.mcp_server:main"
 spy-der-train = "spy_der.runtime.training:main"
 spy-der-import-zerodte = "spy_der.runtime.zerodte_import:main"
@@ -64,6 +65,7 @@ source = ["spy_der"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+fail_under = 80
 
 [tool.ruff]
 line-length = 100
@@ -96,4 +98,3 @@ module = [
   "spy_der.forecasting.models.competing_risk",
 ]
 ignore_errors = true
-

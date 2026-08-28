@@ -24,11 +24,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     cmd, *rest = argv
     if cmd in {"market", "market-service"}:
-        from spy_der.runtime.market_service import main as market_main
+        from spy_der.runtime.witness_market_service import main as market_main
 
         return market_main(rest)
     if cmd in {"engine", "engine-service"}:
-        from spy_der.runtime.engine import main as engine_main
+        from spy_der.runtime.witness_engine import main as engine_main
 
         return engine_main(rest)
     if cmd in {"settlement", "settle"}:

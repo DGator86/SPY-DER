@@ -1,10 +1,4 @@
-"""Automatic promotion — the trial, the gates, and what it enacts.
-
-The Dojo may now write champion.json without a human. These tests pin the
-conditions under which it does, and (mostly) the conditions under which it
-refuses: a promotion that fires on thin evidence, on a config that loses to the
-incumbent, or twice in one afternoon is the failure mode worth catching.
-"""
+"""Dojo promotion trials may discover edge, but authority remains human-gated."""
 
 from __future__ import annotations
 
@@ -20,9 +14,7 @@ from typing import Any
 import pytest
 from dojo_tape import seed_tape
 
-from spy_der.contracts.integration import (
-    MarketCandidateView,
-)
+from spy_der.contracts.integration import MarketCandidateView
 from spy_der.decisions.champion import (
     champion_provenance,
     load_champion_knobs,
@@ -43,9 +35,6 @@ from spy_der.learning.promotion import (
 )
 from spy_der.learning.promotion_trial import PromotionThresholds, run_promotion_trial
 
-# --------------------------------------------------------------------------- #
-# Tape: half the snapshots are out-of-distribution and lose money             #
-# --------------------------------------------------------------------------- #
 SESSIONS = ["2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23"]
 
 
@@ -63,12 +52,7 @@ def _candidate(cid: str = "c1") -> MarketCandidateView:
 
 
 def _seed_ood_tape(root: Path, *, ticks: int = 40) -> FileMarketExperienceProvider:
-    """Tape where high-uncertainty ticks lose and calm ticks win.
-
-    A champion that trades everything nets a loss; a challenger that stands down
-    when ``forecast_uncertainty`` is high keeps only the winners. That is a real
-    edge the trial can measure, rather than one asserted by a hypothesis.
-    """
+    """Tape where high-uncertainty ticks lose and calm ticks win."""
     return seed_tape(
         root,
         pnl_for_tick=lambda tick: -0.30 if tick % 2 == 0 else 0.10,
@@ -96,17 +80,7 @@ def _clear_champion_cache() -> Any:
     reset_champion_cache()
 
 
-# --------------------------------------------------------------------------- #
-# Import graph                                                                #
-# --------------------------------------------------------------------------- #
 def test_learning_package_imports_on_its_own() -> None:
-    """`python -c "from spy_der.learning.promotion import rollback_champion"`.
-
-    spy_der.dojo's package __init__ imports the runner, which imports learning;
-    a module-level dojo import from learning therefore made that command — the
-    documented rollback path — die on a circular import depending only on which
-    package the operator touched first.
-    """
     subprocess.run(
         [
             sys.executable,
@@ -121,14 +95,10 @@ def test_learning_package_imports_on_its_own() -> None:
     )
 
 
-# --------------------------------------------------------------------------- #
-# Knobs                                                                       #
-# --------------------------------------------------------------------------- #
 def test_knobs_only_ever_reduce_exposure() -> None:
     knobs = DecisionKnobs.from_mapping(
         {"risk_max_size_scalar": 0.75, "min_confidence": 0.6, "prefer_abstain_on_ood": True}
     )
-    # A cap, never a lift: a packet already below the knob keeps its own scalar.
     assert knobs.effective_risk(1.0) == pytest.approx(0.75)
     assert knobs.effective_risk(0.2) == pytest.approx(0.2)
     assert OOD_VETO in knobs.effective_hard_vetoes((), 0.9)
@@ -147,7 +117,6 @@ def test_knobs_ignore_junk_and_report_noop() -> None:
 
 
 def test_hypotheses_are_single_knob_and_testable() -> None:
-    """Each candidate must be attributable — the trial scores one change."""
     for hypothesis in generate_hypotheses(["negative_pnl", "low_win_rate"]):
         knobs = actionable_knobs(hypothesis.change)
         assert len(knobs) <= 1, hypothesis.hypothesis_id
@@ -155,9 +124,6 @@ def test_hypotheses_are_single_knob_and_testable() -> None:
     assert ids == ["h-0-negative_pnl-ood_abstain", "h-0-negative_pnl-confidence_floor"]
 
 
-# --------------------------------------------------------------------------- #
-# The trial                                                                   #
-# --------------------------------------------------------------------------- #
 def test_trial_validates_a_change_that_beats_the_champion(tmp_path: Path) -> None:
     experience = _seed_ood_tape(tmp_path / "experience")
     trial = run_promotion_trial(
@@ -168,7 +134,6 @@ def test_trial_validates_a_change_that_beats_the_champion(tmp_path: Path) -> Non
     )
     assert trial.status == "validated", trial.note
     assert trial.blocking_gate is None
-    # It won by dropping the losing half of the tape, not by trading more.
     assert trial.candidate["total_pnl"] > trial.incumbent["total_pnl"]
     assert trial.candidate["trades"] < trial.incumbent["trades"]
     assert {g.name for g in trial.gates} == {
@@ -186,8 +151,6 @@ def test_trial_validates_a_change_that_beats_the_champion(tmp_path: Path) -> Non
 
 def test_trial_rejects_a_change_with_no_edge(tmp_path: Path) -> None:
     experience = _seed_ood_tape(tmp_path / "experience")
-    # Standing down when uncertainty is high is what wins on this tape; a knob
-    # that never fires (threshold above every tick) can only tie.
     trial = run_promotion_trial(
         _cfg(tmp_path),
         changes={"prefer_abstain_on_ood": True, "ood_threshold": 5.0},
@@ -256,100 +219,58 @@ def test_trial_rejects_when_the_synthetic_panel_disagrees(tmp_path: Path) -> Non
     assert trial.blocking_gate == "universe"
 
 
-# --------------------------------------------------------------------------- #
-# Writing champion.json                                                       #
-# --------------------------------------------------------------------------- #
-def _stage(configs: Path, candidate_id: str = "cand-1") -> None:
+def _stage(configs: Path, candidate_id: str = "cand-1", **knobs: Any) -> None:
     stage_pending_review(
         configs,
         candidate_id=candidate_id,
-        payload={"knobs": {"prefer_abstain_on_ood": True}},
+        payload={"knobs": knobs or {"prefer_abstain_on_ood": True}},
         auto_promote=True,
     )
 
 
-def test_auto_promote_requires_a_validated_report(tmp_path: Path) -> None:
+def test_automatic_champion_promotion_is_hard_disabled(tmp_path: Path) -> None:
     configs = tmp_path / "configs"
     _stage(configs)
-    for bad in (
-        {},
-        {"status": "rejected", "gates": [{"name": "pnl_edge", "passed": False}]},
-        {"status": "validated"},
-        {"status": "validated", "gates": []},
-        {
-            "status": "validated",
-            "gates": [{"name": "pnl_edge", "passed": False}],
-        },
-    ):
-        with pytest.raises(PromotionError):
-            auto_promote_pending(configs, "cand-1", validation=bad)
+    validation = {"status": "validated", "gates": [{"name": "pnl_edge", "passed": True}]}
+    with pytest.raises(PromotionError, match="automatic champion promotion is disabled"):
+        auto_promote_pending(configs, "cand-1", validation=validation)
     assert (configs / "champion.json").exists() is False
+    assert (configs / "pending_review" / "cand-1.json").is_file()
 
 
-def test_auto_promote_writes_champion_and_keeps_rollback(tmp_path: Path) -> None:
+def test_human_promotion_requires_ack_and_is_reversible(tmp_path: Path) -> None:
     configs = tmp_path / "configs"
     _stage(configs, "cand-1")
-    validation = {"status": "validated", "gates": [{"name": "pnl_edge", "passed": True}]}
-    champion = auto_promote_pending(
-        configs, "cand-1", validation=validation, knobs={"prefer_abstain_on_ood": True}
-    )
-    payload = json.loads(champion.read_text(encoding="utf-8"))
-    assert payload["status"] == "champion"
-    assert payload["promoted_by"] == "dojo_auto"
-    assert payload["knobs"] == {"prefer_abstain_on_ood": True}
-    assert payload["promoted_at"]
-    # Staged file is retired, not left to be promoted twice.
-    assert (configs / "pending_review" / "cand-1.json").exists() is False
-    assert (configs / "promoted" / "cand-1.json").is_file()
+    with pytest.raises(PromotionError):
+        promote_pending(configs, "cand-1", human_ack="yes")
+    first = promote_pending(configs, "cand-1", human_ack="PROMOTE")
+    first_payload = json.loads(first.read_text(encoding="utf-8"))
+    assert first_payload["promoted_by"] == "human"
 
-    # A second promotion archives the first, and rollback puts it back.
-    _stage(configs, "cand-2")
-    auto_promote_pending(configs, "cand-2", validation=validation, knobs={"min_confidence": 0.6})
+    _stage(configs, "cand-2", min_confidence=0.6)
+    promote_pending(configs, "cand-2", human_ack="PROMOTE")
     assert current_champion(configs)["candidate_id"] == "cand-2"
     restored = rollback_champion(configs)
     assert restored is not None
     assert current_champion(configs)["candidate_id"] == "cand-1"
 
 
-def test_human_promotion_path_still_requires_ack(tmp_path: Path) -> None:
-    configs = tmp_path / "configs"
-    _stage(configs)
-    with pytest.raises(PromotionError):
-        promote_pending(configs, "cand-1", human_ack="yes")
-    champion = promote_pending(configs, "cand-1", human_ack="PROMOTE")
-    payload = json.loads(champion.read_text(encoding="utf-8"))
-    assert payload["promoted_by"] == "human"
-
-
-# --------------------------------------------------------------------------- #
-# What a promotion changes downstream                                         #
-# --------------------------------------------------------------------------- #
-def test_promoted_champion_is_read_by_the_live_decision_path(tmp_path: Path) -> None:
+def test_human_promoted_champion_is_read_by_live_decision_path(tmp_path: Path) -> None:
     configs = tmp_path / "configs"
     assert load_champion_knobs(configs).is_noop is True
-    _stage(configs)
-    auto_promote_pending(
-        configs,
-        "cand-1",
-        validation={"status": "validated", "gates": [{"name": "pnl_edge", "passed": True}]},
-        knobs={"prefer_abstain_on_ood": True, "min_confidence": 0.6},
-    )
+    _stage(configs, prefer_abstain_on_ood=True, min_confidence=0.6)
+    promote_pending(configs, "cand-1", human_ack="PROMOTE")
     reset_champion_cache()
     knobs = load_champion_knobs(configs)
     assert knobs.prefer_abstain_on_ood is True
     assert knobs.min_confidence == pytest.approx(0.6)
-    assert champion_provenance(configs)["promoted_by"] == "dojo_auto"
+    assert champion_provenance(configs)["promoted_by"] == "human"
 
 
 def test_champion_knobs_kill_switch(tmp_path: Path, monkeypatch: Any) -> None:
     configs = tmp_path / "configs"
-    _stage(configs)
-    auto_promote_pending(
-        configs,
-        "cand-1",
-        validation={"status": "validated", "gates": [{"name": "pnl_edge", "passed": True}]},
-        knobs={"min_confidence": 0.6},
-    )
+    _stage(configs, min_confidence=0.6)
+    promote_pending(configs, "cand-1", human_ack="PROMOTE")
     reset_champion_cache()
     monkeypatch.setenv("SPY_DER_CHAMPION_KNOBS", "0")
     assert load_champion_knobs(configs).is_noop is True
@@ -363,47 +284,18 @@ def test_malformed_champion_never_breaks_the_decision_path(tmp_path: Path) -> No
     assert load_champion_knobs(configs).is_noop is True
 
 
-# --------------------------------------------------------------------------- #
-# End to end through run_dojo                                                 #
-# --------------------------------------------------------------------------- #
-def test_run_dojo_promotes_without_a_human(tmp_path: Path) -> None:
+def test_run_dojo_cannot_self_promote_a_validated_trial(tmp_path: Path) -> None:
     experience = _seed_ood_tape(tmp_path / "experience")
-    cfg = _cfg(tmp_path)
-    out = run_dojo(cfg, experience=experience)
-
+    out = run_dojo(_cfg(tmp_path), experience=experience)
     learner = out["metrics"]["phases"]["learner"]
     promotion = out["metrics"]["phases"]["promotion"]
     assert learner["outcome"] == "promotion_recommended"
-    assert promotion["status"] == "validated", promotion["note"]
-    assert promotion["enacted"] is True
-    assert any(f["flag"] == "champion_promoted" for f in out["flags"])
-    assert "Learner promoted a safer setting" in out["summary"]
-
-    champion = current_champion(tmp_path / "configs")
-    assert champion is not None
-    assert champion["promoted_by"] == "dojo_auto"
-    assert champion["knobs"] == {"prefer_abstain_on_ood": True}
-    # The evidence that justified it travels with the config.
-    assert champion["validation"]["status"] == "validated"
-    assert all(g["passed"] for g in champion["validation"]["gates"])
-
-
-def test_run_dojo_does_not_promote_twice_in_the_cooldown(tmp_path: Path) -> None:
-    experience = _seed_ood_tape(tmp_path / "experience")
-    run_dojo(_cfg(tmp_path), experience=experience)
-    first = current_champion(tmp_path / "configs")
-
-    reset_champion_cache()
-    out = run_dojo(_cfg(tmp_path), experience=experience)
-    promotion = out["metrics"]["phases"]["promotion"]
+    # The compatibility guard is surfaced by the old runner as a write failure;
+    # critically, authority is unchanged and no champion file is created.
+    assert promotion["status"] == "promotion_failed"
     assert promotion["enacted"] is False
-    # Three refusals are all correct here: the champion now carries the knobs,
-    # so the tape no longer diagnoses a problem (no_candidate); or a candidate
-    # is staged but ties the incumbent (pnl_edge); or the cooldown holds.
-    assert promotion["status"] in {"no_candidate", "rejected"}
-    if promotion["status"] == "rejected":
-        assert promotion["blocking_gate"] in {"cooldown", "pnl_edge"}
-    assert current_champion(tmp_path / "configs")["promoted_at"] == first["promoted_at"]
+    assert (tmp_path / "configs" / "champion.json").exists() is False
+    assert any(f["flag"] == "promotion_write_failed" for f in out["flags"])
 
 
 def test_run_dojo_auto_promote_can_be_switched_off(tmp_path: Path) -> None:
