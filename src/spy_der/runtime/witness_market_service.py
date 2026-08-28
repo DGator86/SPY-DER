@@ -1,6 +1,6 @@
 """Network-enabled market runtime with frozen independent forecast witnesses.
 
-The deterministic engine remains network-isolated.  This front-of-pipeline
+The deterministic engine remains network-isolated. This front-of-pipeline
 service samples Beta-spy at the same cadence as SPY-DER market snapshots and
 writes a sibling integrity-checked artifact keyed to the market snapshot id.
 Replay therefore sees the exact witness that was available at decision time.
@@ -27,17 +27,13 @@ from spy_der.market_data.composite import CompositeFeed
 from spy_der.market_data.recording import build_record
 from spy_der.runtime.artifacts import StageArtifactStore
 from spy_der.runtime.market_service import (
-    DEFAULT_STATE_ROOT if False else MarketService,  # type: ignore[misc]
-)
-from spy_der.runtime.market_service import (
+    MarketService,
     MarketServiceConfig,
     _DEFAULT_PROVIDERS,
     _DEFAULT_SETTLEMENT_PROVIDER,
     _ensure_trailing_newline,
 )
 
-# Keep the name local rather than importing a private constant that does not
-# exist in older installations.
 _DEFAULT_STATE_ROOT = "/var/lib/spy-der"
 ENV_BETA_STATE_URL = "SPY_DER_BETA_STATE_URL"
 ENV_BETA_MAX_AGE_SECONDS = "SPY_DER_BETA_MAX_AGE_SECONDS"
