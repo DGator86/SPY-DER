@@ -42,7 +42,7 @@ spy-der-import-zerodte = "spy_der.runtime.zerodte_import:main"
 spy-der-repair-recording = "spy_der.runtime.repair_recording:main"
 
 [tool.setuptools]
-package-dir = {"" = "src"]
+package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
