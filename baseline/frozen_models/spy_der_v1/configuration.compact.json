@@ -1,0 +1,118 @@
+{
+  "configuration_name": "SPY-DER Best Validated Configuration",
+  "version": "1.0.0-synthetic-validated",
+  "governance": {
+    "synthetic_only": true,
+    "real_market_validation_required": true,
+    "retune_before_initial_real_replay": false,
+    "path_forecast_fan": "disabled",
+    "state_alerts": "shadow_only",
+    "live_execution": "prohibited"
+  },
+  "causal_contract": {
+    "rule": "A forecast at origin t may use only observations with available_at <= t.",
+    "feature_windows": "trailing_or_current_only",
+    "future_returns": "labels_only",
+    "late_revisions": "append_only",
+    "future_mutation_test": "required_exact_zero_change",
+    "splits": {
+      "train_worlds": "0-599",
+      "alpha_tune_worlds": "600-699",
+      "calibration_worlds": "700-799",
+      "test_worlds": "800-999"
+    }
+  },
+  "data_quality_gates": {
+    "minimum_constituent_coverage": 0.98,
+    "maximum_constituent_missing_minutes": 3,
+    "maximum_spy_quote_age_seconds": 30,
+    "maximum_option_snapshot_age_seconds": 60,
+    "minimum_live_option_fraction": 0.9
+  },
+  "feature_blocks": {
+    "SPY momentum": ["ret1", "ret5", "ret15", "ret30"],
+    "SPY VWAP/Bollinger": ["spy_vwap_z", "spy_boll_pos", "spy_boll_width", "spy_boll_slope5"],
+    "Original tensor": ["original_tensor", "tensor_slope_5", "tensor_accel_5", "directional_core"],
+    "Constituent field": ["cap_field", "equal_weight_field", "effective_constituent_field", "field_slope_5"],
+    "Breadth/dispersion": ["breadth_field", "dispersion", "breadth_slope5"],
+    "Sector/lead": ["top10_field", "lead_gap_equal_minus_top10", "sector_coherence", "sector_dispersion"],
+    "GEX level": ["gex_local_true", "gex_local_proxy", "gex_gross", "gamma_regime"],
+    "GEX force/walls": ["gex_force_true", "distance_call_wall", "distance_put_wall", "wall_balance"],
+    "GEX dynamics": ["gex_susceptibility", "gex_slope_5", "field_x_susceptibility", "field_x_gex"],
+    "Parabolic background": ["parabolic_slope_z", "parabolic_curvature_z", "range_score", "field_minus_center"],
+    "Impulse/state": ["impulse_score", "background_code", "impulse_code", "gex_code", "background_x_impulse", "impulse_x_gex", "background_x_gex", "triple_state"]
+  },
+  "point_forecasts": {
+    "5m": {
+      "role": "active_low_edge",
+      "model": "Ridge",
+      "alpha": 1.0,
+      "mask": 2047,
+      "blocks": "all_11",
+      "mae_points": 0.386328,
+      "momentum_baseline_mae_points": 0.387117,
+      "improvement_points": 0.000789
+    },
+    "15m": {
+      "role": "active_primary",
+      "model": "Ridge",
+      "alpha": 1.0,
+      "mask": 2047,
+      "blocks": "all_11",
+      "mae_points": 0.689928,
+      "momentum_baseline_mae_points": 0.693414,
+      "improvement_points": 0.003486
+    },
+    "30m": {
+      "role": "active_primary",
+      "model": "Ridge",
+      "alpha": 0.00001,
+      "mask": 1978,
+      "blocks": ["SPY VWAP/Bollinger", "Constituent field", "Breadth/dispersion", "Sector/lead", "GEX force/walls", "GEX dynamics", "Parabolic background", "Impulse/state"],
+      "excluded_blocks": ["SPY momentum", "Original tensor", "GEX level"],
+      "mae_points": 1.018034,
+      "momentum_baseline_mae_points": 1.025535,
+      "improvement_points": 0.007501
+    },
+    "60m": {
+      "role": "advisory_only",
+      "model": "Ridge continuous-gauge",
+      "alpha": 0.1,
+      "mask": 507,
+      "mae_points": 1.530484,
+      "momentum_baseline_mae_points": 1.544079,
+      "independent_statistical_gate": false,
+      "usage_gate": "Never initiate a trade from the 60m forecast alone."
+    }
+  },
+  "uncertainty": {
+    "quantiles": [0.1, 0.5, 0.9],
+    "display": "endpoint_intervals_only",
+    "horizons": {
+      "5m": {"independent_weight": 0.675, "shared_weight": 0.325, "qhat": 0.000018, "coverage": 0.8},
+      "15m": {"independent_weight": 0.625, "shared_weight": 0.375, "qhat": 0.0000672, "coverage": 0.7942},
+      "30m": {"independent_weight": 0.175, "shared_weight": 0.825, "qhat": 0.0002028, "coverage": 0.7997},
+      "60m": {"independent_weight": 0.75, "shared_weight": 0.25, "qhat": 0.000471, "coverage": 0.8183}
+    }
+  },
+  "state_engine": {
+    "background_states": ["Falling", "Flat", "Climbing"],
+    "impulse_states": ["Sharp Fall", "None", "Sharp Rise"],
+    "gex_states": ["Volatility", "Neutral", "Pin"],
+    "live_state_count": 27,
+    "synthetic_initial_thresholds": {
+      "background_slope_z": 0.4,
+      "impulse_score_z": 1.0,
+      "gex_abs_threshold": 0.23355998098850247
+    },
+    "authority": "shadow_only"
+  },
+  "disabled": [
+    "pure_joint_recursive_path_model",
+    "endpoint_controlled_hybrid_path",
+    "historical_analog_fan",
+    "predictive_edge_trade_override",
+    "automatic_state_alert_trade_authority",
+    "live_broker_routing"
+  ]
+}
