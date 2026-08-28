@@ -1,11 +1,14 @@
 """Causal orientation calibration and promotion evidence for forecast witnesses.
 
-A witness is allowed to be anti-oriented.  Calibration learns that relationship
+A witness is allowed to be anti-oriented. Calibration learns that relationship
 from *matured historical forecasts only* rather than hard-coding an inversion.
 The caller owns the as-of cut: observations supplied here must already satisfy
 ``realized_at <= forecast_as_of`` for the forecast being produced.
 
-This module has no knowledge of option candidates, trades, fills or P&L.
+Training a calibrator never grants blend authority. A separate, later held-out
+sample must demonstrate improvement before a witness can receive non-zero
+ensemble weight. This module has no knowledge of candidates, trades, fills or
+P&L.
 """
 
 from __future__ import annotations
@@ -16,16 +19,23 @@ from datetime import datetime
 from typing import Iterable
 
 import numpy as np
-from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.linear_model import LogisticRegression
 
-from spy_der.contracts.common import ErrorCode, ValidationError, require_probability, require_tz_aware
+from spy_der.contracts.common import (
+    ErrorCode,
+    ValidationError,
+    require_probability,
+    require_tz_aware,
+)
 
-ORIENTATION_CALIBRATION_VERSION = "alpha-v2-witness-orientation.v1"
+ORIENTATION_CALIBRATION_VERSION = "alpha-v2-witness-orientation.v2"
 
 __all__ = [
     "ORIENTATION_CALIBRATION_VERSION",
     "WitnessCalibration",
+    "WitnessCalibrationEvidence",
     "WitnessObservation",
+    "evaluate_witness_calibration",
     "fit_witness_calibration",
 ]
 
@@ -78,7 +88,7 @@ class WitnessObservation:
 
 @dataclass(frozen=True, slots=True)
 class WitnessCalibration:
-    """Frozen calibration learned from matured historical witness observations."""
+    """Frozen calibration learned only from historical matured observations."""
 
     witness_name: str
     horizon_minutes: int
@@ -89,12 +99,11 @@ class WitnessCalibration:
     probability_slope: float
     return_intercept: float
     return_slope: float
-    raw_brier: float
-    calibrated_brier: float
-    raw_return_correlation: float | None
-    calibrated_return_correlation: float | None
+    raw_brier_training: float
+    calibrated_brier_training: float
+    raw_return_correlation_training: float | None
+    calibrated_return_correlation_training: float | None
     orientation: str
-    blend_eligible: bool
     version: str = ORIENTATION_CALIBRATION_VERSION
 
     def __post_init__(self) -> None:
@@ -102,15 +111,19 @@ class WitnessCalibration:
         if self.horizon_minutes <= 0:
             raise ValidationError(ErrorCode.NEGATIVE_VALUE, "horizon_minutes must be positive")
         if self.sample_count < 0 or self.session_count < 0:
-            raise ValidationError(ErrorCode.NEGATIVE_VALUE, "sample/session counts must be non-negative")
-        for name, value in (
+            raise ValidationError(
+                ErrorCode.NEGATIVE_VALUE,
+                "sample/session counts must be non-negative",
+            )
+        numeric = (
             ("probability_intercept", self.probability_intercept),
             ("probability_slope", self.probability_slope),
             ("return_intercept", self.return_intercept),
             ("return_slope", self.return_slope),
-            ("raw_brier", self.raw_brier),
-            ("calibrated_brier", self.calibrated_brier),
-        ):
+            ("raw_brier_training", self.raw_brier_training),
+            ("calibrated_brier_training", self.calibrated_brier_training),
+        )
+        for name, value in numeric:
             if not math.isfinite(value):
                 raise ValidationError(ErrorCode.NON_FINITE_NUMBER, f"{name} must be finite")
         if self.orientation not in {"aligned", "inverted", "weak"}:
@@ -118,12 +131,40 @@ class WitnessCalibration:
 
     def calibrate_probability(self, probability_up: float) -> float:
         require_probability(probability_up, "probability_up")
-        return _sigmoid(self.probability_intercept + self.probability_slope * _logit(probability_up))
+        linear = self.probability_intercept + self.probability_slope * _logit(probability_up)
+        return _sigmoid(linear)
 
     def calibrate_expected_return(self, expected_return: float) -> float:
         if not math.isfinite(expected_return):
             raise ValidationError(ErrorCode.NON_FINITE_NUMBER, "expected_return must be finite")
         return self.return_intercept + self.return_slope * expected_return
+
+
+@dataclass(frozen=True, slots=True)
+class WitnessCalibrationEvidence:
+    """Later-session evidence that decides whether a calibration may be blended."""
+
+    witness_name: str
+    horizon_minutes: int
+    calibration_version: str
+    validation_samples: int
+    validation_sessions: int
+    raw_brier: float
+    calibrated_brier: float
+    calibrated_accuracy: float
+    brier_improvement: float
+    blend_eligible: bool
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("raw_brier", self.raw_brier),
+            ("calibrated_brier", self.calibrated_brier),
+            ("calibrated_accuracy", self.calibrated_accuracy),
+            ("brier_improvement", self.brier_improvement),
+        ):
+            if not math.isfinite(value):
+                raise ValidationError(ErrorCode.NON_FINITE_NUMBER, f"{name} must be finite")
+        require_probability(self.calibrated_accuracy, "calibrated_accuracy")
 
 
 def _correlation(left: np.ndarray, right: np.ndarray) -> float | None:
@@ -133,35 +174,35 @@ def _correlation(left: np.ndarray, right: np.ndarray) -> float | None:
     return value if math.isfinite(value) else None
 
 
+def _validate_as_of(rows: tuple[WitnessObservation, ...], as_of: datetime) -> None:
+    require_tz_aware(as_of, "as_of")
+    if any(row.realized_at > as_of for row in rows):
+        raise ValidationError(
+            ErrorCode.MALFORMED_RECORD,
+            "witness calibration received an outcome unavailable at as_of",
+        )
+
+
 def fit_witness_calibration(
     *,
     witness_name: str,
     horizon_minutes: int,
     observations: Iterable[WitnessObservation],
     as_of: datetime,
-    minimum_samples: int = 500,
-    minimum_sessions: int = 20,
-    minimum_brier_improvement: float = 0.0025,
 ) -> WitnessCalibration:
-    """Fit an unconstrained orientation calibration from prior matured outcomes.
+    """Fit an unconstrained orientation transform from prior matured outcomes.
 
-    Observations whose realization is after ``as_of`` are rejected rather than
-    dropped silently.  ``blend_eligible`` is deliberately conservative: enough
-    independent sessions and samples are required *and* calibration must improve
-    Brier score by a pre-registered amount.  A negative learned slope is legal.
+    A negative learned slope is legal and diagnostic. The returned object has no
+    authority flag; only :func:`evaluate_witness_calibration` can qualify it on
+    a later held-out sample.
     """
 
-    require_tz_aware(as_of, "as_of")
     rows = tuple(observations)
+    _validate_as_of(rows, as_of)
     if not witness_name.strip():
         raise ValidationError(ErrorCode.MISSING_REQUIRED_INPUT, "witness_name is required")
     if horizon_minutes <= 0:
         raise ValidationError(ErrorCode.NEGATIVE_VALUE, "horizon_minutes must be positive")
-    if any(row.realized_at > as_of for row in rows):
-        raise ValidationError(
-            ErrorCode.LOOKAHEAD_ATTEMPT,
-            "witness calibration received an outcome unavailable at as_of",
-        )
     if not rows:
         raise ValidationError(ErrorCode.MISSING_REQUIRED_INPUT, "no matured observations")
 
@@ -170,9 +211,10 @@ def fit_witness_calibration(
     raw_prob = np.asarray([row.probability_up for row in rows], dtype=float)
 
     if len(set(int(value) for value in y_up)) < 2:
-        probability_intercept = _logit(float(np.mean(y_up)))
+        base_rate = float(np.mean(y_up))
+        probability_intercept = _logit(base_rate)
         probability_slope = 0.0
-        calibrated_prob = np.full(len(rows), float(np.mean(y_up)), dtype=float)
+        calibrated_prob = np.full(len(rows), base_rate, dtype=float)
     else:
         classifier = LogisticRegression(
             C=1.0,
@@ -186,17 +228,19 @@ def fit_witness_calibration(
         probability_slope = float(classifier.coef_[0, 0])
         calibrated_prob = classifier.predict_proba(x_prob)[:, 1]
 
-    x_return = np.asarray([row.expected_return for row in rows], dtype=float).reshape(-1, 1)
+    x_return = np.asarray([row.expected_return for row in rows], dtype=float)
     y_return = np.asarray([row.realized_return for row in rows], dtype=float)
-    regressor = Ridge(alpha=1.0, fit_intercept=True)
-    regressor.fit(x_return, y_return)
-    return_intercept = float(regressor.intercept_)
-    return_slope = float(regressor.coef_[0])
-    calibrated_return = regressor.predict(x_return)
+    x_mean = float(np.mean(x_return))
+    y_mean = float(np.mean(y_return))
+    centered = x_return - x_mean
+    denominator = float(np.dot(centered, centered)) + 1e-12
+    return_slope = float(np.dot(centered, y_return - y_mean) / denominator)
+    return_intercept = y_mean - return_slope * x_mean
+    calibrated_return = return_intercept + return_slope * x_return
 
     raw_brier = float(np.mean((raw_prob - y_up) ** 2))
     calibrated_brier = float(np.mean((calibrated_prob - y_up) ** 2))
-    raw_return_corr = _correlation(x_return[:, 0], y_return)
+    raw_return_corr = _correlation(x_return, y_return)
     calibrated_return_corr = _correlation(calibrated_return, y_return)
 
     if probability_slope < -0.05 or return_slope < -0.05:
@@ -206,29 +250,74 @@ def fit_witness_calibration(
     else:
         orientation = "weak"
 
-    session_count = len({row.session_date for row in rows})
-    brier_improvement = raw_brier - calibrated_brier
-    blend_eligible = (
-        len(rows) >= minimum_samples
-        and session_count >= minimum_sessions
-        and brier_improvement >= minimum_brier_improvement
-        and calibrated_brier < 0.25
-    )
-
     return WitnessCalibration(
         witness_name=witness_name,
         horizon_minutes=horizon_minutes,
         fitted_through=as_of,
         sample_count=len(rows),
-        session_count=session_count,
+        session_count=len({row.session_date for row in rows}),
         probability_intercept=probability_intercept,
         probability_slope=probability_slope,
         return_intercept=return_intercept,
         return_slope=return_slope,
+        raw_brier_training=raw_brier,
+        calibrated_brier_training=calibrated_brier,
+        raw_return_correlation_training=raw_return_corr,
+        calibrated_return_correlation_training=calibrated_return_corr,
+        orientation=orientation,
+    )
+
+
+def evaluate_witness_calibration(
+    calibration: WitnessCalibration,
+    observations: Iterable[WitnessObservation],
+    *,
+    as_of: datetime,
+    minimum_samples: int = 250,
+    minimum_sessions: int = 10,
+    maximum_brier: float = 0.245,
+    minimum_accuracy: float = 0.53,
+    minimum_brier_improvement: float = 0.0025,
+) -> WitnessCalibrationEvidence:
+    """Evaluate a frozen calibration on later, held-out matured observations."""
+
+    rows = tuple(observations)
+    _validate_as_of(rows, as_of)
+    if not rows:
+        raise ValidationError(ErrorCode.MISSING_REQUIRED_INPUT, "no validation observations")
+    if any(row.forecast_at <= calibration.fitted_through for row in rows):
+        raise ValidationError(
+            ErrorCode.MALFORMED_RECORD,
+            "validation observations must be later than the calibration fit window",
+        )
+
+    raw = np.asarray([row.probability_up for row in rows], dtype=float)
+    calibrated = np.asarray(
+        [calibration.calibrate_probability(row.probability_up) for row in rows],
+        dtype=float,
+    )
+    actual = np.asarray([1 if row.realized_up else 0 for row in rows], dtype=int)
+    raw_brier = float(np.mean((raw - actual) ** 2))
+    calibrated_brier = float(np.mean((calibrated - actual) ** 2))
+    accuracy = float(np.mean((calibrated >= 0.5) == actual))
+    improvement = raw_brier - calibrated_brier
+    sessions = len({row.session_date for row in rows})
+    eligible = (
+        len(rows) >= minimum_samples
+        and sessions >= minimum_sessions
+        and calibrated_brier <= maximum_brier
+        and accuracy >= minimum_accuracy
+        and improvement >= minimum_brier_improvement
+    )
+    return WitnessCalibrationEvidence(
+        witness_name=calibration.witness_name,
+        horizon_minutes=calibration.horizon_minutes,
+        calibration_version=calibration.version,
+        validation_samples=len(rows),
+        validation_sessions=sessions,
         raw_brier=raw_brier,
         calibrated_brier=calibrated_brier,
-        raw_return_correlation=raw_return_corr,
-        calibrated_return_correlation=calibrated_return_corr,
-        orientation=orientation,
-        blend_eligible=blend_eligible,
+        calibrated_accuracy=accuracy,
+        brier_improvement=improvement,
+        blend_eligible=eligible,
     )
