@@ -1,7 +1,7 @@
 """Fail-closed Beta-spy forecast witness for Alpha V2.
 
-Beta is an independent market-forecast witness.  Only its timestamped forecast
-heads and data-coverage metadata are admissible here.  Decision, option-plan,
+Beta is an independent market-forecast witness. Only its timestamped forecast
+heads and data-coverage metadata are admissible here. Decision, option-plan,
 ledger, sizing, and P&L fields are deliberately ignored so Beta cannot leak a
 trading policy into the physical market forecast.
 """
@@ -44,7 +44,7 @@ class BetaWitnessError(ValueError):
 class BetaHorizonWitness:
     """One Beta physical-market forecast head.
 
-    ``expected_return`` is a decimal simple return.  Beta publishes basis
+    ``expected_return`` is a decimal simple return. Beta publishes basis
     points, so the adapter performs the unit conversion at this boundary.
     """
 
@@ -152,7 +152,7 @@ def parse_beta_state(
     """Validate Beta ``/api/state`` and project it into forecast-only evidence.
 
     The parser intentionally never reads ``decision``, ``option_plan`` or
-    ``ledger``.  A change in those downstream fields cannot change the returned
+    ``ledger``. A change in those downstream fields cannot change the returned
     witness object.
     """
 
@@ -290,7 +290,7 @@ class BetaStateClient:
             headers={"Accept": "application/json", "User-Agent": "SPY-DER/BetaWitness"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 raw = response.read()
         except (OSError, TimeoutError, urllib.error.URLError) as exc:
             raise BetaWitnessError(f"unable to fetch Beta state: {exc}") from exc
