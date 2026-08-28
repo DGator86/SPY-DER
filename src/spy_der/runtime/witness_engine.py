@@ -23,14 +23,14 @@ from spy_der.contracts.market import CanonicalMarketSnapshot
 from spy_der.journal.store import SqliteJournalStore
 from spy_der.runtime.artifacts import StageArtifactStore
 from spy_der.runtime.engine import (
+    _NO_FORECAST_GROUP,
+    _Stores,
     DEFAULT_STATE_ROOT,
     DEPLOYMENT_ID,
     ENV_FORECAST_GROUP,
     ENV_FORECAST_LOAD_MODE,
     EngineConfig,
     EngineService,
-    _NO_FORECAST_GROUP,
-    _Stores,
 )
 
 log = logging.getLogger("spy_der.engine")
@@ -108,7 +108,8 @@ class WitnessEngineService(EngineService):
                 continue
             if not bool(row.get("model_ready")) or sample_count <= 0:
                 continue
-            if not all(math.isfinite(value) for value in (probability_up, expected_simple, confidence)):
+            finite_values = (probability_up, expected_simple, confidence)
+            if not all(math.isfinite(value) for value in finite_values):
                 continue
             if not 0.0 <= probability_up <= 1.0 or not 0.0 <= confidence <= 1.0:
                 continue
