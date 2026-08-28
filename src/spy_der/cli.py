@@ -28,7 +28,7 @@ def main(argv: list[str] | None = None) -> int:
 
         return market_main(rest)
     if cmd in {"engine", "engine-service"}:
-        from spy_der.runtime.engine import main as engine_main
+        from spy_der.runtime.witness_engine import main as engine_main
 
         return engine_main(rest)
     if cmd in {"settlement", "settle"}:
