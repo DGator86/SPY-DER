@@ -27,10 +27,10 @@ from spy_der.market_data.composite import CompositeFeed
 from spy_der.market_data.recording import build_record
 from spy_der.runtime.artifacts import StageArtifactStore
 from spy_der.runtime.market_service import (
-    MarketService,
-    MarketServiceConfig,
     _DEFAULT_PROVIDERS,
     _DEFAULT_SETTLEMENT_PROVIDER,
+    MarketService,
+    MarketServiceConfig,
     _ensure_trailing_newline,
 )
 
